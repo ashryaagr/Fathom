@@ -1,0 +1,396 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { pdfjsLib } from './pdf/pdfjs';
+import { useDocumentStore } from './state/document';
+import { useRegionsStore } from './state/regions';
+import { useLensStore } from './lens/store';
+import { buildPaperIndex } from './pdf/buildIndex';
+import PdfViewer from './pdf/PdfViewer';
+import FocusView from './lens/FocusView';
+
+type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
+
+export default function App() {
+  const setDocument = useDocumentStore((s) => s.setDocument);
+  const docState = useDocumentStore((s) => s.document);
+  const focused = useLensStore((s) => s.focused);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [indexState, setIndexState] = useState<IndexState>('idle');
+  const [indexMessage, setIndexMessage] = useState<string | null>(null);
+  const [showIndexToast, setShowIndexToast] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Subscribe to decomposition status events from the main process.
+  useEffect(() => {
+    const unsubscribe = window.lens.onDecomposeStatus((status) => {
+      const current = useDocumentStore.getState().document;
+      if (!current || status.paperHash !== current.contentHash) return;
+      setIndexState(status.state);
+      setIndexMessage(status.message ?? null);
+      setShowIndexToast(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (status.state === 'done' || status.state === 'cached' || status.state === 'error') {
+        hideTimerRef.current = setTimeout(() => setShowIndexToast(false), 4000);
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
+  const openPdf = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const pdf = await window.lens.openPdf();
+      if (!pdf) {
+        setLoading(false);
+        return;
+      }
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdf.bytes),
+        cMapUrl: '/pdfjs-cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: '/pdfjs-fonts/',
+        // WASM decoders for JPEG2000 / JBIG2 — many research-paper figures use these.
+        wasmUrl: '/pdfjs-wasm/',
+        // No cap on image size — research papers often embed very high-res figures.
+        maxImageSize: -1,
+        useSystemFonts: true,
+      });
+      const doc = await loadingTask.promise;
+
+      // Reset stale stores for the previous document.
+      useRegionsStore.getState().clear();
+      useLensStore.getState().closeAll();
+      // Clear per-lens cache AND persisted zoom paths so nothing leaks across papers.
+      useLensStore.setState({ cache: new Map(), persistedZoomPaths: new Map() });
+
+      setDocument({
+        name: pdf.name,
+        path: pdf.path,
+        indexDir: pdf.indexDir,
+        contentHash: pdf.contentHash,
+        doc,
+        numPages: doc.numPages,
+      });
+
+      // Skip restoring cached regions from disk — the extraction algorithm evolves (e.g.
+      // column-awareness) and stale cached regions would silently override the new ones.
+      // Let PageView re-extract fresh on visibility; cached *explanations* below still
+      // restore (keyed by region id — old region ids simply won't show dots, acceptable).
+      try {
+        const state = await window.lens.paperState(pdf.contentHash);
+        if (state) {
+          // Hydrate the turn cache so re-opening a region restores its prior Q&A chain instantly.
+          const turnsByRegion = new Map<
+            string,
+            Array<{ question: string | null; body: string; progress: string; streaming: boolean }>
+          >();
+          for (const e of state.explanations) {
+            const arr = turnsByRegion.get(e.region_id) ?? [];
+            arr.push({
+              question: e.focus_phrase ?? null,
+              body: e.body,
+              progress: '',
+              streaming: false,
+            });
+            turnsByRegion.set(e.region_id, arr);
+            // First non-null zoom path for a region wins (they're all the same in practice).
+            if (e.zoom_image_path) {
+              useLensStore.getState().setPersistedZoomPath(e.region_id, e.zoom_image_path);
+            }
+          }
+          for (const [regionId, turns] of turnsByRegion) {
+            useLensStore.getState().setCachedTurns(regionId, turns);
+          }
+        }
+      } catch (err) {
+        console.warn('failed to restore paper state', err);
+      }
+
+      // Build the full on-disk index: one content.md with the paper's text in reading
+      // order + one PNG per page under images/. This alone is enough to make Claude's
+      // Read/Grep/Glob useful without any RAG.
+      setIndexState('running');
+      setIndexMessage(null);
+      setShowIndexToast(true);
+      void (async () => {
+        try {
+          await buildPaperIndex(doc, pdf.contentHash);
+          // Then kick off the deeper Claude-driven decomposition (structured digest,
+          // section summaries, figure descriptions) as a background enhancement.
+          await window.lens.decomposePaper({
+            paperHash: pdf.contentHash,
+            pdfPath: pdf.path,
+            numPages: doc.numPages,
+          });
+        } catch (err) {
+          setIndexState('error');
+          setIndexMessage(err instanceof Error ? err.message : String(err));
+          setShowIndexToast(true);
+        }
+      })();
+    } catch (e) {
+      console.error(e);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [setDocument]);
+
+  // Global F1 / ⌘⇧? to toggle help. Suppress when an input/textarea/contenteditable
+  // is focused so the user can actually type "?" into the Ask box.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inInput =
+        !!target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable);
+      if (inInput) return;
+      if (e.key === 'F1' || (e.key === '?' && e.metaKey && e.shiftKey)) {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Two-finger horizontal swipe → browser-style back / forward through lens history.
+  // Accumulate deltaX over a short burst, trigger on threshold, reset on quiet period.
+  useEffect(() => {
+    let accum = 0;
+    let lastTime = 0;
+    let committed = false;
+    const handler = (e: WheelEvent) => {
+      if (e.ctrlKey) return; // pinch-zoom owns ctrlKey-wheels
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastTime > 350) {
+        accum = 0;
+        committed = false;
+      }
+      lastTime = now;
+      // Only treat as a horizontal swipe if deltaX clearly dominates.
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.4) return;
+      accum += e.deltaX;
+      if (committed) return;
+      const threshold = 120;
+      if (accum <= -threshold) {
+        // Natural-scroll: fingers swipe RIGHT → deltaX negative → go BACK.
+        committed = true;
+        e.preventDefault();
+        useLensStore.getState().back();
+      } else if (accum >= threshold) {
+        committed = true;
+        e.preventDefault();
+        useLensStore.getState().forward();
+      }
+    };
+    window.addEventListener('wheel', handler, { passive: false });
+    return () => window.removeEventListener('wheel', handler);
+  }, []);
+
+  return (
+    <div className="flex h-full flex-col">
+      <header
+        className="relative flex h-11 items-center justify-center border-b border-black/5 px-3 text-[13px] font-medium text-black/60 select-none"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        <span className="truncate">{docState ? docState.name : 'Lens'}</span>
+        <div
+          className="absolute right-2 flex items-center gap-1"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <button
+            onClick={() => setShowHelp((v) => !v)}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-[12px] text-black/55 hover:bg-black/5"
+            aria-label="Help"
+            title="Show controls (?)"
+          >
+            ?
+          </button>
+          <button
+            onClick={openPdf}
+            className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
+          >
+            Open…
+          </button>
+        </div>
+      </header>
+      <main className="relative flex-1 overflow-hidden">
+        {docState ? (
+          <PdfViewer />
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <button
+                onClick={openPdf}
+                disabled={loading}
+                className="rounded-md bg-black px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-black/85 active:scale-[0.98] disabled:opacity-50"
+              >
+                {loading ? 'Opening…' : 'Open PDF…'}
+              </button>
+              {error && <div className="text-xs text-red-600">{error}</div>}
+              <div className="text-xs text-black/40">
+                Pinch to zoom · ⌘ + pinch on a paragraph to dive in
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Focus view overlays everything when active. */}
+      <FocusView />
+
+      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} focused={focused != null} />}
+
+      {/* Indexing toast — sticky bottom-right, non-intrusive */}
+      <IndexingToast
+        visible={showIndexToast && indexState !== 'idle'}
+        state={indexState}
+        message={indexMessage}
+        onDismiss={() => setShowIndexToast(false)}
+      />
+    </div>
+  );
+}
+
+function IndexingToast({
+  visible,
+  state,
+  message,
+  onDismiss,
+}: {
+  visible: boolean;
+  state: IndexState;
+  message: string | null;
+  onDismiss: () => void;
+}) {
+  const pill = (() => {
+    if (state === 'running')
+      return { color: 'bg-black/80 text-white', icon: '⟳', label: 'Indexing paper…' };
+    if (state === 'done' || state === 'cached')
+      return {
+        color: 'bg-emerald-600 text-white',
+        icon: '✓',
+        label: state === 'cached' ? 'Already indexed' : 'Paper indexed',
+      };
+    if (state === 'error')
+      return {
+        color: 'bg-red-600 text-white',
+        icon: '!',
+        label: 'Indexing failed — results may be less precise',
+      };
+    return null;
+  })();
+  return (
+    <AnimatePresence>
+      {visible && pill && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 16 }}
+          transition={{ duration: 0.2 }}
+          className="fixed right-5 bottom-5 z-50 flex max-w-sm items-center gap-2 rounded-full px-4 py-2 text-[12px] font-medium shadow-lg backdrop-blur"
+          style={{ background: undefined }}
+        >
+          <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 ${pill.color}`}>
+            <span className={state === 'running' ? 'inline-block animate-spin' : ''}>
+              {pill.icon}
+            </span>
+            <span>{pill.label}</span>
+            {state !== 'running' && (
+              <button
+                onClick={onDismiss}
+                className="ml-2 rounded-full px-1 text-[11px] opacity-70 hover:opacity-100"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {state === 'error' && message && (
+            <span className="truncate text-[11px] text-black/55">{message}</span>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function HelpOverlay({ onClose, focused }: { onClose: () => void; focused: boolean }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-[420px] rounded-xl bg-white p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-black/85">Lens controls</h2>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-black/40 hover:bg-black/5"
+            aria-label="Close help"
+          >
+            ✕
+          </button>
+        </div>
+        <dl className="flex flex-col gap-3 text-sm">
+          <Row k="Pinch" v="Zoom in / out (anchored on cursor)" />
+          <Row k="⌘ + pinch in" v="Dive into the paragraph under the cursor" />
+          <Row k="⌘ + pinch out" v={focused ? 'Go back one level' : 'No effect (no lens open)'} />
+          <Row k="Select text + ⌘ + pinch in" v="Dive into the selected concept" />
+          <Row k="Esc" v="Close the focused lens" />
+          <Row k="⌘ + 0" v="Reset zoom to 100%" />
+          <Row k="⌘ + = / ⌘ + −" v="Zoom in / out" />
+          <Row k="?" v="Toggle this help" />
+        </dl>
+        <p className="mt-5 text-xs leading-relaxed text-black/45">
+          Diving in opens a focused reading view of the paragraph with a streaming AI explanation.
+          Inside that view, select any phrase you don't recognize — an algorithm name, a term, an equation —
+          and ⌘+pinch on it to dive deeper into that specific concept.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <dt className="w-[170px] flex-shrink-0 font-mono text-[11px] tracking-wide text-black/55 uppercase">
+        {k}
+      </dt>
+      <dd className="text-[13px] text-black/75">{v}</dd>
+    </div>
+  );
+}
