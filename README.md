@@ -27,7 +27,7 @@ Prefer drag-to-Applications? [Get the Mac DMG →](./docs/INSTALL.md#option-b--d
 
 ## Built out of necessity
 
-> I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers, and I got tired of the same loop — hit a dense passage, paste it into Claude, ask for clarification, then clarification of the clarification, then of *that* — and by the time I'd surfaced, the paper was gone. So I built the reader I always wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
+> I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers and, I got tired of the same spiral: hit a paragraph full of jargons I have no freaking clue about => go to Claude & ask for clarification => then clarification of the clarification => and by the time I'd surfaced, where the hell am I?. So I built the reader I always wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
 
 There's nothing to sign up for, no subscription, no account. If you already pay for [Claude](https://claude.com/product/overview), you have everything Fathom needs.
 

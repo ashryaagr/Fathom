@@ -48,6 +48,19 @@ Invoke before any change that touches:
    welcome screen, gesture fix, sample swap" — not "v1.0.2: a
    beautiful new Fathom experience". Commits describe change; they
    don't sell it.
+7. **Don't rewrite the author's voice.** If a file already carries
+   the author's phrasing — "jargons I have no freaking clue about",
+   "where the hell am I?", the `=>` as a reading-spiral arrow —
+   leave it. That's the voice, not a draft. Even if a sentence
+   breaks a rule above, err on the side of preserving it; the
+   author's informal register is the thing these rules *protect*,
+   not the thing they sand down. If you think a rewrite genuinely
+   improves clarity, propose it in a comment or surface it in the
+   response — don't ship the rewrite silently. Touchstone for this
+   rule: v1.0.6 silently replaced "hit a paragraph full of jargons
+   I have no freaking clue about => go to Claude & ask for
+   clarification" with a smoothed paraphrase. The user caught it.
+   Don't.
 
 ## Copy structure: why → how → what
 
