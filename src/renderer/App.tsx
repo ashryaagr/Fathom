@@ -41,11 +41,19 @@ export default function App() {
     };
   }, []);
 
-  const openPdf = useCallback(async () => {
+  // One shared pipeline for every "a PDF just arrived" trigger:
+  //   • user clicked Open PDF… (from a button, the menu, or ⌘O)
+  //   • user dragged a PDF onto the window
+  //   • user ⌘-clicked a PDF in Finder and picked Open With → Fathom
+  //   • user chose Open Sample Paper from the welcome dialog or menu
+  // `source` is either the dialog request (no args) or a local path.
+  const openPdf = useCallback(async (source?: string) => {
     setError(null);
     setLoading(true);
     try {
-      const pdf = await window.lens.openPdf();
+      const pdf = source
+        ? await window.lens.openPdfAtPath(source)
+        : await window.lens.openPdf();
       if (!pdf) {
         setLoading(false);
         return;
@@ -162,6 +170,53 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Menu / first-run "Open PDF…" → pop the dialog.
+  useEffect(() => window.lens.onOpenRequest(() => void openPdf()), [openPdf]);
+
+  // External "here's a PDF" — drag onto dock icon, Finder Open With,
+  // Open Sample Paper menu item. Path comes from the main process.
+  useEffect(
+    () => window.lens.onOpenExternal((path) => void openPdf(path)),
+    [openPdf],
+  );
+
+  // Drag-and-drop anywhere on the window. Electron's renderer exposes the
+  // absolute local path via the non-standard File.path extension, so we
+  // don't need to round-trip bytes through the main process.
+  useEffect(() => {
+    const isPdfDrop = (e: DragEvent): boolean => {
+      const items = e.dataTransfer?.items;
+      if (!items) return false;
+      for (const item of Array.from(items)) {
+        if (item.kind === 'file') return true;
+      }
+      return false;
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!isPdfDrop(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      const file = Array.from(e.dataTransfer.files).find((f) =>
+        f.name.toLowerCase().endsWith('.pdf'),
+      );
+      if (!file) return;
+      // Electron's File objects carry a .path property (a non-standard
+      // extension) that gives the absolute local path.
+      const path = (file as File & { path?: string }).path;
+      if (path) void openPdf(path);
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [openPdf]);
+
   // Two-finger horizontal swipe → browser-style back / forward through lens history.
   // Accumulate deltaX over a short burst, trigger on threshold, reset on quiet period.
   useEffect(() => {
@@ -225,7 +280,7 @@ export default function App() {
             ?
           </button>
           <button
-            onClick={openPdf}
+            onClick={() => void openPdf()}
             className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
           >
             Open…
@@ -239,7 +294,7 @@ export default function App() {
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <button
-                onClick={openPdf}
+                onClick={() => void openPdf()}
                 disabled={loading}
                 className="rounded-md bg-black px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-black/85 active:scale-[0.98] disabled:opacity-50"
               >

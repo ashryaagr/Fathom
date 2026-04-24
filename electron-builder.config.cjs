@@ -27,6 +27,20 @@ module.exports = {
     output: 'dist',
     buildResources: 'resources',
   },
+  // Bundle the welcome/sample paper so the first-run dialog can offer it.
+  extraResources: [
+    { from: 'resources/sample-paper.pdf', to: 'sample-paper.pdf' },
+  ],
+  // Register Fathom as a handler for .pdf files so Finder shows "Open With → Fathom"
+  // and the user can drop a PDF onto the app icon.
+  fileAssociations: [
+    {
+      ext: 'pdf',
+      name: 'PDF Document',
+      description: 'Portable Document Format',
+      role: 'Viewer',
+    },
+  ],
   files: [
     'out/**',
     'package.json',

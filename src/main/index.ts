@@ -137,11 +137,33 @@ async function createWindow(): Promise<void> {
   }
 }
 
+/**
+ * Shared "prepare this PDF path for the renderer" flow. Used by:
+ *   - pdf:open (Finder dialog)
+ *   - pdf:openPath (drag-and-drop from renderer)
+ *   - app.on('open-file', …) (user ⌘-clicked a PDF in Finder → Open With Fathom)
+ *   - Open Sample Paper menu / first-run button
+ */
+async function prepareOpenedPdf(filePath: string) {
+  writeSettings({ lastOpenDir: dirname(filePath) });
+  const bytes = await readFile(filePath);
+  const contentHash = createHash('sha256').update(bytes).digest('hex');
+  Papers.upsert({ contentHash, title: filePath.split('/').pop() });
+  const indexDir = await ensureIndexDir(filePath, contentHash);
+  return {
+    path: filePath,
+    indexDir,
+    name: filePath.split('/').pop() ?? 'document.pdf',
+    contentHash,
+    bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  };
+}
+
 ipcMain.handle('pdf:open', async () => {
   if (!mainWindow) return null;
-  // First time a user opens a PDF we point them at ~/Downloads (that's where
-  // almost all paper downloads land). After that, honor the folder they last
-  // used so they don't have to re-navigate every time.
+  // First-time openers get pointed at ~/Downloads (where almost all papers
+  // land). After that, remember the folder they last used so they don't
+  // have to re-navigate every time.
   const settings = readSettings();
   const defaultDir = settings.lastOpenDir && existsSync(settings.lastOpenDir)
     ? settings.lastOpenDir
@@ -153,23 +175,16 @@ ipcMain.handle('pdf:open', async () => {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  const filePath = result.filePaths[0];
-  writeSettings({ lastOpenDir: dirname(filePath) });
-  const bytes = await readFile(filePath);
-  const contentHash = createHash('sha256').update(bytes).digest('hex');
-  Papers.upsert({ contentHash, title: filePath.split('/').pop() });
+  return prepareOpenedPdf(result.filePaths[0]);
+});
 
-  // Place the per-paper index folder next to the PDF so the user sees one clean
-  // "<filename>.pdf.lens/" sibling containing everything.
-  const indexDir = await ensureIndexDir(filePath, contentHash);
-
-  return {
-    path: filePath,
-    indexDir,
-    name: filePath.split('/').pop() ?? 'document.pdf',
-    contentHash,
-    bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-  };
+// Renderer drag-and-drop: the <DropZone> picks up a dragged .pdf, pulls the
+// local path (via the Electron File.path extension), and hands it to the
+// main process through this handler. Same return shape as pdf:open.
+ipcMain.handle('pdf:openPath', async (_event, filePath: string) => {
+  if (typeof filePath !== 'string' || !existsSync(filePath)) return null;
+  if (!filePath.toLowerCase().endsWith('.pdf')) return null;
+  return prepareOpenedPdf(filePath);
 });
 
 interface ExplainRequest extends Omit<ExplainArgs, 'abortController' | 'onDelta'> {
@@ -481,10 +496,64 @@ ipcMain.handle(
   },
 );
 
+/**
+ * Copy the bundled sample PDF into ~/Documents (so the `.fathom` sidecar
+ * folder can be written alongside it — the in-bundle Resources folder is
+ * read-only) and open it via the normal flow. Idempotent: if the file is
+ * already there and unchanged, we skip the copy and just open it.
+ */
+async function openSamplePaper(): Promise<void> {
+  if (!mainWindow) return;
+  // In production the sample lives under Resources/ next to the .app; in dev
+  // the same relative path resolves into the repo's resources/ folder.
+  const sourcePath = app.isPackaged
+    ? join(process.resourcesPath, 'sample-paper.pdf')
+    : join(__dirname, '../../resources/sample-paper.pdf');
+  if (!existsSync(sourcePath)) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: 'Sample paper missing',
+      detail: `Expected at ${sourcePath}. This is a build problem — please open an issue.`,
+      buttons: ['OK'],
+    });
+    return;
+  }
+  const destDir = app.getPath('documents');
+  const destPath = join(destDir, 'Fathom — Short Tour.pdf');
+  try {
+    const src = await readFile(sourcePath);
+    if (!existsSync(destPath) || Buffer.compare(src, await readFile(destPath)) !== 0) {
+      await writeFile(destPath, src);
+    }
+  } catch (err) {
+    console.warn('[sample] could not copy sample to Documents:', err);
+  }
+  mainWindow.webContents.send('pdf:openExternal', destPath);
+}
+
 function buildAppMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     { role: 'appMenu' },
-    { role: 'fileMenu' },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Open PDF…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            mainWindow?.webContents.send('pdf:openRequest');
+          },
+        },
+        {
+          label: 'Open Sample Paper',
+          click: () => {
+            void openSamplePaper();
+          },
+        },
+        { type: 'separator' },
+        { role: 'close' },
+      ],
+    },
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
@@ -541,20 +610,35 @@ async function maybeShowFirstRunWelcome(win: BrowserWindow): Promise<void> {
       '    • The page gives way to a full-screen lens with a streaming, grounded explanation.\n' +
       '    • Pinch a phrase inside the lens to dive deeper. Swipe back to return.\n\n' +
       'Tip: right-click the Fathom icon in the Dock and choose Options → Keep in Dock so it’s a click away.',
-    buttons: ['Open a PDF…', 'Later'],
+    buttons: ['Try with sample paper', 'Open a PDF…', 'Later'],
     defaultId: 0,
-    cancelId: 1,
+    cancelId: 2,
     noLink: true,
   });
 
   writeSettings({ firstRunCompletedAt: new Date().toISOString() });
 
   if (result.response === 0) {
+    await openSamplePaper();
+  } else if (result.response === 1) {
     // Forward to the existing open-PDF path so the welcome exits straight into
     // the core interaction the user was promised.
-    win.webContents.send('pdf:open-request');
+    win.webContents.send('pdf:openRequest');
   }
 }
+
+// macOS sends `open-file` when a user drags a PDF onto the Fathom dock icon
+// or chooses Open With → Fathom in Finder. If the window is not up yet, we
+// queue the path and replay once it's ready.
+const openFileQueue: string[] = [];
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (mainWindow) {
+    mainWindow.webContents.send('pdf:openExternal', filePath);
+  } else {
+    openFileQueue.push(filePath);
+  }
+});
 
 /**
  * Surface a clear, actionable "Claude Code isn't working" dialog. Called at
@@ -601,6 +685,13 @@ app.whenReady().then(async () => {
     // them to hit the failure through a pinch gesture 3 minutes in.
     await showClaudeHealthDialog(mainWindow);
     await maybeShowFirstRunWelcome(mainWindow);
+
+    // Replay any PDFs the user dragged onto the dock icon / Open-With'd before
+    // the window was ready.
+    while (openFileQueue.length > 0) {
+      const p = openFileQueue.shift()!;
+      mainWindow.webContents.send('pdf:openExternal', p);
+    }
   }
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow();

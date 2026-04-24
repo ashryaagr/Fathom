@@ -65,6 +65,28 @@ export interface PaperState {
 const api = {
   openPdf: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('pdf:open'),
 
+  /** Open a PDF at a specific local path — used by drag-and-drop and the
+   * OS's Open-With / open-file flow. Returns null on bad paths. */
+  openPdfAtPath: (path: string): Promise<OpenedPdf | null> =>
+    ipcRenderer.invoke('pdf:openPath', path),
+
+  /** Main process asking the renderer to pop the Finder dialog
+   * (fires on File → Open PDF… from the app menu and from the first-run
+   * dialog). */
+  onOpenRequest: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('pdf:openRequest', listener);
+    return () => ipcRenderer.removeListener('pdf:openRequest', listener);
+  },
+
+  /** Main process pushing a PDF at the renderer — fires for drag-on-dock,
+   * Finder's Open With, and the Open Sample Paper flow. */
+  onOpenExternal: (handler: (path: string) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, path: string) => handler(path);
+    ipcRenderer.on('pdf:openExternal', listener);
+    return () => ipcRenderer.removeListener('pdf:openExternal', listener);
+  },
+
   explain: (req: ExplainRequest, cb: ExplainCallbacks): Promise<ExplainHandle> =>
     (async () => {
       const { requestId, channel } = (await ipcRenderer.invoke('explain:start', req)) as {
