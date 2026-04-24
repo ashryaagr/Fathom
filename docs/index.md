@@ -60,6 +60,18 @@ Security. Then Fathom opens like any other Mac app.
 
 Apple Silicon · ~200 MB · [full install guide]({{ '/INSTALL' | relative_url }})
 
+## Your data stays yours
+
+Fathom runs entirely on your machine. No telemetry. No analytics. No
+accounts. No server ever sees your PDFs, your explanations, or your
+conversations with Claude. The only network calls are your own Claude
+Code CLI talking to Anthropic on your behalf, and the app's
+auto-updater checking GitHub for new Fathom releases.
+
+Every paper's index and chat history lives under
+`~/Library/Application Support/Fathom/`. Delete that folder any time
+to wipe all of Fathom's state; your PDFs themselves are untouched.
+
 ## Free and open source
 
 Fathom is MIT-licensed and built in the open.

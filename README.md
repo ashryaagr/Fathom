@@ -98,6 +98,18 @@ Grep "self-attention" content.md  # locate where a concept is defined
 
 No retrieval layer, no vector store. The paper is a filesystem; the AI is a shell.
 
+## Your data stays yours
+
+Fathom is open source and runs entirely on your machine. There is no
+telemetry, no analytics, no accounts, and no servers that touch your
+PDFs, your explanations, or your conversations with Claude. The only
+network calls are (a) your existing Claude Code CLI talking to
+Anthropic on your behalf, and (b) the app's auto-updater checking for
+new Fathom releases on GitHub. Every paper's index and chat history
+lives under `~/Library/Application Support/Fathom/`, and you can
+delete that folder at any time to wipe all Fathom state without
+touching the PDFs themselves.
+
 ## Methodology
 
 [docs/METHODOLOGY.md](./docs/METHODOLOGY.md) is the long-form engineering

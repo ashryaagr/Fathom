@@ -22,7 +22,7 @@ import {
   translateClaudeError,
 } from './claudeCheck';
 
-const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs');
+const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs'); // kept as tmp fallback only
 
 // --- Small settings store (last-opened folder, first-run flag, etc). ---
 // One JSON file under Electron's userData dir. Never throws; corruption
@@ -70,21 +70,29 @@ function writeSettings(patch: Partial<FathomSettings>): void {
 const indexDirByHash = new Map<string, string>();
 
 /**
- * Compute the Fathom sidecar folder that sits **next to** the user's PDF:
- *   /path/to/paper.pdf
- *   /path/to/paper.pdf.fathom/         ← everything Fathom-related, one clean folder
- * If we can't write next to the source (permission issue, read-only volume), fall back to
- * the tmp-dir cache keyed by content hash.
+ * Per-paper sidecar folder.
+ *
+ * v1 stored sidecars NEXT TO the PDF (`/path/to/paper.pdf.fathom/`). The
+ * "paper + its state travel together" design was nice but triggered macOS
+ * TCC permission prompts for every PDF sitting in ~/Desktop, ~/Documents,
+ * or ~/Downloads — the three folders users actually keep papers in. Those
+ * prompts were both annoying and privacy-invasive-looking to anyone not
+ * familiar with macOS sandboxing.
+ *
+ * Now sidecars live under Electron's userData dir
+ * (`~/Library/Application Support/Fathom/sidecars/<contentHash>/`), keyed
+ * by SHA-256 of the PDF bytes, so the same paper on any path reuses the
+ * same sidecar. No TCC prompts; no folder clutter next to the user's PDF.
  */
-function resolveIndexDir(pdfPath: string, contentHash: string): string {
-  const preferred = `${pdfPath}.fathom`;
-  return preferred.length > 0 && preferred.includes('/')
-    ? preferred
-    : join(PDF_CACHE_DIR, contentHash);
+function resolveIndexDir(_pdfPath: string, contentHash: string): string {
+  return join(app.getPath('userData'), 'sidecars', contentHash);
 }
 
 function indexDirFor(paperHash: string): string {
-  return indexDirByHash.get(paperHash) ?? join(PDF_CACHE_DIR, paperHash);
+  return (
+    indexDirByHash.get(paperHash) ??
+    join(app.getPath('userData'), 'sidecars', paperHash)
+  );
 }
 
 async function ensureIndexDir(pdfPath: string, contentHash: string): Promise<string> {
@@ -94,7 +102,10 @@ async function ensureIndexDir(pdfPath: string, contentHash: string): Promise<str
     indexDirByHash.set(contentHash, preferred);
     return preferred;
   } catch (err) {
-    console.warn(`Could not create ${preferred}, falling back to tmp cache:`, err);
+    // userData should always be writable, but if something weird (full disk,
+    // filesystem mount issue) blocks us, fall back to the OS tmp dir so the
+    // app at least runs.
+    console.warn(`Could not create ${preferred}, falling back to tmp:`, err);
     const fallback = join(PDF_CACHE_DIR, contentHash);
     await mkdir(fallback, { recursive: true });
     indexDirByHash.set(contentHash, fallback);
