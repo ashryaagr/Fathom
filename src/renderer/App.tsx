@@ -718,12 +718,21 @@ function EmptyState({
   const openSample = useCallback(async () => {
     setSampleLoading(true);
     try {
-      await window.lens.openSample();
-      // Actual document handoff happens via onOpenExternal — no-op here.
+      const result = await window.lens.openSample();
+      if (result?.path) {
+        // Hand off to the same pipeline a drag-drop uses. onOpenPath
+        // runs openPdfAtPath → prepareOpenedPdf → pdf.js load +
+        // setDocument, so the welcome card dismisses naturally.
+        onOpenPath(result.path);
+      } else {
+        console.warn('[sample] openSample returned no path');
+      }
+    } catch (err) {
+      console.warn('[sample] openSample failed', err);
     } finally {
       setSampleLoading(false);
     }
-  }, []);
+  }, [onOpenPath]);
 
   return (
     <div

@@ -220,14 +220,16 @@ ipcMain.handle('pdf:openPath', async (_event, filePath: string) => {
   return prepareOpenedPdf(filePath);
 });
 
-// Renderer-triggered "open the bundled sample paper". Reuses the same
-// copy-into-userData flow the welcome dialog + menu item use, then
-// returns the prepared payload directly to the renderer instead of
-// round-tripping through onOpenExternal.
-ipcMain.handle('pdf:openSample', async () => {
+// Renderer-triggered "give me the local path to the sample paper".
+// Copies the bundled sample into userData (same location the menu
+// flow uses) and hands the path back. The renderer then runs it
+// through the same openPdf(path) pipeline as a drag-dropped PDF —
+// no duplicated bootstrap logic here.
+ipcMain.handle('pdf:openSample', async (): Promise<{ path: string } | null> => {
   const sourcePath = app.isPackaged
     ? join(process.resourcesPath, 'sample-paper.pdf')
     : join(__dirname, '../../resources/sample-paper.pdf');
+  console.log(`[sample] IPC request, source=${sourcePath}`);
   if (!existsSync(sourcePath)) {
     console.warn(`[sample] not found at ${sourcePath}`);
     return null;
@@ -236,13 +238,18 @@ ipcMain.handle('pdf:openSample', async () => {
   const destPath = join(destDir, 'Fathom — Short Tour.pdf');
   try {
     await mkdir(destDir, { recursive: true });
-    const bytes = await readFile(sourcePath);
-    await writeFile(destPath, bytes);
+    if (!existsSync(destPath)) {
+      const bytes = await readFile(sourcePath);
+      await writeFile(destPath, bytes);
+      console.log(`[sample] copied to ${destPath}`);
+    } else {
+      console.log(`[sample] reusing existing copy at ${destPath}`);
+    }
   } catch (err) {
     console.warn('[sample] copy failed', err);
     return null;
   }
-  return prepareOpenedPdf(destPath);
+  return { path: destPath };
 });
 
 interface ExplainRequest extends Omit<ExplainArgs, 'abortController' | 'onDelta'> {

@@ -80,8 +80,12 @@ export interface PaperState {
 const api = {
   openPdf: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('pdf:open'),
 
-  /** Open the bundled sample paper. Same pipeline as a real PDF open. */
-  openSample: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('pdf:openSample'),
+  /** Ask main to materialise the bundled sample paper and hand back
+   * its absolute path. The renderer then routes that path through
+   * the normal `openPdfAtPath` flow, so the sample gets the same
+   * indexing + state restoration as any user-supplied PDF. */
+  openSample: (): Promise<{ path: string } | null> =>
+    ipcRenderer.invoke('pdf:openSample'),
 
   /** Resolve the filesystem path of a dropped File. Electron 32+ removed
    * the non-standard `File.path` property; this is the sanctioned
