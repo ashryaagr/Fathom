@@ -2,7 +2,7 @@
 
 <img src="resources/icon.png" alt="Fathom" width="128" height="128" />
 
-# Dive into any paper.
+<img src="resources/hero.png" alt="Dive into any paper." width="560" />
 
 [![CI](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ashryaagr/Fathom?label=release&color=f59e0b)](https://github.com/ashryaagr/Fathom/releases/latest)

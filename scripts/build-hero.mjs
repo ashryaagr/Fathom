@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+/**
+ * Rasterize a handwritten hero image for the README. Uses whichever
+ * handwritten face is installed on the build machine (Bradley Hand on macOS
+ * by default; falls through to other handwritten families as fallbacks).
+ *
+ * Output: resources/hero.png — referenced via <img> in README.md so the
+ * handwritten look renders regardless of the GitHub viewer's font stack.
+ */
+
+import sharp from 'sharp';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = join(__dirname, '..');
+
+// 2× density so the rendered PNG stays crisp on retina displays.
+const scale = 2;
+const width = 1400;
+const height = 240;
+
+const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <style>
+    text {
+      font-family: 'Bradley Hand', 'Marker Felt', 'Segoe Print', 'Comic Sans MS', cursive;
+      font-weight: 700;
+      fill: #1a1614;
+      letter-spacing: -0.01em;
+    }
+  </style>
+  <text x="${width / 2}" y="170" text-anchor="middle" font-size="132">
+    Dive into any paper.
+  </text>
+</svg>`;
+
+await sharp(Buffer.from(svg), { density: 144 * scale })
+  .resize(width * scale, height * scale)
+  .png({ compressionLevel: 9 })
+  .toFile(join(root, 'resources', 'hero.png'));
+
+console.log('  ✓ resources/hero.png');
