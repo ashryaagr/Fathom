@@ -1,21 +1,81 @@
 # Installing Fathom
 
-Three install paths, in order of ease:
+macOS, Apple Silicon. Two real paths: download the DMG, or build from source.
+Both require the Claude Code CLI at runtime — see [Prerequisites](#prerequisites).
 
-1. [One-line installer](#1-one-line-installer-recommended) — recommended; single copy-paste, no Gatekeeper prompt.
-2. [DMG download](#2-dmg-download) — graphical install; requires one `xattr` command on first launch.
-3. [Build from source](#3-build-from-source) — if you want to modify or inspect the app.
-4. [Dev container](#4-dev-container-docker) — reproducible build environment.
-
-All paths require the Claude Code CLI as a runtime prerequisite. See [Prerequisites](#prerequisites).
+- [1. Download Fathom](#1-download-fathom) — recommended.
+- [2. First launch: approve the app](#2-first-launch-approve-the-app) — the
+  macOS Privacy & Security dialog you'll see once.
+- [3. Prerequisites](#3-prerequisites) — Claude Code CLI.
+- [4. Build from source](#4-build-from-source) — if you want to modify or inspect Fathom.
+- [5. Dev container](#5-dev-container-docker) — Linux-based build environment.
+- [6. Where Fathom stores your data](#6-where-fathom-stores-your-data)
+- [7. Verifying it works](#7-verifying-it-works)
 
 ---
 
-## Prerequisites
+## 1. Download Fathom
+
+**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
+
+| Architecture | Direct link |
+|---|---|
+| Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
+| Apple Silicon, zipped `.app` | [Fathom-arm64-mac.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip) |
+| Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
+
+GitHub resolves `/releases/latest/download/<asset>` to the newest release, so
+these links stay valid across versions.
+
+Double-click the DMG, drag `Fathom.app` onto the Applications folder in the
+DMG window, then close the disk image. The app now lives in `/Applications`.
+
+---
+
+## 2. First launch: approve the app
+
+Fathom v1 is distributed outside the Apple Developer Program, so the first
+time you open it, macOS Gatekeeper will block it. This is standard for any
+non-App-Store app; you approve it once, and it runs normally after that.
+
+**Step-by-step:**
+
+1. Double-click **Fathom** in `/Applications`.
+2. macOS shows a dialog: *"Fathom" can't be opened because Apple cannot check
+   it for malicious software.* Click **Done**.
+3. Open **System Settings** → **Privacy & Security** (the same pane where
+   FileVault and the lock-screen settings live).
+4. Scroll down to the **Security** section. You'll see a line near the bottom:
+   *"Fathom was blocked from use because it is not from an identified
+   developer."* Next to it: an **Open Anyway** button.
+5. Click **Open Anyway**. macOS prompts for your login password (or Touch ID)
+   to confirm.
+6. Fathom relaunches. A final confirmation appears: *"Are you sure you want
+   to open it?"* Click **Open**.
+
+You'll never see these dialogs again for this install. Future launches are
+identical to any other Mac app.
+
+> **Why the extra step?** Apple requires developers to pay $99/year and
+> notarize every build to skip this flow. Fathom is free and opts out of that
+> for v1; the approval above is Apple's sanctioned escape hatch for apps
+> distributed outside the Developer Program. Signed + notarized builds are on
+> the roadmap.
+
+**If the Privacy & Security pane doesn't show the *"Open Anyway"* button** —
+this usually means the DMG was served from a mirror/proxy that stripped the
+app's code signature. Re-download from the [official release
+page](https://github.com/ashryaagr/Fathom/releases/latest), which always
+resolves to the current signed build.
+
+---
+
+## 3. Prerequisites
 
 ### Claude Code CLI (required)
 
-Fathom uses your existing Claude Code authentication — no API key to paste.
+Fathom uses your existing Claude Code authentication — no API key to paste
+anywhere.
 
 ```bash
 # If you don't have claude installed yet:
@@ -29,122 +89,81 @@ which claude
 claude --version
 ```
 
-If `claude` isn't in your PATH, Fathom will fail to generate explanations. The indexing toast will say so.
+If `claude` isn't in your PATH, Fathom will fail to generate explanations and
+the indexing toast will say so. (macOS GUI apps inherit PATH from
+`/usr/libexec/path_helper`, not your shell config, so make sure `claude` is
+installed somewhere in the system PATH — `/usr/local/bin` or `/opt/homebrew/bin`
+both work.)
 
-### poppler (optional)
+### poppler (optional, for now)
 
-Only needed if you want Claude to be able to read the source PDF during the one-time indexing pass (it sees figure pixels that way). After indexing, Fathom uses the cropped figure PNGs stored in the sidecar folder and does not need poppler.
+Needed during the one-time indexing pass if you want Claude to read figure
+pixels straight from the source PDF. After indexing, Fathom uses the cropped
+figure PNGs it wrote to the sidecar folder and does not need poppler again.
 
 ```bash
 brew install poppler
 ```
 
-If you skip poppler, the indexing toast will flip to a red "indexing failed — run `brew install poppler` and reopen the PDF" state. The app still works; results in the lens may be less precise on figure-heavy pages.
+Without poppler, indexing may fail or produce a lower-precision digest on
+figure-heavy papers. Removing this dependency entirely (rendering pages via
+our own pdf.js pipeline during indexing) is on the roadmap.
 
 ---
 
-## 1. One-line installer (recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
-```
-
-What this does, in order:
-1. Downloads the latest `Fathom-arm64.dmg` via `curl` into a temp directory.
-2. Mounts it.
-3. Copies `Fathom.app` to `/Applications` (or `~/Applications` if `/Applications` isn't writable).
-4. Strips any quarantine extended attribute, as a precaution.
-5. Unmounts and cleans up.
-
-**Why this avoids the "damaged" error.** macOS only quarantines files when it can identify a browser / email client / messaging app as the download source. `curl` doesn't mark its downloads, so Gatekeeper never flags the resulting `.app`. The bundle launches with a normal double-click.
-
-Verify:
-```bash
-open -a Fathom            # launches Fathom
-ls /Applications/Fathom.app
-```
-
----
-
-## 2. DMG download
-
-If you prefer a graphical install:
-
-**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
-
-| Architecture | Direct link |
-|---|---|
-| Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
-| Apple Silicon (zipped `.app`) | [Fathom-arm64-mac.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip) |
-| Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
-
-GitHub resolves `/releases/latest/download/<asset>` to the newest release, so these links stay valid across versions.
-
-### First launch — fix the "damaged" error
-
-After you drag `Fathom.app` to `/Applications` and double-click it, macOS will show:
-
-> **"Fathom" is damaged and can't be opened. You should move it to the Trash.**
-
-**The app isn't damaged.** This is macOS Gatekeeper's error for any unsigned application downloaded through a browser. Fix it with one command:
-
-```bash
-xattr -cr /Applications/Fathom.app
-```
-
-Then double-click Fathom. It launches normally from here on — the fix is per-install, not per-launch.
-
-*Why this works:* browsers tag downloaded files with a `com.apple.quarantine` extended attribute. On macOS Ventura and later, Gatekeeper refuses to execute unsigned binaries that carry it. `xattr -cr` strips the tag; the app is otherwise identical.
-
-If you'd rather skip this step entirely, use the [one-line installer](#1-one-line-installer-recommended) above — it downloads via `curl`, which never applies the quarantine flag in the first place.
-
-Signed / notarized builds are planned for a later release (requires an Apple Developer account).
-
----
-
-## 3. Build from source
+## 4. Build from source
 
 ```bash
 git clone https://github.com/ashryaagr/Fathom.git
 cd Fathom
 npm install
-npm run rebuild             # rebuild better-sqlite3 for Electron's Node ABI
+npm run rebuild            # rebuild better-sqlite3 for Electron's Node ABI
 ```
 
 **Run in dev:**
 ```bash
 npm run dev
 ```
-Opens an Electron window with hot-reload for the renderer. Main process changes require restarting (`Ctrl+C` and re-run).
+Opens an Electron window with hot-reload for the renderer. Main-process
+changes require restarting (`Ctrl+C` and re-run).
 
 **Produce a distributable:**
 ```bash
-npm run dist:mac            # arm64 only (default on Apple Silicon)
-npm run dist:mac-intel      # x64 only
-npm run dist:mac-both       # both architectures
+npm run dist:mac           # arm64 (default on Apple Silicon)
+npm run dist:mac-intel     # x64
+npm run dist:mac-both      # both
 ```
 
 Outputs land in `dist/`:
-- `Fathom-<version>-arm64.dmg`
-- `Fathom-<version>-arm64-mac.zip`
+- `Fathom-arm64.dmg`
+- `Fathom-arm64-mac.zip`
+- `latest-mac.yml` (auto-updater metadata)
+
+The build runs an `afterSign` hook (see `electron-builder.config.cjs`) that
+ad-hoc signs the full bundle with `codesign --deep --force --sign -` so the
+resulting app clears Gatekeeper's "damaged" check when downloaded.
 
 **Regenerate the app icon:**
 ```bash
 npm run build-icon
 ```
-Re-rasterizes `resources/icon.svg` into `resources/icon.icns` and `resources/icon.png` used by electron-builder.
+Re-rasterizes `resources/icon.svg` into `resources/icon.icns` and
+`resources/icon.png` used by electron-builder.
 
 ---
 
-## 4. Dev container (Docker)
+## 5. Dev container (Docker)
 
-See [DOCKER.md](./DOCKER.md) for a Linux-based build environment with Node, Python, and Electron build deps pre-installed. Useful for CI and for contributors who don't want to install the full toolchain on their host machine.
+See [DOCKER.md](./DOCKER.md) for a Linux-based build environment with Node,
+Python, and Electron build deps pre-installed. Useful for CI and for
+contributors who don't want to install the full toolchain on their host.
 
-Note: Fathom is a macOS-first desktop app. The Docker image is for **building** and **testing the Node/TypeScript code**, not for running the Electron UI. The DMG still has to be built on a Mac (for the macOS-specific packaging and `iconutil` tooling).
+The Docker image builds and tests the Node/TypeScript code only — the DMG
+itself still has to be produced on a Mac (for `codesign` and `iconutil`).
 
 ---
 
-## Where Fathom stores your data
+## 6. Where Fathom stores your data
 
 Per-paper state lives **next to your PDF file**:
 
@@ -156,13 +175,15 @@ Per-paper state lives **next to your PDF file**:
   │   └── page-003-fig-1.png            ← cropped figures only
   ├── zooms/
   │   └── <lensId>.png                  ← exact viewport crop per lens
-  ├── digest.json                       ← structured section/figure map (if indexed)
+  ├── digest.json                       ← structured section/figure map
   └── MANIFEST.md                       ← layout reference for Claude
 ```
 
-The sidecar folder is portable — move `3d-paper.pdf` together with `3d-paper.pdf.fathom/` to another Mac and your reading session travels.
+The sidecar folder is portable — move `3d-paper.pdf` together with
+`3d-paper.pdf.fathom/` to another Mac and your reading session travels.
 
-SQLite metadata (regions, chat history, zoom-path mappings) lives in macOS app data:
+SQLite metadata (region anchors, Q&A thread, zoom-path mappings) lives in
+macOS app data:
 
 ```
 ~/Library/Application Support/Fathom/lens.db
@@ -177,16 +198,22 @@ rm -rf ~/Library/Application\ Support/Fathom
 
 ---
 
-## Verifying it works
+## 7. Verifying it works
 
 1. Launch Fathom. Window title bar shows `Fathom` when no PDF is open.
 2. Click **Open PDF…** and pick a research paper.
-3. You should see a toast at the bottom-right: **"Indexing paper…"** (spinner). After 10–60 seconds it flips to either green "Paper indexed ✓" or red "Indexing failed — …". If red, follow the error hint (usually "install poppler").
-4. ⌘ + pinch on any paragraph → release ⌘ → the Focus View should open with a streaming explanation within 1-3 seconds.
-5. Open DevTools (Cmd+Option+I) → Console. You'll see `[Fathom] …` lines for every subsystem. If something stalls, the last log line tells you where.
+3. A toast at the bottom-right reads **"Indexing paper…"** (spinner). After
+   10–60 seconds it flips to green **"Paper indexed ✓"** or red **"Indexing
+   failed — …"**. Follow the error hint if red (usually "install poppler").
+4. Hold **⌘** and pinch on any paragraph → release ⌘ → the Focus View opens
+   with a streaming explanation within 1–3 seconds.
+5. DevTools console (Cmd+Option+I) shows `[Fathom] …` lines for every
+   subsystem. If anything stalls, the last log line tells you where.
 
-If step 4 doesn't produce a response, the most likely cause is that `claude` isn't in your PATH. Check:
+If step 4 doesn't produce a response, the most likely cause is that
+`claude` isn't visible to a GUI-launched macOS app. Run:
 ```bash
-which claude
+/Applications/Fathom.app/Contents/MacOS/Fathom
 ```
-from the same shell you launched Fathom from (matters on macOS — GUI apps inherit PATH from `/usr/libexec/path_helper`, not your shell config).
+from Terminal; the app inherits your shell PATH that way. If it works from
+Terminal but not via double-click, add a symlink to `claude` in `/usr/local/bin`.

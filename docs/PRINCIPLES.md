@@ -14,6 +14,7 @@ Short and public version; the longer operational notes stay private.
 
 ## Feel
 
+- **The experience teaches itself.** A user should never need to open the docs to know what to do next. The DMG window shows how to install. The first launch shows what to try. The gesture shows its own affordance. If a step requires reading a README, we've failed the design. This applies everywhere — install, first run, first zoom, every follow-up.
 - **Smooth, not wizard-driven.** Gestures commit on intent, not on a button press. Nothing in Fathom should feel like a step-by-step click-through.
 - **Minimal options, impactful.** No settings dialog, no preferences.
 - **Consistency at every level.** Drilling into a concept from a lens feels identical to opening a lens from the PDF. Recursive, same grammar.

@@ -29,6 +29,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "build-icon": "node scripts/build-icon.mjs",
+    "build-dmg-bg": "node scripts/build-dmg-bg.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64 --config electron-builder.config.cjs",
     "dist:mac-intel": "npm run build && electron-builder --mac --x64 --config electron-builder.config.cjs",
     "dist:mac-both": "npm run build && electron-builder --mac --arm64 --x64 --config electron-builder.config.cjs"

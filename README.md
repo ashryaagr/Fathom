@@ -2,7 +2,7 @@
 
 <img src="resources/icon.png" alt="Fathom" width="128" height="128" />
 
-# Fathom
+# Dive into any paper.
 
 [![CI](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ashryaagr/Fathom?label=release&color=f59e0b)](https://github.com/ashryaagr/Fathom/releases/latest)
@@ -10,23 +10,16 @@
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
-**Reading a research paper is a human-computer interaction problem. We've been solving it badly for forty years.**
+Research papers assume you already know what they mean. Fathom is how you find
+out — pinch on a passage and the page gives way to a lens, with an explanation
+arriving grounded in the paper itself, streaming as you read. Pinch a phrase
+inside to dive deeper. Swipe back, like surfacing.
 
-Fathom is a new reading interaction. Hold **⌘** and pinch on any passage — the
-page gives way to a full-screen lens that explains it, grounded in the paper
-itself, streaming as you read. Drill deeper by pinching on a phrase inside the
-lens. Swipe back, like turning a page. Dive into a concept the way you'd dive
-into water: by depth, recursively, and always coming back to where you were.
+### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
 
-### Install Fathom
+*Apple Silicon · ~200 MB · [first-launch approval](./docs/INSTALL.md#2-first-launch-approve-the-app) is one click in System Settings*
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
-```
-
-*Apple Silicon · ~200 MB · one command, no Gatekeeper prompt*
-
-[Install guide](./docs/INSTALL.md) · [DMG download](#download) · [How it works](#how-it-works) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
+[Install guide](./docs/INSTALL.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
 </div>
 
@@ -47,21 +40,13 @@ When you hit a dense passage, you have two bad options: stop reading and context
 
 **macOS — Apple Silicon**
 
-The recommended path is the one-line installer at the top of this page. It downloads via `curl`, which bypasses macOS's quarantine flag entirely — Fathom launches with a normal double-click, no "damaged" error, no `xattr` incantations.
-
-If you'd rather install manually:
-
 **→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
 
 That link always resolves to the most recent release. Zipped `.app` at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
 
-After you drag Fathom to `/Applications`, macOS's Gatekeeper will block the first launch with *"Fathom is damaged and can't be opened"* — this is a false alarm for unsigned apps, not actual corruption. Clear it with:
+### First launch
 
-```bash
-xattr -cr /Applications/Fathom.app
-```
-
-Then double-click Fathom normally. One-time fix per install. Full details in [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
+Fathom v1 isn't enrolled in the Apple Developer Program, so macOS asks you to approve it the first time you open it — a one-time click in **System Settings → Privacy & Security → Open Anyway**. Full walkthrough in the [install guide](./docs/INSTALL.md#2-first-launch-approve-the-app). After that, Fathom launches like any other Mac app.
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 

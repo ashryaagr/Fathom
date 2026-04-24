@@ -1,0 +1,42 @@
+title: Fathom
+tagline: A new reading interaction for research papers.
+description: >-
+  Fathom is a macOS PDF reader built around one gesture: hold ⌘ and pinch on
+  any passage — a full-screen lens opens with a streaming, grounded
+  explanation from Claude. Reading papers, redesigned as a human-computer
+  interaction problem.
+url: https://ashryaagr.github.io
+baseurl: /Fathom
+
+theme: jekyll-theme-cayman
+remote_theme: pages-themes/cayman@v0.2.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-readme-index
+  - jekyll-default-layout
+  - jekyll-titles-from-headings
+
+# Render plain-Markdown files (no front-matter) through the theme.
+relative_links:
+  enabled: true
+  collections: true
+readme_index:
+  enabled: true
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+include:
+  - INSTALL.md
+  - PRINCIPLES.md
+  - DOCKER.md
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

@@ -1,13 +1,25 @@
 /**
- * electron-builder config for Lens.
+ * electron-builder config for Fathom.
  *
- * v1 is unsigned (identity: null). macOS will warn on first launch; users must
- * right-click the app and choose "Open" once, or run `xattr -cr /Applications/Lens.app`
- * after dragging it to Applications.
+ * v1 is distributed without an Apple Developer ID. We do, however, consistently
+ * ad-hoc sign the full app bundle ourselves in the `afterSign` hook below —
+ * without that, the linker-level signature Apple applies to arm64 Mach-O
+ * binaries at build time disagrees with the unsigned bundle state, and
+ * Gatekeeper reports the downloaded app as "damaged and can't be opened"
+ * (a hard block with no right-click → Open escape on macOS Ventura+).
  *
- * The DMG is self-contained — all native modules (better-sqlite3) are rebuilt for
- * Electron's Node ABI via @electron/rebuild before the pack step.
+ * With the afterSign hook in place the app reports as "unidentified developer"
+ * instead, which users can approve once via System Settings → Privacy &
+ * Security → Open Anyway. This is Apple's sanctioned user-approval path for
+ * apps distributed outside the Developer Program.
+ *
+ * When an Apple Developer ID becomes available, set `mac.identity` to the
+ * certificate's Common Name, flip `hardenedRuntime` to true, and add notarize
+ * credentials — the afterSign hook becomes redundant and should be removed.
  */
+
+const { execSync } = require('node:child_process');
+
 module.exports = {
   appId: 'com.ashrya.fathom',
   productName: 'Fathom',
@@ -33,8 +45,8 @@ module.exports = {
     // Claude Agent SDK spawns the `claude` binary and needs access to its mjs files.
     'node_modules/@anthropic-ai/claude-agent-sdk/**',
   ],
-  // Versionless asset names so a stable "latest" download URL (see README) always
-  // resolves to the current DMG/zip without needing to re-edit the link each release.
+  // Versionless asset names so the stable /releases/latest/download/<asset>
+  // URL always resolves to the current DMG/zip across releases.
   artifactName: 'Fathom-${arch}.${ext}',
   mac: {
     category: 'public.app-category.productivity',
@@ -42,19 +54,21 @@ module.exports = {
       { target: 'dmg' },
       { target: 'zip' },
     ],
-    identity: null,
+    identity: null,             // We handle ad-hoc signing ourselves in afterSign.
     hardenedRuntime: false,
     gatekeeperAssess: false,
     icon: 'resources/icon.icns',
   },
   dmg: {
     title: 'Fathom ${version}',
-    writeUpdateInfo: false,
     sign: false,
     icon: 'resources/icon.icns',
+    background: 'resources/dmg-background.png',
+    window: { width: 680, height: 460 },
     contents: [
-      { x: 130, y: 220, type: 'file' },
-      { x: 410, y: 220, type: 'link', path: '/Applications' },
+      // Coordinates must align with the drop-zones drawn in dmg-background.svg.
+      { x: 180, y: 180, type: 'file' },
+      { x: 500, y: 180, type: 'link', path: '/Applications' },
     ],
   },
   // Bundle native modules for the target Electron version.
@@ -69,4 +83,18 @@ module.exports = {
       releaseType: 'release',
     },
   ],
+  // electron-builder's signing pass is a no-op (identity: null); this hook runs
+  // right after it, before the DMG is assembled, and ad-hoc signs the whole app
+  // bundle consistently. Without this, `codesign --verify` reports:
+  //   "code has no resources but signature indicates they must be present"
+  // and Gatekeeper refuses to launch the downloaded app with the "damaged"
+  // error on macOS Ventura+.
+  afterSign: async (context) => {
+    if (context.packager.platform.name !== 'mac') return;
+    const appPath = `${context.appOutDir}/${context.packager.appInfo.productFilename}.app`;
+    console.log(`\n[afterSign] ad-hoc signing ${appPath}`);
+    execSync(`codesign --deep --force --sign - "${appPath}"`, { stdio: 'inherit' });
+    execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: 'inherit' });
+    console.log('[afterSign] signature verified ✓\n');
+  },
 };
