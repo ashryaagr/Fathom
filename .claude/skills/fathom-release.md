@@ -67,9 +67,36 @@ gh release create "v$VERSION" \
 
 ## Mandatory end-to-end verification (do not skip)
 
-Lessons from v1.0.0 → v1.0.1: the update path looked right in code and
-failed in the real world. Every release **must** be verified with a
-real version-bump install before it's declared done.
+Lessons from v1.0.0 → v1.0.1 and v1.0.1 → v1.0.2: update paths that
+look right in code have twice failed in the real world. Every
+release **must** be verified with a real version-bump install before
+it's declared done.
+
+### Special case: the release changes updater.ts
+
+If this release modifies `src/main/updater.ts` — including config
+flags like `autoDownload` / `autoInstallOnAppQuit`, the download
+pipeline, or the install trigger — treat it as a **migration
+release**, not a normal update. Existing users on v(N-1) cannot
+auto-update to v(N), because the bit that's broken on v(N-1) is
+exactly the bit that would have fetched v(N). They're stuck behind
+the old updater.
+
+Required actions for a migration release:
+
+1. **Call it out in release notes, at the top.** "If you're on
+   v(N-1), run this one-liner once to catch up:
+   `curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash`"
+   then a sentence explaining why.
+2. **Actively quit-and-reinstall the test machine.** You cannot
+   confirm v(N-1) → v(N) automatic update for a migration release
+   — that's the expected failure. Instead, verify that the
+   one-liner upgrade path works, and that v(N) → v(N+1) auto
+   update works (see the normal test loop below).
+3. **From v(N) onwards, the updater is fixed.** Future auto-
+   updates land without intervention.
+
+### Normal (non-migration) release test loop
 
 ```bash
 # In a separate terminal, install the PREVIOUS version and watch it update:
