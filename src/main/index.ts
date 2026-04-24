@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, globalShortcut } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -370,6 +370,44 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
 
 // Renderer-invoked "Show log" — used by the error toast so a user can share
 // the log file in one click without hunting through Help menus.
+// ── QA offscreen capture ─────────────────────────────────────────
+// Captures the renderer's current pixels via webContents.capturePage
+// and writes them to a caller-supplied path. Works with the window
+// hidden or occluded — no screen-area capture, so the user's other
+// apps aren't disrupted by flashes or focus steals. Only available
+// in packaged builds where BrowserWindow is real.
+ipcMain.handle('qa:capture', async (_e, destPath?: string): Promise<string> => {
+  if (!mainWindow || mainWindow.isDestroyed()) return '';
+  try {
+    const image = await mainWindow.webContents.capturePage();
+    const out = destPath && destPath.startsWith('/')
+      ? destPath
+      : join(tmpdir(), 'fathom-shots', `${Date.now()}.png`);
+    const dir = dirname(out);
+    await mkdir(dir, { recursive: true });
+    await writeFile(out, image.toPNG());
+    return out;
+  } catch (err) {
+    console.warn('[QA] capture failed', err);
+    return '';
+  }
+});
+
+// Fires the sample-paper flow without needing the renderer's DOM
+// button to be clickable. Used by the QA harness to bypass the
+// accessibility-layer brittleness of osascript `click button "..."`.
+ipcMain.handle('qa:openSample', async (): Promise<string> => {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('qa:triggerSample');
+    }
+    return 'dispatched';
+  } catch (err) {
+    console.warn('[QA] openSample failed', err);
+    return 'error';
+  }
+});
+
 // Renderer → main log bridge. Renderer components (gesture handlers,
 // lens pipeline, error boundaries) call window.lens.logDev(…) and the
 // payload lands in fathom.log alongside the main-process lines. This
@@ -932,6 +970,32 @@ app.whenReady().then(async () => {
       const p = openFileQueue.shift()!;
       safeSend('pdf:openExternal', p);
     }
+
+    // QA harness entry points. Global shortcuts fire regardless of
+    // which app is frontmost, so the harness can drive a hidden
+    // (`open -gj`) Fathom without stealing focus from the user's
+    // other work on the same machine. F9 / F10 are free on stock
+    // macOS — the Function-key chassis apps (volume, brightness)
+    // use F11 / F12 / media glyphs.
+    globalShortcut.register('CommandOrControl+Shift+F9', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('qa:triggerSample');
+      }
+    });
+    globalShortcut.register('CommandOrControl+Shift+F10', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const destPath = join(tmpdir(), 'fathom-shots', `${Date.now()}-qa.png`);
+      void (async () => {
+        try {
+          const img = await mainWindow.webContents.capturePage();
+          await mkdir(dirname(destPath), { recursive: true });
+          await writeFile(destPath, img.toPNG());
+          console.log('[QA] offscreen capture →', destPath);
+        } catch (err) {
+          console.warn('[QA] offscreen capture failed', err);
+        }
+      })();
+    });
   }
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow();
@@ -940,4 +1004,11 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Release any global shortcuts we registered — macOS otherwise
+// keeps them alive after the app quits, which would block the same
+// key combo for other apps.
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });

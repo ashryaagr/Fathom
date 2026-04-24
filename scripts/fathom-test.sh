@@ -50,15 +50,59 @@ print('flags cleared')
   launch)
     pkill -x Fathom 2>/dev/null || true
     sleep 1
-    open -a Fathom
-    echo "launched"
+    # `-g` = don't bring Fathom to the foreground (keeps the user's
+    # current app focused). `-j` = launch hidden. Together: Fathom
+    # starts invisibly and the QA harness drives it via global
+    # shortcuts + offscreen capture. No flicker, no focus steal.
+    open -gj -a Fathom
+    echo "launched (hidden)"
     ;;
 
+  # Legacy full-display screencapture. Left intact for ad-hoc
+  # inspection; the QA flow should use `capture` instead, which is
+  # non-disruptive.
   shot)
     name="${2:-state}"
     path="$SHOTDIR/$(date +%H%M%S)-$name.png"
     screencapture -x "$path"
     echo "$path"
+    ;;
+
+  # Non-disruptive QA screenshot. Fires the global shortcut ⌘⇧F10,
+  # which the main process catches and calls webContents.capturePage
+  # on. PNG lands under /tmp/fathom-shots/<ts>-qa.png regardless of
+  # whether Fathom's window is visible, hidden, or occluded — no
+  # screen-region capture, so the user's other apps aren't disturbed.
+  capture)
+    name="${2:-state}"
+    before_ts=$(date +%s)
+    # key code 109 = F10 on macOS (stable across keyboard layouts).
+    osascript -e 'tell application "System Events" to key code 109 using {command down, shift down}' 2>/dev/null
+    # Poll for the resulting file — capturePage is typically <300 ms.
+    for i in $(seq 1 40); do
+      latest=$(ls -t "$SHOTDIR"/*-qa.png 2>/dev/null | head -1)
+      if [[ -n "$latest" ]]; then
+        mtime=$(stat -f %m "$latest" 2>/dev/null || echo 0)
+        if (( mtime >= before_ts )); then
+          renamed="$SHOTDIR/$(date +%H%M%S)-$name.png"
+          mv "$latest" "$renamed"
+          echo "$renamed"
+          exit 0
+        fi
+      fi
+      sleep 0.15
+    done
+    echo "(capture timeout — is Fathom running? check with: pgrep -x Fathom)" >&2
+    exit 1
+    ;;
+
+  # ⌘⇧F9 — trigger the bundled sample paper to open. Works even when
+  # Fathom is hidden / background because it's a global shortcut
+  # registered by the main process.
+  sample)
+    # key code 101 = F9 on macOS.
+    osascript -e 'tell application "System Events" to key code 101 using {command down, shift down}' 2>/dev/null
+    echo "(sample requested)"
     ;;
 
   log)
@@ -127,7 +171,9 @@ EOF
     ;;
 
   *)
-    echo "usage: $0 {reset|launch|shot [name]|log [n]|click <label>|key <keycode>|dive|ask|back|forward|prefs|open-pdf}" >&2
+    echo "usage: $0 {reset|launch|shot [name]|capture [name]|sample|log [n]|click <label>|key <keycode>|dive|ask|back|forward|prefs|open-pdf}" >&2
+    echo "       capture = non-disruptive offscreen screenshot via ⌘⇧F10 global shortcut (preferred for QA)" >&2
+    echo "       sample  = open the bundled sample paper via ⌘⇧F9 global shortcut" >&2
     exit 1
     ;;
 esac

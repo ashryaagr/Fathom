@@ -128,6 +128,21 @@ const api = {
     data?: unknown,
   ): Promise<void> => ipcRenderer.invoke('log:dev', { level, tag, message, data }),
 
+  /** QA-harness offscreen capture. Returns the saved PNG path, or
+   * empty string on failure. Uses webContents.capturePage so the
+   * window can be hidden/occluded without breaking the shot. */
+  qaCapture: (destPath?: string): Promise<string> =>
+    ipcRenderer.invoke('qa:capture', destPath),
+
+  /** QA-harness: dispatch a trigger event into the renderer so the
+   * welcome card can open the sample paper without an osascript
+   * button click. */
+  onQaTriggerSample: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerSample', listener);
+    return () => ipcRenderer.removeListener('qa:triggerSample', listener);
+  },
+
   // ---- settings (tiny JSON under userData) ----
   getSettings: (): Promise<{
     lastOpenDir?: string;

@@ -247,6 +247,17 @@ export default function App() {
         return;
       }
 
+      // ⌘⇧T — open the bundled sample paper. Keyboard-accessible
+      // equivalent of the welcome-card "Try with sample paper"
+      // button, specifically to give the QA harness a path that
+      // doesn't depend on osascript's accessibility-tree click
+      // (which in Electron apps is brittle).
+      if (e.metaKey && e.shiftKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('fathom:openSample'));
+        return;
+      }
+
       // ⌘[ — back through lens history (swipe right equivalent).
       if (e.metaKey && !e.shiftKey && e.key === '[') {
         e.preventDefault();
@@ -307,6 +318,30 @@ export default function App() {
     () => window.lens.onOpenExternal((path) => void openPdf(path)),
     [openPdf],
   );
+
+  // Sample-paper open path shared by the welcome-card button, the
+  // ⌘⇧T keyboard shortcut, and the `qa:openSample` IPC. Keeps all
+  // three entry points calling the same pipeline so QA harness,
+  // keyboard users, and mouse users can't drift out of sync.
+  const openSampleShared = useCallback(async () => {
+    try {
+      const result = await window.lens.openSample();
+      if (result?.path) void openPdf(result.path);
+      else console.warn('[sample] openSample returned no path');
+    } catch (err) {
+      console.warn('[sample] openSample failed', err);
+    }
+  }, [openPdf]);
+
+  useEffect(() => {
+    const onKey = () => void openSampleShared();
+    window.addEventListener('fathom:openSample', onKey);
+    const unsubscribe = window.lens.onQaTriggerSample(() => void openSampleShared());
+    return () => {
+      window.removeEventListener('fathom:openSample', onKey);
+      unsubscribe();
+    };
+  }, [openSampleShared]);
 
   // Drag-and-drop anywhere on the window. Electron 32+ removed the
   // non-standard `File.path` extension; we resolve the filesystem path
@@ -546,6 +581,8 @@ export default function App() {
           <button
             onClick={() => void openPdf()}
             className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
+            title="Open a PDF from disk (⌘O)"
+            aria-label="Open a PDF"
           >
             Open…
           </button>
