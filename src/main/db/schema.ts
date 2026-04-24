@@ -117,6 +117,25 @@ function migrate(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_lens_anchors_paper ON lens_anchors(paper_hash);
 
+    -- Lens highlights: amber marks the user drops inside a LENS body
+    -- (not on the PDF page). PDF highlights store rects in user-space
+    -- and re-render at any zoom; lens highlights can't because the
+    -- markdown body re-flows. Instead we store the selected text and
+    -- the lens_id, then re-find that text in the body on render and
+    -- wrap it. Same UI affordance as the PDF highlight, different
+    -- anchor mechanism. CLAUDE.md §2.4 ("highlighter should work
+    -- inside the lens too").
+    CREATE TABLE IF NOT EXISTS lens_highlights (
+      id TEXT PRIMARY KEY,
+      lens_id TEXT NOT NULL,
+      paper_hash TEXT NOT NULL,
+      selected_text TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT 'amber',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_lens_highlights_lens ON lens_highlights(lens_id);
+    CREATE INDEX IF NOT EXISTS idx_lens_highlights_paper ON lens_highlights(paper_hash);
+
     -- Lens turns: chat history keyed by lens_id (not region_id) so
     -- viewport-origin and drill-origin lenses — which have no
     -- regionId — get their answers persisted too. The legacy

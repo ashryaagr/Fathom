@@ -105,10 +105,40 @@ module.exports = {
   //   "code has no resources but signature indicates they must be present"
   // and Gatekeeper refuses to launch the downloaded app with the "damaged"
   // error on macOS Ventura+.
+  //
+  // We also patch Info.plist here to add LSItemContentTypes (UTI-based
+  // file associations) before signing — without it, modern macOS often
+  // refuses to surface Fathom in Finder's "Open With" menu even though
+  // CFBundleTypeExtensions=['pdf'] is declared. UTI is the post-Mojave
+  // canonical path; the legacy extension list is treated as advisory.
+  // Modifying the plist after codesign would invalidate the signature,
+  // so this happens FIRST inside afterSign, then the codesign call
+  // signs the already-patched bundle.
   afterSign: async (context) => {
     if (context.packager.platform.name !== 'mac') return;
     const appPath = `${context.appOutDir}/${context.packager.appInfo.productFilename}.app`;
-    console.log(`\n[afterSign] ad-hoc signing ${appPath}`);
+    const plistPath = `${appPath}/Contents/Info.plist`;
+
+    console.log(`\n[afterSign] patching ${plistPath}: add LSItemContentTypes=com.adobe.pdf`);
+    // Best-effort delete in case a re-run already added it; ignore failure.
+    try {
+      execSync(
+        `/usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes:0:LSItemContentTypes" "${plistPath}"`,
+        { stdio: 'pipe' },
+      );
+    } catch (_e) {
+      /* not present yet — that's the normal case */
+    }
+    execSync(
+      `/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "${plistPath}"`,
+      { stdio: 'inherit' },
+    );
+    execSync(
+      `/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string com.adobe.pdf" "${plistPath}"`,
+      { stdio: 'inherit' },
+    );
+
+    console.log(`[afterSign] ad-hoc signing ${appPath}`);
     execSync(`codesign --deep --force --sign - "${appPath}"`, { stdio: 'inherit' });
     execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: 'inherit' });
     console.log('[afterSign] signature verified ✓\n');

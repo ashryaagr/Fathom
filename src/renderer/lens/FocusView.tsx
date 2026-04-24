@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -6,6 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import DOMPurify from 'dompurify';
 import { useLensStore, type FocusedLens, type Turn } from './store';
+import { useLensHighlightsStore } from '../state/lensHighlights';
 import { useTourStore } from './tourStore';
 import {
   streamExplanationForFocused,
@@ -293,7 +294,11 @@ function FocusPane({
       </header>
 
       {/* Body */}
-      <main className="relative z-10 flex-1 overflow-y-auto" ref={bodyRef}>
+      <main
+        className="relative z-10 flex-1 overflow-y-auto"
+        ref={bodyRef}
+        data-lens-id={focused.id}
+      >
         <div className="mx-auto flex w-full max-w-[720px] flex-col gap-5 px-8 pt-8 pb-20">
           {focused.anchorImage ? (
             <figure className="overflow-hidden rounded-lg border border-black/10 bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
@@ -367,14 +372,12 @@ function FocusPane({
             </details>
           )}
 
-          {/* In-lens drill markers — the recursive equivalent of
-              PDF-page markers. Phase 2 surfaces them as amber pills
-              at the top of the body, one per phrase the user has
-              previously drilled from this lens. Click → open the
-              child lens. Phase 3 will inline these next to the
-              actual phrase in the prose; for now the pills are the
-              visible affordance. CLAUDE.md §2.1. */}
-          <DrillMarkers focused={focused} />
+          {/* Drill markers are now inlined next to the phrase they
+              point at, inside MarkdownBody — see CLAUDE.md §2.1
+              ("right next to the paragraph, column-aware"). The old
+              chip-row variant lived here in v1.0.11–14 and violated
+              that principle by hoisting all drills to the top of the
+              body; replaced in v1.0.15. */}
 
           {/* Auto-scroll target — on mount we land just above the first turn so the
               streaming answer is the primary thing visible. Anchor stays above for context. */}
@@ -382,7 +385,7 @@ function FocusPane({
 
           <div className="flex flex-col gap-8">
             {focused.turns.map((turn, i) => (
-              <TurnBlock key={i} turn={turn} index={i} />
+              <TurnBlock key={i} turn={turn} index={i} focused={focused} />
             ))}
           </div>
         </div>
@@ -426,7 +429,7 @@ function FocusPane({
   );
 }
 
-function TurnBlock({ turn, index }: { turn: Turn; index: number }) {
+function TurnBlock({ turn, index, focused }: { turn: Turn; index: number; focused: FocusedLens }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 6 }}
@@ -470,7 +473,7 @@ function TurnBlock({ turn, index }: { turn: Turn; index: number }) {
           style={{ fontFamily: 'var(--font-handwritten)' }}
         >
           {turn.body ? (
-            <MarkdownBody body={turn.body} streaming={turn.streaming} />
+            <MarkdownBody body={turn.body} streaming={turn.streaming} focused={focused} turnIndex={index} />
           ) : turn.streaming ? (
             <ThinkingIndicator />
           ) : null}
@@ -687,9 +690,125 @@ function SvgFigure({ raw, streaming: _streaming }: { raw: string; streaming?: bo
   );
 }
 
-function MarkdownBody({ body, streaming = false }: { body: string; streaming?: boolean }) {
+function MarkdownBody({
+  body,
+  streaming = false,
+  focused,
+  turnIndex,
+}: {
+  body: string;
+  streaming?: boolean;
+  /** When provided, drilled phrases inside this body get an inline
+   * amber marker next to them — the recursive equivalent of the
+   * PDF-page marker. CLAUDE.md §2.1: "Markers are always present.
+   * Right next to the paragraph it belongs to." Without this prop
+   * (e.g. parentBody preview) the body renders as plain markdown. */
+  focused?: FocusedLens;
+  turnIndex?: number;
+}) {
   const processed = preprocessForStreaming(body, streaming);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Drill edges originating from THIS lens. Selecting the Map itself
+  // (not `Map.get()`) keeps the Zustand selector reference-stable —
+  // the §1a rule that keeps biting us when forgotten.
+  const drillEdgesMap = useLensStore((s) => s.drillEdges);
+  const cache = useLensStore((s) => s.cache);
+  const lensOpen = useLensStore((s) => s.open);
+  const lensDrillOn = useLensStore((s) => s.drillOn);
+  const allEdges = useMemo(
+    () => (focused ? (drillEdgesMap.get(focused.id) ?? []) : []),
+    [drillEdgesMap, focused],
+  );
+  // Restrict each edge to the turn it was drilled FROM. A drill on a
+  // phrase inside turn 2 should mark only that turn's body — not turn
+  // 0 — even when both turns happen to contain the same word. Edges
+  // missing turnIndex (legacy) fall back to "any turn" for back-compat.
+  const edges = useMemo(() => {
+    if (typeof turnIndex !== 'number') return allEdges;
+    return allEdges.filter((e) => e.turnIndex === turnIndex || e.turnIndex == null);
+  }, [allEdges, turnIndex]);
+
+  const reopenChild = useCallback(
+    (childLensId: string, selection: string) => {
+      if (!focused) return;
+      const cached = cache.get(childLensId);
+      if (cached && cached.length > 0) {
+        lensOpen({
+          id: childLensId,
+          origin: 'drill',
+          paperHash: focused.paperHash,
+          page: focused.page,
+          bbox: focused.bbox,
+          sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
+          anchorText: selection,
+          focusPhrase: selection.slice(0, 64),
+          prevTexts: [],
+          nextTexts: [],
+          parentBody: null,
+          regionId: focused.regionId,
+          turns: cached.map((t) => ({ ...t, streaming: false })),
+        });
+        return;
+      }
+      // Cache miss — fall through to a fresh drill on the same selection.
+      lensDrillOn({
+        sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
+        selection,
+      });
+    },
+    [focused, cache, lensOpen, lensDrillOn],
+  );
+
+  // Wrap each previously-drilled phrase in the rendered body with an
+  // amber-underlined span + a tiny dot — clicking re-opens the child
+  // lens. Runs after react-markdown commits the DOM. Skipped while
+  // streaming because the body re-renders on every delta and the
+  // marker would flicker; users only reach the drill state on a
+  // settled body anyway.
+  useLayoutEffect(() => {
+    if (streaming) return;
+    if (!focused) return;
+    if (edges.length === 0) return;
+    const root = containerRef.current;
+    if (!root) return;
+    return injectInlineDrillMarkers(root, edges, reopenChild);
+  }, [edges, streaming, focused, body, reopenChild]);
+
+  // In-lens highlights — same DOM-walking approach as drill markers,
+  // different visual (solid amber background, no dot). Walks the body
+  // after each render and wraps each persisted selectedText. Streaming
+  // re-renders skip the wrap so the highlight doesn't flicker; users
+  // only highlight on settled bodies.
+  const lensHighlightsByLens = useLensHighlightsStore((s) => s.byLens);
+  const lensHighlightsById = useLensHighlightsStore((s) => s.byId);
+  const lensHighlightRemove = useLensHighlightsStore((s) => s.remove);
+  const lensHighlights = useMemo(() => {
+    if (!focused) return [];
+    const ids = lensHighlightsByLens.get(focused.id) ?? [];
+    return ids
+      .map((id) => lensHighlightsById.get(id))
+      .filter((h): h is NonNullable<typeof h> => !!h);
+  }, [lensHighlightsByLens, lensHighlightsById, focused]);
+
+  useLayoutEffect(() => {
+    if (streaming) return;
+    if (!focused) return;
+    if (lensHighlights.length === 0) return;
+    const root = containerRef.current;
+    if (!root) return;
+    return injectInlineLensHighlights(root, lensHighlights, async (id) => {
+      lensHighlightRemove(id);
+      try {
+        await window.lens.deleteLensHighlight?.(id);
+      } catch (err) {
+        console.warn('[LensHighlights] delete failed', err);
+      }
+    });
+  }, [lensHighlights, streaming, focused, body, lensHighlightRemove]);
+
   return (
+    <div ref={containerRef}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
@@ -765,7 +884,215 @@ function MarkdownBody({ body, streaming = false }: { body: string; streaming?: b
     >
       {processed}
     </ReactMarkdown>
+    </div>
   );
+}
+
+/**
+ * Walks the rendered markdown body and wraps each occurrence of every
+ * drilled phrase with an inline amber marker — clickable, opens the
+ * child lens. Returns a cleanup that removes the markers (used when
+ * react-markdown re-renders and our wrapping is about to be replaced
+ * anyway, but the explicit cleanup keeps things tidy if a future
+ * rerun mutates the same DOM tree).
+ *
+ * Implementation notes:
+ *   - Walks text nodes only; never touches element-level structure.
+ *   - Sorts phrases longest-first to avoid a shorter substring
+ *     "stealing" a position before a longer phrase has a chance to
+ *     match.
+ *   - Skips text nodes that are already inside a `.fathom-drill-mark`
+ *     span so re-runs are idempotent.
+ *   - Wraps only the FIRST occurrence of each phrase. Marking every
+ *     repetition would over-decorate and dilute the affordance.
+ */
+function injectInlineDrillMarkers(
+  root: HTMLElement,
+  edges: Array<{ childLensId: string; selection: string; turnIndex: number }>,
+  onClick: (childLensId: string, selection: string) => void,
+): () => void {
+  const insertedSpans: HTMLSpanElement[] = [];
+  const sorted = [...edges].sort((a, b) => b.selection.length - a.selection.length);
+
+  for (const edge of sorted) {
+    const phrase = edge.selection.trim();
+    if (phrase.length < 3) continue;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        // Reject text inside an existing marker so re-runs don't double-wrap.
+        let p: HTMLElement | null = node.parentElement;
+        while (p && p !== root) {
+          if (p.classList?.contains('fathom-drill-mark')) return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let textNode: Text | null = null;
+    let foundIdx = -1;
+    let candidate: Node | null = walker.nextNode();
+    while (candidate) {
+      const text = candidate.textContent ?? '';
+      const idx = text.indexOf(phrase);
+      if (idx !== -1) {
+        textNode = candidate as Text;
+        foundIdx = idx;
+        break;
+      }
+      candidate = walker.nextNode();
+    }
+    if (!textNode || foundIdx === -1) continue;
+
+    const before = textNode.textContent!.slice(0, foundIdx);
+    const after = textNode.textContent!.slice(foundIdx + phrase.length);
+
+    const mark = document.createElement('span');
+    mark.className = 'fathom-drill-mark';
+    mark.textContent = phrase;
+    mark.title = `Re-open: "${phrase}"`;
+    mark.dataset.childLensId = edge.childLensId;
+    mark.style.cssText = [
+      'cursor: pointer',
+      'background-image: linear-gradient(transparent 70%, var(--color-lens-soft) 70%)',
+      'border-bottom: 1.5px solid var(--color-lens)',
+      'padding: 0 1px',
+      'transition: background-color 120ms ease',
+    ].join('; ');
+    // Tiny amber dot rendered via ::after — closer to the §2.3
+    // "amber dot" affordance than just the underline. Implemented as
+    // an inline-block sibling because pseudo-elements on inline
+    // <span> can't be reliably positioned across browsers.
+    const dot = document.createElement('span');
+    dot.setAttribute('aria-hidden', 'true');
+    dot.style.cssText = [
+      'display: inline-block',
+      'width: 6px',
+      'height: 6px',
+      'margin-left: 4px',
+      'border-radius: 50%',
+      'background: var(--color-lens)',
+      'box-shadow: 0 0 0 1.5px rgba(255,255,255,0.85)',
+      'vertical-align: middle',
+    ].join('; ');
+
+    const onClickHandler = (ev: MouseEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onClick(edge.childLensId, edge.selection);
+    };
+    mark.addEventListener('click', onClickHandler);
+
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+    if (before) parent.insertBefore(document.createTextNode(before), textNode);
+    parent.insertBefore(mark, textNode);
+    parent.insertBefore(dot, textNode);
+    if (after) parent.insertBefore(document.createTextNode(after), textNode);
+    parent.removeChild(textNode);
+    insertedSpans.push(mark);
+    insertedSpans.push(dot);
+  }
+
+  return () => {
+    for (const span of insertedSpans) {
+      if (!span.isConnected) continue;
+      span.replaceWith(...Array.from(span.childNodes));
+    }
+  };
+}
+
+/**
+ * Wrap each persisted in-lens highlight's selected text with an amber
+ * background, click-to-delete. Same DOM-walking approach as the drill
+ * markers, but flat amber instead of underline+dot. Symmetry with the
+ * PDF-page highlight (`HighlightLayer.tsx`) is the goal — visually a
+ * highlight is a highlight regardless of whether it's on the page or
+ * in the lens body.
+ */
+function injectInlineLensHighlights(
+  root: HTMLElement,
+  highlights: Array<{ id: string; selectedText: string }>,
+  onDelete: (id: string) => void,
+): () => void {
+  const insertedSpans: HTMLSpanElement[] = [];
+  const sorted = [...highlights].sort(
+    (a, b) => b.selectedText.length - a.selectedText.length,
+  );
+
+  for (const h of sorted) {
+    const phrase = h.selectedText.trim();
+    if (phrase.length < 2) continue;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        let p: HTMLElement | null = node.parentElement;
+        while (p && p !== root) {
+          if (
+            p.classList?.contains('fathom-lens-highlight') ||
+            p.classList?.contains('fathom-drill-mark')
+          ) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          p = p.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let textNode: Text | null = null;
+    let foundIdx = -1;
+    let candidate: Node | null = walker.nextNode();
+    while (candidate) {
+      const text = candidate.textContent ?? '';
+      const idx = text.indexOf(phrase);
+      if (idx !== -1) {
+        textNode = candidate as Text;
+        foundIdx = idx;
+        break;
+      }
+      candidate = walker.nextNode();
+    }
+    if (!textNode || foundIdx === -1) continue;
+
+    const before = textNode.textContent!.slice(0, foundIdx);
+    const after = textNode.textContent!.slice(foundIdx + phrase.length);
+
+    const mark = document.createElement('span');
+    mark.className = 'fathom-lens-highlight';
+    mark.textContent = phrase;
+    mark.title = 'Click to remove highlight';
+    mark.dataset.highlightId = h.id;
+    mark.style.cssText = [
+      'background: rgba(201,131,42,0.28)',
+      'cursor: pointer',
+      'padding: 0 1px',
+      'border-radius: 2px',
+    ].join('; ');
+    mark.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      // Bare confirmation via the title; on click, treat as
+      // remove-confirm (same UX as PDF highlight).
+      onDelete(h.id);
+    });
+
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+    if (before) parent.insertBefore(document.createTextNode(before), textNode);
+    parent.insertBefore(mark, textNode);
+    if (after) parent.insertBefore(document.createTextNode(after), textNode);
+    parent.removeChild(textNode);
+    insertedSpans.push(mark);
+  }
+
+  return () => {
+    for (const span of insertedSpans) {
+      if (!span.isConnected) continue;
+      span.replaceWith(...Array.from(span.childNodes));
+    }
+  };
 }
 
 function InstructionInput({
@@ -829,104 +1156,11 @@ function rectToClip(rect: { x: number; y: number; width: number; height: number 
   return `inset(${top}px ${right}px ${bottom}px ${left}px round 8px)`;
 }
 
-/**
- * In-lens drill markers (Phase 2 of the recursion).
- *
- * Renders an amber pill row near the top of the lens body — one
- * pill per phrase the user has previously drilled from this lens.
- * Each pill carries the selection text (truncated) plus a small
- * sticker dot, matching the PDF-page marker visual vocabulary.
- *
- * Clicking a pill calls `useLensStore.open(child)` against the
- * already-cached child lens, opening it via the *exact same* code
- * path as a PDF marker click. That's the recursion principle in
- * code form: one open path, one render path, one persistence
- * schema, no special casing per depth.
- *
- * (Phase 3 will inline these next to the actual phrase via DOM
- * range mapping; for now the top-of-body pills are the visible
- * affordance.)
- */
-function DrillMarkers({ focused }: { focused: FocusedLens }) {
-  // CRITICAL: select the Map ITSELF, then resolve the entry inside
-  // useMemo. Returning `s.drillEdges.get(id) ?? []` directly from a
-  // selector allocates a fresh `[]` on every render — Zustand
-  // compares selector outputs by reference, so a new array each
-  // render triggers a re-subscribe → re-render → re-allocation →
-  // infinite loop → React #185 ("Maximum update depth exceeded").
-  // This is the exact same mistake CachedLensMarkers warned against
-  // in PageView.tsx; the lesson generalises: never return `?? []`
-  // from a Zustand selector.
-  const drillEdgesMap = useLensStore((s) => s.drillEdges);
-  const cache = useLensStore((s) => s.cache);
-  const edges = useMemo(
-    () => drillEdgesMap.get(focused.id) ?? [],
-    [drillEdgesMap, focused.id],
-  );
-
-  if (edges.length === 0) return null;
-
-  const reopen = (childLensId: string, selection: string) => {
-    // Cached child lens turns survive across sessions — that's how
-    // a click on a drill marker rehydrates the conversation rather
-    // than spinning up a fresh one. If the cache is empty we fall
-    // back to opening a fresh drill on the same selection.
-    const cached = cache.get(childLensId);
-    if (cached && cached.length > 0) {
-      // Reconstruct enough of FocusedLens to call open(). The
-      // store's `open` will pull turns from cache via id match.
-      useLensStore.getState().open({
-        id: childLensId,
-        origin: 'drill',
-        paperHash: focused.paperHash,
-        page: focused.page,
-        bbox: focused.bbox,
-        sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
-        anchorText: selection,
-        focusPhrase: selection.slice(0, 64),
-        prevTexts: [],
-        nextTexts: [],
-        parentBody: null,
-        regionId: focused.regionId,
-        turns: cached.map((t) => ({ ...t, streaming: false })),
-      });
-      return;
-    }
-    // Fallback: hydrate-then-drill. Same gesture path the trackpad
-    // pinch goes through.
-    useLensStore.getState().drillOn({
-      sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
-      selection,
-    });
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-[color:var(--color-lens)]/20 bg-[color:var(--color-lens-soft)]/30 px-3 py-2">
-      <span className="mr-1 text-[10.5px] font-medium tracking-wider text-[color:var(--color-lens)]/85 uppercase">
-        Drilled here
-      </span>
-      {edges.map((e) => {
-        const label =
-          e.selection.length > 48
-            ? e.selection.slice(0, 45).trimEnd() + '…'
-            : e.selection;
-        return (
-          <button
-            key={e.childLensId}
-            onClick={() => reopen(e.childLensId, e.selection)}
-            className="group inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-lens)]/40 bg-white/70 px-2.5 py-0.5 text-[12px] text-black/75 transition hover:border-[color:var(--color-lens)] hover:bg-[color:var(--color-lens-soft)]/60 hover:text-black/90 active:scale-[0.97]"
-            title={`Re-open: "${e.selection}"`}
-          >
-            <span
-              className="inline-block h-2 w-2 rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_1.5px_rgba(255,255,255,0.85)]"
-              aria-hidden="true"
-            />
-            <span className="truncate" style={{ maxWidth: 240 }}>
-              {label}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+// DrillMarkers (Phase 2 chip-row) was removed in v1.0.15. The
+// recursive marker contract from CLAUDE.md §2.1 — "right next to
+// the paragraph it belongs to, column-aware" — required the
+// markers to live next to the drilled phrase, not floated to the
+// top of the body. The replacement (see `injectInlineDrillMarkers`
+// near MarkdownBody) wraps each occurrence inline. Keeping a
+// stub here as a sign-post for any future code paths that
+// imported the old name.

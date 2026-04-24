@@ -165,21 +165,40 @@ static. Should animate (pulsing dots, or a typewriter cursor on
 the in-progress sentence) so the user feels progress, not stuck.
 Schedule: v1.0.12 alongside the audit above.
 
-## 23. Phase 3 — inline drill markers — 🔄 PENDING
-The Phase 2 implementation (chip row at top of body) is the
-visible affordance. Phase 3 inlines them: wrap the drilled phrase
-in the parent body with an amber span + sticker dot in the right
-gutter, so the marker is RIGHT NEXT TO the phrase (matching the
-PDF-page-marker visual rule). Requires DOM range mapping over the
-react-markdown output. Schedule: v1.0.13.
+## 23. Phase 3 — inline drill markers — ✅ DONE in v1.0.15
+The Phase 2 implementation (chip row at top of body) was a
+placeholder violating CLAUDE.md §2.1 ("right next to the paragraph,
+column-aware"). v1.0.15 ships the inline replacement: a DOM-walking
+useLayoutEffect inside `MarkdownBody` walks text nodes and wraps
+each previously-drilled phrase with an amber-underlined span + a
+small sticker dot. Click the span → re-opens the cached child
+lens via the same `useLensStore.open()` path the PDF-page markers
+use (one open path, one render path, no special-casing per depth).
+The chip-row `DrillMarkers` component was deleted; only `injectInline\
+DrillMarkers` remains.
 
-## 24. Phase 4 — highlights inside the lens body — 🔄 PENDING
-Highlighter currently only works on the PDF text layer (key:
-`[data-page]` ancestor). Extend `createHighlightFromSelection` to
-detect "selection inside a lens body" and tag the highlight with
-lens_id instead of page. Renderer renders highlights both on PDF
-pages AND in lens bodies through the same store. Same UI
-component, different selector. Schedule: v1.0.13.
+**Why this took four releases**: the chip row got accepted as a
+visible affordance in v1.0.11 and there was no harness rule
+preventing other feature work from queuing on top. Fixed in
+`fathom-ux-review.md` §11 — placeholder UI for a CLAUDE.md
+principle is now SHIP-BLOCKING until resolved.
+
+## 24. Phase 4 — highlights inside the lens body — ✅ DONE in v1.0.15
+v1.0.15 ships the in-lens highlighter:
+- Schema: new `lens_highlights` table keyed on `lens_id` + selectedText
+  (paired with paper_hash for paper-scope hydration).
+- Repo: `LensHighlights.insert / delete / byPaper`.
+- IPC: `lensHighlights:save`, `lensHighlights:delete`; `paper:state`
+  now returns `lensHighlights` alongside the existing arrays.
+- Renderer: lens body container carries `data-lens-id={focused.id}`;
+  `createHighlightFromSelection` walks up from the selection's
+  startContainer for that attribute and branches into the in-lens
+  path when found. PDF rect math is skipped — lens bodies re-flow,
+  so highlights re-anchor by text on each render.
+- A `useLensHighlightsStore` mirrors the PDF-page store (byId / byLens
+  secondary index). MarkdownBody runs `injectInlineLensHighlights`
+  after each non-streaming render to wrap each persisted selectedText.
+- Click an in-lens highlight to remove (same as PDF-page UX).
 
 ## 25. Zoom-out "sweep-over" artifact — ✅ DONE
 User: "When I zoom out, some other pages don't become small
@@ -352,6 +371,64 @@ The common path (`captureViewportContent` returning a real
 result) uses `djb2(captured.map(r=>r.id).join('|'))` which IS
 stable, so the typical user case round-trips. Stabilising the
 fallback id is a follow-up; tracked as a future cleanup.
+
+## 31. Open With → Fathom — ✅ DONE in v1.0.15
+Plist had `CFBundleTypeExtensions=[pdf]` but no `LSItemContentTypes`.
+Modern macOS (Mojave+) routes "Open With" via UTI (`com.adobe.pdf`),
+and the legacy extension list isn't always honored — especially
+after a DMG drag-drop or install.sh install where LaunchServices
+doesn't get a fresh registration pass. `electron-builder.config.cjs`
+now patches the plist via PlistBuddy in `afterSign` (before the
+codesign call) to add `LSItemContentTypes`.
+
+Race side: preload's `onOpenExternal` registered its
+`ipcRenderer.on` listener inside the function body, so messages
+fired before React mounted reached preload but never reached the
+renderer's handler. Added a module-level early listener that
+buffers paths until the real handler attaches; on attach, drains
+via `queueMicrotask`.
+
+## 32. Swipe-left back-gesture — ✅ DONE in v1.0.15
+User reported swipe-left didn't fire. Two bugs:
+
+1. **Quiet-gap reset was too aggressive**: the original handler
+   reset the accumulator on any individual mostly-vertical event
+   (`if (horiz < 0.5) reset`), which killed slow swipes whose
+   per-event delta was small even when cumulative motion was
+   clearly horizontal. Now resets only after 250 ms of *no*
+   horizontal motion.
+
+2. **Threshold too high for natural flicks**: 120 px required
+   sustained motion. Lowered to 80 px.
+
+Plus instrumentation: every commit/reject decision now logs to
+`fathom.log` via `window.lens.logDev` so future "swipe didn't fire"
+reports are triageable from logs alone — no DevTools required at
+the moment of frustration. Skill rule §12 codifies this for all
+gesture classifiers going forward.
+
+## 33. Harness retrospective — ✅ DONE in v1.0.15
+User asked: "Where exactly did our hardening break?" The diagnosis:
+
+- Phase 2 chip-row markers shipped in v1.0.11 as a placeholder for
+  CLAUDE.md §2.1's "next to the paragraph, column-aware" rule.
+  todo.md #23 logged Phase 3 as PENDING.
+- Four releases passed (.12 / .13 / .14) without delivering Phase 3.
+  The harness had no rule preventing other feature work from
+  queuing on top.
+
+Fix in `.claude/skills/fathom-ux-review.md`:
+- §11 ("Principle gate"): placeholder UI acknowledged as violating
+  a CLAUDE.md principle is SHIP-BLOCKING until resolved. New
+  feature work cannot ship while a principle-violation entry sits
+  in todo.md.
+- §12 ("Gesture instrumentation must reach fathom.log, not just
+  DevTools"): every gesture classifier must `logDev` its commit/
+  reject decisions unconditionally so a user-reported gesture
+  bug can be triaged from logs alone.
+- §13 ("Selector convention vs user mental model"): when a
+  gesture's direction is ambiguous between macOS browser
+  convention and the user's mental model, the user wins.
 
 ## 30. Harness capture path mismatch — ✅ DONE in v1.0.14
 `scripts/fathom-test.sh` polls `/tmp/fathom-shots/` but

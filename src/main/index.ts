@@ -16,6 +16,7 @@ import {
   DrillEdges,
   LensAnchors,
   LensTurns,
+  LensHighlights,
 } from './db/repo';
 import {
   initAutoUpdater,
@@ -550,7 +551,40 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     drillEdges: DrillEdges.byPaper(paperHash),
     lensAnchors: LensAnchors.byPaper(paperHash),
     lensTurns: LensTurns.byPaper(paperHash),
+    lensHighlights: LensHighlights.byPaper(paperHash),
   };
+});
+
+ipcMain.handle(
+  'lensHighlights:save',
+  async (
+    _event,
+    req: {
+      id: string;
+      lensId: string;
+      paperHash: string;
+      selectedText: string;
+      color?: string;
+    },
+  ): Promise<{ ok: boolean }> => {
+    try {
+      LensHighlights.insert(req);
+      return { ok: true };
+    } catch (err) {
+      console.warn('[lensHighlights:save] failed', err);
+      return { ok: false };
+    }
+  },
+);
+
+ipcMain.handle('lensHighlights:delete', async (_event, id: string): Promise<{ ok: boolean }> => {
+  try {
+    LensHighlights.delete(id);
+    return { ok: true };
+  } catch (err) {
+    console.warn('[lensHighlights:delete] failed', err);
+    return { ok: false };
+  }
 });
 
 // Persist a lens-anchor row on every lens open. Decoupled from

@@ -5,6 +5,7 @@ import { useDocumentStore } from './state/document';
 import { useRegionsStore } from './state/regions';
 import { useLensStore } from './lens/store';
 import { useHighlightsStore } from './state/highlights';
+import { useLensHighlightsStore } from './state/lensHighlights';
 import { buildPaperIndex } from './pdf/buildIndex';
 import PdfViewer from './pdf/PdfViewer';
 import FocusView from './lens/FocusView';
@@ -101,6 +102,7 @@ export default function App() {
       useRegionsStore.getState().clear();
       useLensStore.getState().closeAll();
       useHighlightsStore.getState().hydrate([]);
+      useLensHighlightsStore.getState().hydrate([]);
       // Clear per-lens cache AND persisted zoom paths so nothing leaks across papers.
       useLensStore.setState({ cache: new Map(), persistedZoomPaths: new Map() });
 
@@ -236,6 +238,22 @@ export default function App() {
                   height: number;
                 }>,
                 text: h.text ?? undefined,
+                color: h.color,
+                createdAt: h.created_at,
+              })),
+            );
+          }
+          // In-lens highlights — keyed by lens_id, anchored by text
+          // (not rects). MarkdownBody re-finds the text on render and
+          // wraps it. Symmetric with PDF highlights from the user's
+          // POV; just a different storage shape.
+          if (state.lensHighlights && state.lensHighlights.length > 0) {
+            useLensHighlightsStore.getState().hydrate(
+              state.lensHighlights.map((h) => ({
+                id: h.id,
+                lensId: h.lens_id,
+                paperHash: h.paper_hash,
+                selectedText: h.selected_text,
                 color: h.color,
                 createdAt: h.created_at,
               })),
@@ -565,10 +583,34 @@ export default function App() {
     let committed = false;
     let lastPinchTime = 0;
     const PINCH_LOCKOUT_MS = 400;
+    // Lower threshold than the v1.0.x default of 120. The user reported
+    // swipe-left didn't seem to fire even with a deliberate two-finger
+    // swipe; the most likely cause was 120px requiring more sustained
+    // motion than a natural flick produces. 80px hits comfortably from
+    // a normal swipe without lowering rejection of incidental drift.
+    const COMMIT_THRESHOLD = 80;
+    // Only reset the accumulator after sustained inactivity, not on
+    // individual mostly-vertical events. The previous "if (horiz < 0.5)
+    // reset" rule killed slow swipes whose individual events had small
+    // deltaX even when the cumulative motion was clearly horizontal.
+    const QUIET_RESET_MS = 250;
 
+    // Forward gesture decisions to fathom.log via the dev-log IPC so
+    // bug reports like "swipe didn't fire" can be triaged from logs
+    // alone — no DevTools required at the moment of frustration. The
+    // existing `__fathomGestureDebug` flag still gates the verbose
+    // *every-event* trail; commits and rejections always log.
     const log = (line: string) => {
-      if ((window as unknown as { __fathomGestureDebug?: boolean }).__fathomGestureDebug) {
-        console.log(`[Gesture] ${line}`);
+      const verbose =
+        (window as unknown as { __fathomGestureDebug?: boolean }).__fathomGestureDebug ?? false;
+      if (verbose) console.log(`[Gesture] ${line}`);
+    };
+    const logIpc = (line: string) => {
+      // Best-effort; never block the gesture path.
+      try {
+        void window.lens.logDev?.('info', 'Gesture', line);
+      } catch (_e) {
+        /* ignore */
       }
     };
 
@@ -614,8 +656,13 @@ export default function App() {
 
       const now = Date.now();
       const horiz = Math.abs(e.deltaX);
+      // Bump lastActive on any noticeable horizontal motion. Don't
+      // reset accum on individual mostly-vertical events; only reset
+      // after a real quiet gap (250 ms with no horizontal motion at
+      // all) — that's "the user paused", not "this one event was
+      // mostly vertical".
       if (horiz > 0.5) lastActive = now;
-      if (now - lastActive > 180 || horiz < 0.5) {
+      if (now - lastActive > QUIET_RESET_MS) {
         if (committed || Math.abs(accum) > 10) {
           accum = 0;
           committed = false;
@@ -628,27 +675,37 @@ export default function App() {
         e.preventDefault();
         return;
       }
-      const threshold = 120;
-      if (accum <= -threshold && canGoBack) {
+      if (accum <= -COMMIT_THRESHOLD && canGoBack) {
         e.preventDefault();
         committed = true;
         accum = 0;
         lens.back();
         log(`commit BACK`);
+        logIpc(`swipe BACK fired (canGoBack=${canGoBack}, focused=${lens.focused !== null})`);
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
           useTourStore.getState().advance('marker');
         }
-      } else if (accum >= threshold && canGoForward) {
+      } else if (accum >= COMMIT_THRESHOLD && canGoForward) {
         e.preventDefault();
         committed = true;
         accum = 0;
         lens.forward();
         log(`commit FORWARD`);
+        logIpc(`swipe FORWARD fired (canGoForward=${canGoForward})`);
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
-      } else if (Math.abs(accum) >= threshold) {
+      } else if (Math.abs(accum) >= COMMIT_THRESHOLD) {
         // Crossed the threshold in a direction with no target — reset
         // silently. The gesture doesn't mean anything here.
+        const dir = accum < 0 ? 'left' : 'right';
+        const wanted = dir === 'left' ? 'back' : 'forward';
+        const reason =
+          dir === 'left' && !canGoBack
+            ? 'no back history'
+            : dir === 'right' && !canGoForward
+              ? 'no forward history'
+              : 'classifier bug';
+        logIpc(`swipe ${dir} crossed threshold but rejected: ${reason}`);
         accum = 0;
       }
     };

@@ -279,6 +279,49 @@ export interface LensTurnRow {
   created_at: number;
 }
 
+export interface LensHighlightRow {
+  id: string;
+  lens_id: string;
+  paper_hash: string;
+  selected_text: string;
+  color: string;
+  created_at: number;
+}
+
+export const LensHighlights = {
+  insert(h: {
+    id: string;
+    lensId: string;
+    paperHash: string;
+    selectedText: string;
+    color?: string;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT OR IGNORE INTO lens_highlights(id, lens_id, paper_hash, selected_text, color, created_at)
+         VALUES (@id, @lens_id, @paper_hash, @selected_text, @color, @created_at)`,
+      )
+      .run({
+        id: h.id,
+        lens_id: h.lensId,
+        paper_hash: h.paperHash,
+        selected_text: h.selectedText,
+        color: h.color ?? 'amber',
+        created_at: Date.now(),
+      });
+  },
+  delete(id: string): void {
+    getDb().prepare('DELETE FROM lens_highlights WHERE id = ?').run(id);
+  },
+  byPaper(paperHash: string): LensHighlightRow[] {
+    return getDb()
+      .prepare(
+        'SELECT * FROM lens_highlights WHERE paper_hash = ? ORDER BY created_at',
+      )
+      .all(paperHash) as LensHighlightRow[];
+  },
+};
+
 export const LensTurns = {
   // ON CONFLICT replaces an existing turn at the same (lens_id, turn_index)
   // — needed because the same turn can be re-streamed (regenerate, error

@@ -1,5 +1,18 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+// Buffer pdf:openExternal messages that arrive before the React app
+// mounts and registers a handler via `onOpenExternal`. Without this,
+// Finder's "Open With → Fathom" launches with the user's chosen PDF
+// fire `pdf:openExternal` before any listener exists in the renderer
+// process, and the path is lost. The buffer is drained the first time
+// a handler attaches.
+const pendingExternalOpens: string[] = [];
+let externalOpenHandlerAttached = false;
+ipcRenderer.on('pdf:openExternal', (_evt, path: string) => {
+  if (externalOpenHandlerAttached) return; // a real handler is already on it
+  pendingExternalOpens.push(path);
+});
+
 export interface OpenedPdf {
   path: string;
   /** Absolute path to the lens metadata folder sitting next to the PDF
@@ -115,6 +128,14 @@ export interface PaperState {
     zoom_image_path: string | null;
     created_at: number;
   }>;
+  lensHighlights: Array<{
+    id: string;
+    lens_id: string;
+    paper_hash: string;
+    selected_text: string;
+    color: string;
+    created_at: number;
+  }>;
 }
 
 const api = {
@@ -147,11 +168,32 @@ const api = {
   },
 
   /** Main process pushing a PDF at the renderer — fires for drag-on-dock,
-   * Finder's Open With, and the Open Sample Paper flow. */
+   * Finder's Open With, and the Open Sample Paper flow.
+   *
+   * Race we have to handle: Finder's "Open With" launches Fathom and the
+   * main process can fire `pdf:openExternal` BEFORE the React app has
+   * mounted and called this function. Without buffering, the message
+   * lands at preload-level `ipcRenderer.on` with no handler attached
+   * and is silently dropped. We hold a small backlog inside preload and
+   * flush it the first time a handler registers, so the user's
+   * Open-With'd PDF actually opens. */
   onOpenExternal: (handler: (path: string) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, path: string) => handler(path);
     ipcRenderer.on('pdf:openExternal', listener);
-    return () => ipcRenderer.removeListener('pdf:openExternal', listener);
+    // Drain any paths that arrived before this handler was registered.
+    if (pendingExternalOpens.length > 0) {
+      const drained = pendingExternalOpens.splice(0);
+      // Defer to a microtask so the caller's useEffect setup completes
+      // before handler fires — keeps the React mount tree consistent.
+      queueMicrotask(() => {
+        for (const p of drained) handler(p);
+      });
+    }
+    externalOpenHandlerAttached = true;
+    return () => {
+      ipcRenderer.removeListener('pdf:openExternal', listener);
+      externalOpenHandlerAttached = false;
+    };
   },
 
   /** Open Finder on the Fathom log file so a user can share it in one drag. */
@@ -331,6 +373,18 @@ const api = {
 
   deleteHighlight: (id: string): Promise<{ ok: true }> =>
     ipcRenderer.invoke('highlights:delete', id),
+
+  // ---- in-lens highlights (lens-body, not PDF page) ----
+  saveLensHighlight: (h: {
+    id: string;
+    lensId: string;
+    paperHash: string;
+    selectedText: string;
+    color?: string;
+  }): Promise<{ ok: boolean }> => ipcRenderer.invoke('lensHighlights:save', h),
+
+  deleteLensHighlight: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('lensHighlights:delete', id),
 
   saveRegions: (
     regions: Array<{

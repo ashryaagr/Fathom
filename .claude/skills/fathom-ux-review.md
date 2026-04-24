@@ -203,6 +203,70 @@ and an entry in `scripts/fathom-test.sh`, so the `fathom-e2e-test`
 skill can drive it. If it can't be tested without a trackpad, it
 can't be regression-tested by the harness — and it **will** regress.
 
+### 11. Principle gate — placeholder UI must be marked SHIP-BLOCKING
+
+**The harness failure that motivated this rule** (v1.0.11–14):
+
+CLAUDE.md §2.1 says markers must appear "right next to the paragraph
+it belongs to, column-aware". v1.0.11 shipped Phase 2 — a chip row at
+the *top* of the lens body — as a placeholder. todo.md #23 logged
+Phase 3 ("inline next to phrase") as PENDING. But four releases passed
+(v1.0.12, .13, .14) without delivering Phase 3, and we shipped other
+features instead. The user reported the missing inline markers in
+v1.0.14 with: *"Where exactly did our hardening break?"* — and they
+were right; the harness had not enforced "complete the principle".
+
+The rule:
+
+- **Any UI that is acknowledged as a placeholder for a stated CLAUDE.md
+  principle is SHIP-BLOCKING** until either (a) the principle is
+  satisfied, or (b) the principle is explicitly revised by the user.
+- Phrases like "Phase 2 is the visible affordance; Phase 3 will inline
+  these…" in code comments are a *self-confessed* violation of a
+  principle. Such code may not coexist with new feature work — finish
+  the principle first.
+- todo.md `🔄 PENDING` entries that describe a fix to a principle
+  violation (not a new feature) take priority over any other
+  scheduled item, and the next release MUST advance them.
+- A diff that ships *other* features while a principle-violation entry
+  sits in todo.md should be rejected by this skill with: "todo.md
+  has an unfulfilled principle: $ENTRY. Address that first or revise
+  the principle in CLAUDE.md."
+
+How to apply, mechanically: before approving any UX change, grep
+`todo.md` for `PENDING` entries that reference a CLAUDE.md section.
+If any exist, the only acceptable diff is one that advances them.
+
+### 12. Gesture instrumentation must reach fathom.log, not just DevTools
+
+**The harness failure that motivated this rule** (v1.0.14, swipe-left
+report):
+
+The user reported "swipe-left isn't going back". The code had a debug
+flag (`window.__fathomGestureDebug`) but it only `console.log`'d to
+DevTools — which the user didn't have open at the moment of
+frustration. We could not triage the report without asking the user
+to repro with DevTools open, which is exactly what
+`CLAUDE.md §0` says the harness should not require.
+
+The rule:
+
+- Every gesture classifier (pinch, swipe, drill, dive) must emit a
+  one-line summary of every COMMIT or REJECTED-AT-THRESHOLD decision
+  via `window.lens.logDev(...)` so the line lands in `fathom.log`.
+- The verbose every-event trail can stay gated by the debug flag —
+  but the commit/reject decisions are unconditional.
+- A user reporting "the gesture didn't fire" should be triageable
+  from `fathom.log` alone.
+
+### 13. Selector convention vs. user mental model
+
+When a control's direction (e.g. "swipe-left") is ambiguous between
+*macOS browser convention* and *the user's mental model*, the user's
+mental model wins. Document the chosen convention in this skill;
+update it when the user revises. Don't argue from "Safari does it
+this way" if the user has chosen otherwise.
+
 ## How to run this review
 
 1. Read the diff.
