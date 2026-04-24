@@ -199,6 +199,60 @@ and the user will hit it.
    - Wrong state (PDF visible when welcome should be showing)
    - Visible error card (ErrorBoundary fallback)
 
+## Simulating missing prerequisites
+
+Fathom needs Claude Code installed + signed in. Users will hit the
+failure path when one of those is missing. The canonical flow tests
+the happy path — but the failure paths need coverage too, because
+that's what a first-time user on a clean machine sees.
+
+Three scenarios to rehearse per release:
+
+### S1. `claude` not on PATH
+
+Simulate by shadowing the binary for the session:
+
+```bash
+# Launch Fathom with /usr/bin:/bin:/sbin only, hiding every .local/bin
+# or Homebrew path where claude normally sits. This is what Fathom
+# will see for a user who never installed Claude Code.
+env PATH=/usr/bin:/bin:/sbin open -gj -a Fathom
+```
+
+Expected: a dialog on startup citing "Claude Code not found" with a
+copy-paste install command. Log line in `fathom.log`:
+`[startup] claude=NOT FOUND`.
+
+### S2. `claude` on PATH but not signed in
+
+Simulate by renaming the auth cache:
+
+```bash
+mv ~/.config/claude ~/.config/claude.bak 2>/dev/null || true
+mv ~/.claude ~/.claude.bak 2>/dev/null || true
+open -gj -a Fathom
+# after the test:
+mv ~/.claude.bak ~/.claude 2>/dev/null || true
+mv ~/.config/claude.bak ~/.config/claude 2>/dev/null || true
+```
+
+Expected: the app launches, welcome shows, but any dive triggers an
+explain-start failure in the log: `[explain:start] failed — not
+authenticated`. Toast should surface the `claude login` remedy.
+
+### S3. macOS TCC denies access to user Downloads / Documents
+
+Simulate by pointing Fathom at a PDF in `/private/var/root/` or
+another folder the app hasn't been granted access to. (Rare in
+practice — we moved the sidecar to `userData` precisely to avoid
+this — but if you re-introduce any Desktop/Documents/Downloads
+writes, this test catches the permission dialog.)
+
+**Rule**: every prerequisite Fathom depends on gets one of these
+scenarios before shipping a release. New prerequisite added? Add its
+matching S-entry here, and fail any release that hasn't rehearsed
+the scenario.
+
 ## What the harness can't answer (yet)
 
 - **Pinch/zoom kinematics.** We can `dive` via keyboard; we

@@ -518,12 +518,12 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <header
-        className="relative flex h-11 items-center justify-center border-b border-black/5 px-3 text-[13px] font-medium text-black/60 select-none"
+        className="relative flex h-12 items-center justify-center border-b border-black/5 px-3 text-[13px] font-medium text-black/60 select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <span className="truncate">{docState ? docState.name : 'Fathom'}</span>
         <div
-          className="absolute right-2 flex items-center gap-1"
+          className="absolute right-3 flex items-center gap-1.5"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           {docState && (
@@ -550,7 +550,7 @@ export default function App() {
                 }
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 13 L3 11 L10.5 3.5 L12.5 5.5 L5 13 Z" />
                 <path d="M9.5 4.5 L11.5 6.5" />
                 <path d="M3 13 L2 14" />
@@ -562,7 +562,7 @@ export default function App() {
             aria-label="Preferences"
             onClick={() => setShowSettings(true)}
           >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="8" cy="8" r="2.2"/>
               <path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/>
             </svg>
@@ -572,7 +572,7 @@ export default function App() {
             aria-label="Help"
             onClick={() => setShowHelp((v) => !v)}
           >
-            <span className="text-[12px] font-medium">?</span>
+            <span className="text-[15px] font-semibold leading-none">?</span>
           </HeaderIcon>
           <HeaderAction
             label="Open…"
@@ -1052,7 +1052,7 @@ function HeaderIcon({
         onClick={onClick}
         aria-label={ariaLabel}
         title={tip}
-        className="flex h-6 w-6 items-center justify-center rounded-full text-black/55 transition hover:bg-black/5 hover:text-black/80 active:scale-90 active:bg-black/10"
+        className="flex h-8 w-8 items-center justify-center rounded-full text-black/65 transition hover:bg-black/5 hover:text-black/85 active:scale-90 active:bg-black/10"
       >
         {children}
       </button>

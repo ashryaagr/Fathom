@@ -70,13 +70,27 @@ Download the Mac DMG: [`Fathom-arm64.dmg`](./docs/INSTALL.md#option-b--dmg). The
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 
-## Prerequisite
+## Prerequisites
 
-Fathom talks to Claude through the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI. You need:
+Fathom needs three things on your machine. The app checks for the first two on launch and tells you exactly what's missing if anything is off.
 
-- **Claude Code installed and authenticated.** `claude` in your `$PATH`, logged in. Fathom uses your existing Claude subscription — no API keys to paste anywhere.
+- [ ] **macOS on Apple Silicon** (M1 / M2 / M3 / M4). Fathom is built for arm64; Intel Macs need to build from source today — the `better-sqlite3` native module is ABI-locked per architecture.
+- [ ] **Claude Code CLI installed**, with `claude` on your `$PATH`.
+   ```bash
+   # One-line install from the official source:
+   curl -fsSL https://claude.ai/install.sh | sh
+   # Verify:
+   which claude    # should print something like /Users/you/.local/bin/claude
+   claude --version
+   ```
+- [ ] **Claude Code signed in.** Fathom uses your existing Claude subscription through the CLI — no API keys, no accounts inside Fathom.
+   ```bash
+   claude login     # opens a browser-based sign-in flow
+   ```
 
-That's it. Fathom extracts text and figures from the PDF with its own pdf.js pipeline; there's no poppler / pdftoppm / Ghostscript dependency on your machine.
+That's it. **No poppler, no pdftoppm, no Ghostscript** — Fathom extracts text and figures with its own pdf.js pipeline.
+
+On first launch, if `claude` isn't on your `$PATH` or you aren't signed in, Fathom surfaces a dialog with the specific command to run. You can then re-launch and continue.
 
 ## How it works
 

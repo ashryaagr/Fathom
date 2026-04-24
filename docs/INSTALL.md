@@ -146,33 +146,55 @@ resolves to the current signed build.
 
 ## 3. Prerequisites
 
-### Claude Code CLI (required)
+Three things Fathom needs. The app checks for them on launch and tells
+you exactly what's missing.
 
-Fathom uses your existing Claude Code authentication — no API key to paste
-anywhere.
+### Checklist
+
+- [ ] **macOS on Apple Silicon.** Fathom ships arm64 binaries; Intel
+  Macs need to build from source today.
+- [ ] **Claude Code CLI installed** (`claude` on your `$PATH`).
+- [ ] **Claude Code signed in** to your Anthropic account.
+
+### 3.1 Claude Code CLI — install
+
+Fathom uses your existing Claude Code authentication — no API key to
+paste anywhere inside Fathom.
 
 ```bash
-# If you don't have claude installed yet:
+# One-line install from the official source:
 curl -fsSL https://claude.ai/install.sh | sh
-claude login
 ```
 
-Verify:
+Verify it ended up on your `$PATH`:
+
 ```bash
-which claude
+which claude          # should print something like ~/.local/bin/claude
 claude --version
 ```
 
-If `claude` isn't in your PATH, Fathom will fail to generate explanations and
-the indexing toast will say so. (macOS GUI apps inherit PATH from
-`/usr/libexec/path_helper`, not your shell config, so make sure `claude` is
-installed somewhere in the system PATH — `/usr/local/bin` or `/opt/homebrew/bin`
-both work.)
+macOS GUI apps inherit their `$PATH` from `/usr/libexec/path_helper`,
+not your shell config. If `claude` is only visible in your interactive
+shell, put it in a system-discovered location like `/usr/local/bin` or
+`/opt/homebrew/bin`, or symlink it there.
 
-That's the only runtime prerequisite. Fathom extracts PDF text and figure
-images through its own pdf.js pipeline, then feeds the resulting on-disk
-index to Claude — no external PDF tooling (poppler, pdftoppm, Ghostscript,
-etc.) needs to be installed.
+### 3.2 Sign in to Claude Code
+
+```bash
+claude login
+```
+
+This opens a browser tab for the sign-in flow. Same account as your
+Claude subscription; after this step, Fathom can invoke the Agent SDK
+without any further auth.
+
+### 3.3 What Fathom does NOT need
+
+No **poppler**, no **pdftoppm**, no **Ghostscript**, no **Python**, no
+**Node**, no **Homebrew** (unless you already use it for Claude Code).
+Fathom extracts PDF text and figure images through its own pdf.js
+pipeline and writes a per-paper index that Claude reads via `Read` /
+`Grep` / `Glob`.
 
 ---
 
