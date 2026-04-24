@@ -6,7 +6,7 @@ title: Fathom
 ## A new way to read a paper
 
 Reading a PDF hasn't changed in forty years. We scroll, we copy, we paste
-somewhere else, we scroll back. For most things that's fine. For research
+into Claude, we scroll back. For most things that's fine. For research
 papers it's a tax you pay every few minutes — enough that half of what you
 thought you'd read, you'd really just skimmed and moved on from.
 
