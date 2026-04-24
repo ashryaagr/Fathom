@@ -25,11 +25,11 @@ Prefer drag-to-Applications? [Get the Mac DMG →](./docs/INSTALL.md#option-b--d
 
 ---
 
-<p align="center">
-  <img src="resources/built-out-of-necessity.png" alt="Built out of necessity. I'm Ashrya, an AI scientist. I read a lot of research papers, and I got tired of the same loop — hit a dense passage, paste it into Claude, ask for clarification, then clarification of the clarification, then of that — and by the time I'd surfaced, the paper was gone. So I built the reader I always wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else." width="760" />
-</p>
+## Built out of necessity
 
-<p align="center"><sub>There's nothing to sign up for, no subscription, no account. If you already pay for <a href="https://claude.com/product/overview">Claude</a>, you have everything Fathom needs.</sub></p>
+> I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers, and I got tired of the same loop — hit a dense passage, paste it into Claude, ask for clarification, then clarification of the clarification, then of *that* — and by the time I'd surfaced, the paper was gone. So I built the reader I always wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
+
+There's nothing to sign up for, no subscription, no account. If you already pay for [Claude](https://claude.com/product/overview), you have everything Fathom needs.
 
 ## What it feels like
 

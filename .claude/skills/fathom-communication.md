@@ -73,17 +73,40 @@ Reserve for places where a human is speaking directly to the reader.
 People don't scan handwriting; they stop and read it, exactly once.
 Use it sparingly so the stopping actually happens.
 
-On the docs site (`docs/**`) use Excalifont only for:
+On the **docs site** (`docs/**`) — a Jekyll site we style ourselves,
+so we can load the Excalifont woff2 file and apply it — use
+Excalifont only for:
 - The Fathom wordmark.
 - The tagline beneath it ("For the paper you meant to finish").
 - The entire "Built out of necessity" section — the author's
   origin story.
 
-In the app (`src/renderer/**`) use Excalifont for:
+In the **app** (`src/renderer/**`) use Excalifont for:
 - The lens explanation body (the AI's voice as human-feeling).
 - The welcome-screen brand + tagline.
 - Nowhere else. Not in menus, not in button labels, not in the
   sticky Ask footer, not in error text.
+
+On **GitHub README.md** — we can't. GitHub strips `style` and
+`font-family` from inline HTML and won't load external fonts.
+Don't reach for an image of the text either — it's unselectable,
+unsearchable, and wastes bytes. The native-markdown pattern for a
+"voice moment" in the README is a **blockquote**:
+
+```markdown
+## Built out of necessity
+
+> I'm Ashrya, an AI scientist. I read a lot of research papers,
+> and I got tired of the same loop — hit a dense passage, paste
+> it into Claude, ask for clarification, then clarification of
+> the clarification… and by the time I'd surfaced, the paper
+> was gone. So I built the reader I always wanted.
+```
+
+The vertical-bar indent GitHub renders is the voice signal.
+Combine with *italics* for emphasis where the prose wants it.
+Handwriting + handwritten images go in the docs site and the app,
+not the README.
 
 ### Sans (system) = information
 
