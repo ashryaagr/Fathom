@@ -6,7 +6,6 @@
 
 [![CI](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ashryaagr/Fathom?label=release&color=f59e0b)](https://github.com/ashryaagr/Fathom/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/ashryaagr/Fathom/total?label=downloads)](https://github.com/ashryaagr/Fathom/releases)
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
