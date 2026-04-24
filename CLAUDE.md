@@ -19,6 +19,18 @@ Fathom. They override any conflicting default behaviour.
   Resume `todo.md` top-to-bottom once the current task finishes, and
   tell the user you're doing so.
 
+- **Queuing requires a `todo.md` entry — every time, no exceptions.**
+  Any phrase that defers work — *"queued for v1.0.X"*, *"Phase 3 will…"*,
+  *"follow-up"*, *"next session"*, *"deferred to…"*, *"shipping
+  later"* — appearing in a commit message, release note, response,
+  or skill must have a corresponding `todo.md` entry committed
+  alongside. The rule applies **if and only if you are actually
+  queuing**. Don't pad `todo.md` with hypothetical future work that
+  isn't a real commitment; do log every real commitment so a future
+  session can pick it up. A commit that promises follow-up but
+  ships no `todo.md` line is incomplete — fix the commit before
+  pushing.
+
 - **End-to-end verify shipping paths.** Distribution, install, update,
   and first-run flows must be tested on a real version bump before
   being declared done. "The code looks right" has failed us at least
