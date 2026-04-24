@@ -2,11 +2,12 @@
 
 Three install paths, in order of ease:
 
-1. [Download the DMG](#1-download-the-dmg) — pre-built, drag-and-drop.
-2. [Build from source](#2-build-from-source) — if you want to modify or inspect the app.
-3. [Dev container](#3-dev-container-docker) — reproducible build environment.
+1. [One-line installer](#1-one-line-installer-recommended) — recommended; single copy-paste, no Gatekeeper prompt.
+2. [DMG download](#2-dmg-download) — graphical install; requires one `xattr` command on first launch.
+3. [Build from source](#3-build-from-source) — if you want to modify or inspect the app.
+4. [Dev container](#4-dev-container-docker) — reproducible build environment.
 
-All paths require Claude Code CLI as a runtime prerequisite. See [Prerequisites](#prerequisites).
+All paths require the Claude Code CLI as a runtime prerequisite. See [Prerequisites](#prerequisites).
 
 ---
 
@@ -42,9 +43,32 @@ If you skip poppler, the indexing toast will flip to a red "indexing failed — 
 
 ---
 
-## 1. Download the DMG
+## 1. One-line installer (recommended)
 
-One link, always the latest:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
+```
+
+What this does, in order:
+1. Downloads the latest `Fathom-arm64.dmg` via `curl` into a temp directory.
+2. Mounts it.
+3. Copies `Fathom.app` to `/Applications` (or `~/Applications` if `/Applications` isn't writable).
+4. Strips any quarantine extended attribute, as a precaution.
+5. Unmounts and cleans up.
+
+**Why this avoids the "damaged" error.** macOS only quarantines files when it can identify a browser / email client / messaging app as the download source. `curl` doesn't mark its downloads, so Gatekeeper never flags the resulting `.app`. The bundle launches with a normal double-click.
+
+Verify:
+```bash
+open -a Fathom            # launches Fathom
+ls /Applications/Fathom.app
+```
+
+---
+
+## 2. DMG download
+
+If you prefer a graphical install:
 
 **→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
 
@@ -54,29 +78,31 @@ One link, always the latest:
 | Apple Silicon (zipped `.app`) | [Fathom-arm64-mac.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip) |
 | Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
 
-GitHub resolves `/releases/latest/download/<asset>` to the newest release automatically, so these links stay valid across versions.
+GitHub resolves `/releases/latest/download/<asset>` to the newest release, so these links stay valid across versions.
 
-### First launch (unsigned build)
+### First launch — fix the "damaged" error
 
-Fathom v1 is unsigned — macOS Gatekeeper will refuse to open it on first launch. Two ways to fix:
+After you drag `Fathom.app` to `/Applications` and double-click it, macOS will show:
 
-**The Finder way:**
-1. Drag `Fathom.app` to `/Applications`.
-2. Right-click `Fathom` → **Open**.
-3. In the dialog, click **Open** again.
-4. macOS remembers this consent; future launches are normal.
+> **"Fathom" is damaged and can't be opened. You should move it to the Trash.**
 
-**The Terminal way:**
+**The app isn't damaged.** This is macOS Gatekeeper's error for any unsigned application downloaded through a browser. Fix it with one command:
+
 ```bash
 xattr -cr /Applications/Fathom.app
 ```
-This strips the quarantine attribute Gatekeeper checks. Next launch works normally.
 
-Signed / notarized builds are planned for a later release.
+Then double-click Fathom. It launches normally from here on — the fix is per-install, not per-launch.
+
+*Why this works:* browsers tag downloaded files with a `com.apple.quarantine` extended attribute. On macOS Ventura and later, Gatekeeper refuses to execute unsigned binaries that carry it. `xattr -cr` strips the tag; the app is otherwise identical.
+
+If you'd rather skip this step entirely, use the [one-line installer](#1-one-line-installer-recommended) above — it downloads via `curl`, which never applies the quarantine flag in the first place.
+
+Signed / notarized builds are planned for a later release (requires an Apple Developer account).
 
 ---
 
-## 2. Build from source
+## 3. Build from source
 
 ```bash
 git clone https://github.com/ashryaagr/Fathom.git
@@ -110,7 +136,7 @@ Re-rasterizes `resources/icon.svg` into `resources/icon.icns` and `resources/ico
 
 ---
 
-## 3. Dev container (Docker)
+## 4. Dev container (Docker)
 
 See [DOCKER.md](./DOCKER.md) for a Linux-based build environment with Node, Python, and Electron build deps pre-installed. Useful for CI and for contributors who don't want to install the full toolchain on their host machine.
 

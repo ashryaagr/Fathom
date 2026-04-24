@@ -4,17 +4,29 @@
 
 # Fathom
 
-**A semantic-zoom PDF reader for research papers.**
+[![CI](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ashryaagr/Fathom?label=release&color=f59e0b)](https://github.com/ashryaagr/Fathom/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ashryaagr/Fathom/total?label=downloads)](https://github.com/ashryaagr/Fathom/releases)
+[![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
+[![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
-Pinch with **⌘** on a passage — a full-screen lens opens with a streaming,
-grounded explanation from Claude. Dive into concepts the way you'd dive into
-water: by depth, recursively, and always coming back to where you were.
+**Reading a research paper is a human-computer interaction problem. We've been solving it badly for forty years.**
 
-### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
+Fathom is a new reading interaction. Hold **⌘** and pinch on any passage — the
+page gives way to a full-screen lens that explains it, grounded in the paper
+itself, streaming as you read. Drill deeper by pinching on a phrase inside the
+lens. Swipe back, like turning a page. Dive into a concept the way you'd dive
+into water: by depth, recursively, and always coming back to where you were.
 
-*Apple Silicon · ~200 MB · unsigned — see [first-launch note](./docs/INSTALL.md#first-launch-unsigned-build)*
+### Install Fathom
 
-[Install guide](./docs/INSTALL.md) · [How it works](#how-it-works) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
+```
+
+*Apple Silicon · ~200 MB · one command, no Gatekeeper prompt*
+
+[Install guide](./docs/INSTALL.md) · [DMG download](#download) · [How it works](#how-it-works) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
 </div>
 
@@ -22,26 +34,34 @@ water: by depth, recursively, and always coming back to where you were.
 
 ## What Fathom does
 
-When you read a research paper and hit something you don't understand, you have two bad options: stop reading and open ChatGPT in another window, or press on and accept you didn't really understand it. Fathom replaces that choice with a gesture.
+When you hit a dense passage, you have two bad options: stop reading and context-switch to another tool, or press on and accept you didn't really understand it. Both break the reading flow. Fathom replaces the context-switch with a gesture that happens *inside* the paper.
 
 - **Pinch** with two fingers → cursor-anchored visual zoom (like Preview.app).
 - **⌘ + pinch** on a passage, then release ⌘ → a full-screen **lens** opens with a streaming Claude explanation, grounded in the paper via an on-disk file-system index (no RAG, no embeddings — Claude uses `Read`, `Grep`, `Glob`).
 - **Select a phrase** inside a lens and ⌘ + pinch on it → drill into that concept. Recursive. Back and forward via two-finger swipe, like a browser.
-- **Ask follow-ups** in the sticky footer. Each Q&A appends below as a chat history. Typing a new question cancels the in-flight answer.
-- **Every lens is durable.** A small amber marker appears next to the paragraph you zoomed into. Close the PDF, reopen it next week, and your lens — the exact viewport crop, the full chat history, the prompt — is all there.
+- **Ask follow-ups** in the sticky footer. Each Q&A stacks into a running thread inside the lens. Typing a new question cancels the in-flight answer.
+- **Every lens is durable.** A small amber marker appears next to the paragraph you zoomed into. Close the PDF, reopen it next week, and your lens — the exact viewport crop, the full Q&A thread, the prompt — is all there.
 - **Diagrams when they help.** Claude emits inline SVG for architectures / pipelines / flows. Rendered live, never as ASCII.
 
 ## Download
 
 **macOS — Apple Silicon**
 
-One-click latest DMG:
+The recommended path is the one-line installer at the top of this page. It downloads via `curl`, which bypasses macOS's quarantine flag entirely — Fathom launches with a normal double-click, no "damaged" error, no `xattr` incantations.
+
+If you'd rather install manually:
 
 **→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
 
-That link always resolves to the most recent release, so the same URL keeps working across versions. Zipped `.app` bundle available at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Full per-release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+That link always resolves to the most recent release. Zipped `.app` at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
 
-For v1, binaries are unsigned: the first launch needs **right-click → Open** (once), or `xattr -cr /Applications/Fathom.app`. See [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
+After you drag Fathom to `/Applications`, macOS's Gatekeeper will block the first launch with *"Fathom is damaged and can't be opened"* — this is a false alarm for unsigned apps, not actual corruption. Clear it with:
+
+```bash
+xattr -cr /Applications/Fathom.app
+```
+
+Then double-click Fathom normally. One-time fix per install. Full details in [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 

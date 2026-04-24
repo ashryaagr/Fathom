@@ -14,7 +14,7 @@ Short and public version; the longer operational notes stay private.
 
 ## Feel
 
-- **Apple-smooth, not Microsoft-manual.** Gestures commit on intent, not on a wizard button.
+- **Smooth, not wizard-driven.** Gestures commit on intent, not on a button press. Nothing in Fathom should feel like a step-by-step click-through.
 - **Minimal options, impactful.** No settings dialog, no preferences.
 - **Consistency at every level.** Drilling into a concept from a lens feels identical to opening a lens from the PDF. Recursive, same grammar.
 
