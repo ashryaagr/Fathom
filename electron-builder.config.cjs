@@ -33,6 +33,9 @@ module.exports = {
     // Claude Agent SDK spawns the `claude` binary and needs access to its mjs files.
     'node_modules/@anthropic-ai/claude-agent-sdk/**',
   ],
+  // Versionless asset names so a stable "latest" download URL (see README) always
+  // resolves to the current DMG/zip without needing to re-edit the link each release.
+  artifactName: 'Fathom-${arch}.${ext}',
   mac: {
     category: 'public.app-category.productivity',
     target: [

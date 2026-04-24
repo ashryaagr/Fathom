@@ -10,7 +10,11 @@ Pinch with **⌘** on a passage — a full-screen lens opens with a streaming,
 grounded explanation from Claude. Dive into concepts the way you'd dive into
 water: by depth, recursively, and always coming back to where you were.
 
-[Download](#download) · [Install](./docs/INSTALL.md) · [How it works](#how-it-works) · [Build from source](#build-from-source)
+### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
+
+*Apple Silicon · ~200 MB · unsigned — see [first-launch note](./docs/INSTALL.md#first-launch-unsigned-build)*
+
+[Install guide](./docs/INSTALL.md) · [How it works](#how-it-works) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
 </div>
 
@@ -31,9 +35,15 @@ When you read a research paper and hit something you don't understand, you have 
 
 **macOS — Apple Silicon**
 
-See [Releases](https://github.com/ashryaagr/Fathom/releases) for the signed-on-next-release `.dmg` and `.zip`. For v1, binaries are unsigned: follow the first-launch steps in [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
+One-click latest DMG:
 
-Intel Macs are not supported in v1 (native module `better-sqlite3` is ABI-locked per architecture; an x64 build will land when demand exists — open an issue).
+**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
+
+That link always resolves to the most recent release, so the same URL keeps working across versions. Zipped `.app` bundle available at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Full per-release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+
+For v1, binaries are unsigned: the first launch needs **right-click → Open** (once), or `xattr -cr /Applications/Fathom.app`. See [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
+
+Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 
 ## Prerequisite
 

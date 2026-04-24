@@ -44,12 +44,17 @@ If you skip poppler, the indexing toast will flip to a red "indexing failed — 
 
 ## 1. Download the DMG
 
-Grab the latest release from the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+One link, always the latest:
 
-| Architecture | File |
+**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
+
+| Architecture | Direct link |
 |---|---|
-| Apple Silicon (M1/M2/M3/M4) | `Fathom-<version>-arm64.dmg` |
+| Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
+| Apple Silicon (zipped `.app`) | [Fathom-arm64-mac.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip) |
 | Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
+
+GitHub resolves `/releases/latest/download/<asset>` to the newest release automatically, so these links stay valid across versions.
 
 ### First launch (unsigned build)
 
