@@ -5,19 +5,17 @@ title: Fathom
 
 ## A new way to read a paper
 
-Reading a PDF hasn't changed in forty years. We scroll, we copy, we paste
-into Claude, we scroll back. For most things that's fine. For research
-papers it's a tax you pay every few minutes — enough that half of what you
-thought you'd read, you'd really just skimmed and moved on from.
+Reading a research paper hasn't changed in forty years. Every few minutes,
+you leave the page — copy, paste into Claude, scroll back. Every time, you
+lose your place.
 
-Fathom is different. You hold ⌘. You pinch on the part you want to
-understand better. The page gives way, and a clearer view arrives right
-there — grounded in the paper itself, streaming as you read. You pinch a
-phrase inside to go deeper. You swipe back, like turning a page.
+Fathom asks you not to leave. The explanation comes to the page, right
+where your eye already is. You pinch in when you want to understand; you
+swipe back when you want to keep going. You keep reading. You finish the
+paper.
 
-It's not an AI assistant bolted onto a PDF viewer. It's a reading app
-shaped around the way you already read: zoom in when you want detail,
-zoom out when you want to keep going.
+It's a reading app shaped around the way you already read — not an AI
+assistant bolted onto a PDF viewer.
 
 ## Built out of necessity
 
