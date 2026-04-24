@@ -181,28 +181,38 @@ lens_id instead of page. Renderer renders highlights both on PDF
 pages AND in lens bodies through the same store. Same UI
 component, different selector. Schedule: v1.0.13.
 
-## 25. Zoom-out lag — pages "fall behind" the gesture — 🔄 PENDING
-User: "When I zoom out, the other pages take some time to zoom
-out. When I am scrolling, it almost feels like the page behind is
-large and then I am scrolling over it."
+## 25. Zoom-out "sweep-over" artifact — ✅ DONE
+User: "When I zoom out, some other pages don't become small
+instantly. It almost gives a background sweep-over effect where
+I'm scrolling over other background pages; my top layer is
+moving behind the pages."
 
-Diagnosis path:
-- Renderer logs (every PageView's `[Lens] commitSemanticFocus`-
-  style entry — but for the page itself).
-- Likely cause: each PageView re-renders independently after a
-  zoom change; pages that aren't currently visible postpone the
-  re-render. Until they re-render, they keep their old canvas at
-  the OLD pixel scale, which CSS-scales transiently and looks
-  "still big".
-- Possible fix: apply an immediate CSS transform to all visible
-  pages on zoom (cheap, pixelated for a frame), THEN re-render
-  the canvas to the new scale (sharp). Two-pass: instant feedback
-  via transform, then the real raster lands.
+Root cause: the v1.0.12 partial fix wrote `canvas.style.width/height`
+synchronously on zoom change — which forced the browser to
+bilinear-resample the canvas's OLD large pixel buffer into the
+NEW smaller CSS box every paint frame until the async pdf.js
+re-render landed. That resample isn't subpixel-stable, so the
+canvas appeared to drift over the underlying slot for several
+frames — the "sweep-over" feel. A secondary contributor was
+`applyAnchoredZoom` reading `scroller.scrollLeft` inside the
+rAF callback, which on zoom-OUT sees a post-clamp value and
+corrupts the cursor-anchored math.
 
-QA agent should reproduce by zooming via ⌘+⌥+0 / ⌘+= and watching
-PageView re-render lag in the log.
+Fix shipped in v1.0.13:
+- `PageView.useLayoutEffect` no longer touches canvas CSS w/h
+  during the gap. Instead it applies a compositor transform
+  `scale(zoom / renderedZoom)` to both the canvas and the text
+  layer, with `transform-origin: top left`. Compositor-only,
+  GPU-accelerated, no paint invalidation — the canvas stays
+  crisp and visually locked to the slot throughout the pinch.
+  When the pdf.js render completes it sets the new CSS box +
+  intrinsic pixel buffer + clears the transform all at once,
+  so the snap from scaled → identity is atomic.
+- `applyAnchoredZoom` captures pre-zoom scroll and computes the
+  absolute target rather than reading post-zoom scroll inside
+  the rAF.
 
-Schedule: v1.0.12 alongside the rendering-perf rework below.
+See commit in the v1.0.13 release notes.
 
 ## 26. Initial render + scroll-to-new-page slow — 🔄 PENDING
 Pages take a noticeable beat to render on first load and when
@@ -267,3 +277,44 @@ Open questions for the author:
 
 Schedule: v1.1.0 (it's a meaningful product surface change, not
 a point release).
+
+## 28. QA agent should not steal cursor / Space focus — 🔄 PENDING
+User: "When the QA agent is working on my system, it directly pulls
+me back to the screen where it's working. It should isolate itself
+there. If I want to work on a different screen, I should not be
+pulled to that screen."
+
+Root: `osascript -e 'tell application "Fathom" to activate'` calls
+in `scripts/fathom-test.sh` (legacy `shot`, plus the global-shortcut
+sender path) bring Fathom to the foreground / pull you back to its
+Space. The user's mental model is that the QA agent should drive
+Fathom *as if* it were on a separate machine — no cursor effects on
+their actual workspace.
+
+Real constraint: macOS routes synthetic key events to the FRONT
+process, period. There's only one "active" app per Space. The QA
+agent's keystroke for ⌘⇧F9 (open sample) and ⌘⇧F10 (capture) only
+reaches Fathom's `globalShortcut` handler if the OS routes the
+keypress globally (which it does for `globalShortcut.register`,
+regardless of frontmost). So the keystrokes themselves are *fine*
+— they don't need Fathom in front. The issue is `tell app to
+activate` calls that DO yank focus.
+
+Fixes available without leaving the user's machine:
+1. **Drop every `activate` call from the harness.** The global
+   shortcuts work without it; the only reason `activate` was added
+   was to make the legacy `screencapture -x` path work. Now that
+   `capture` uses offscreen `webContents.capturePage`, it's
+   unnecessary.
+2. **Run Fathom in a hidden Space.** macOS supports invisible
+   Spaces via `Mission Control` configuration; Fathom can be
+   pinned to one Space and never pulled forward. Requires user
+   setup — document in fathom-qa.md as a setup step.
+3. **Spawn a separate Fathom instance for QA.** Two Fathom
+   processes, same userData (need separate sidecar dirs), one in
+   the user's foreground, one in a hidden state for the QA agent
+   to drive. Possible via Electron's `--user-data-dir` flag.
+
+Quick win: scrub all `activate` calls from `scripts/fathom-test.sh`.
+That alone should stop the focus-steal for the post-v1.0.7 test
+runs that use `capture` / `sample`. Schedule v1.0.13.

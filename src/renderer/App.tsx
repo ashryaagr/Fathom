@@ -210,28 +210,52 @@ export default function App() {
         console.warn('failed to restore paper state', err);
       }
 
-      // Build the full on-disk index: one content.md with the paper's text in reading
-      // order + one PNG per page under images/. This alone is enough to make Claude's
-      // Read/Grep/Glob useful without any RAG.
+      // Build the full on-disk index: one content.md with the paper's text
+      // in reading order + one PNG per page under images/. This alone is
+      // enough to make Claude's Read/Grep/Glob useful without any RAG.
+      //
+      // Critical scheduling note (root-cause analysis Apr 2026):
+      // `buildPaperIndex` shares the single pdf.js worker with the
+      // visible-page renders fired by every `PageView`. If we kick it off
+      // immediately here, the worker queue fills with 15+ full-page 2×-DPR
+      // figure-extraction renders before any pixel of page 1 is drawn —
+      // the user sees a 5-10 s blank-with-spinner stretch on every open.
+      // Defer the index build so the first ~5 visible PageViews have a
+      // shot at the worker first. `requestIdleCallback` is the correct
+      // primitive (it fires after the browser is idle, not on a fixed
+      // wall-clock delay) but we set a 3 s `timeout` fallback so machines
+      // that never go fully idle don't starve the indexing forever.
       setIndexState('running');
       setIndexMessage(null);
       setShowIndexToast(true);
-      void (async () => {
-        try {
-          await buildPaperIndex(doc, pdf.contentHash);
-          // Then kick off the deeper Claude-driven decomposition (structured digest,
-          // section summaries, figure descriptions) as a background enhancement.
-          await window.lens.decomposePaper({
-            paperHash: pdf.contentHash,
-            pdfPath: pdf.path,
-            numPages: doc.numPages,
-          });
-        } catch (err) {
-          setIndexState('error');
-          setIndexMessage(err instanceof Error ? err.message : String(err));
-          setShowIndexToast(true);
+      const startIndexBuild = () => {
+        void (async () => {
+          try {
+            await buildPaperIndex(doc, pdf.contentHash);
+            await window.lens.decomposePaper({
+              paperHash: pdf.contentHash,
+              pdfPath: pdf.path,
+              numPages: doc.numPages,
+            });
+          } catch (err) {
+            setIndexState('error');
+            setIndexMessage(err instanceof Error ? err.message : String(err));
+            setShowIndexToast(true);
+          }
+        })();
+      };
+      const ric = (
+        window as unknown as {
+          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
         }
-      })();
+      ).requestIdleCallback;
+      if (ric) {
+        ric(startIndexBuild, { timeout: 3000 });
+      } else {
+        // Older Safari paths land here — plain timeout still gets us off
+        // the critical render frame.
+        setTimeout(startIndexBuild, 1500);
+      }
     } catch (e) {
       console.error(e);
       setError(e instanceof Error ? e.message : String(e));
@@ -407,6 +431,30 @@ export default function App() {
       unsubscribe();
     };
   }, [openSampleShared]);
+
+  // QA navigation triggers from main-process global shortcuts. These
+  // mirror the window-level keyboard shortcuts (⌘⇧D dive, ⌘[ back,
+  // ⌘] forward) but route via IPC so the QA harness can fire them
+  // without yanking focus across Spaces. Human users still use the
+  // window-level chords.
+  useEffect(() => {
+    const unsubDive = window.lens.onQaTriggerDive(() => {
+      window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'));
+    });
+    const unsubBack = window.lens.onQaTriggerBack(() => {
+      useLensStore.getState().back();
+      window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
+    });
+    const unsubForward = window.lens.onQaTriggerForward(() => {
+      useLensStore.getState().forward();
+      window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
+    });
+    return () => {
+      unsubDive();
+      unsubBack();
+      unsubForward();
+    };
+  }, []);
 
   // Drag-and-drop anywhere on the window. Electron 32+ removed the
   // non-standard `File.path` extension; we resolve the filesystem path

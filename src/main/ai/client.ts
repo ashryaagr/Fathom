@@ -5,22 +5,48 @@ import { existsSync, statSync } from 'node:fs';
 import { resolveClaudeExecutablePath } from '../claudeCheck';
 
 /**
- * Pick a cwd that is guaranteed to be a real directory. Claude Agent SDK spawns
- * the `claude` binary as a subprocess and inherits process.cwd() by default —
- * and when Fathom is launched from Finder, process.cwd() is often `/` or a
- * quirky path that makes the SDK (or one of its child processes) throw
- * `spawn ENOTDIR`. Passing an explicit, validated cwd avoids that class of
- * failure entirely.
+ * Pick a cwd that is guaranteed to be:
+ *   1. a real directory (Claude Agent SDK spawns subprocesses; an
+ *      ENOTDIR cwd kills the whole pipeline),
+ *   2. NOT under `~/Desktop`, `~/Documents`, or `~/Downloads` —
+ *      macOS TCC prompts the user the first time any subprocess
+ *      reads those paths, even just to enumerate the cwd, and we
+ *      never want Fathom to pop a system permission dialog mid-
+ *      question. The only legitimate `cwd` for the explain
+ *      subprocess is the per-paper sidecar inside `userData` (TCC
+ *      doesn't apply there).
+ *
+ * Order: caller-preferred path (validated) → homedir (`/Users/me`,
+ * which is itself fine for TCC even if its subdirs aren't).
  */
 function safeCwd(preferred?: string): string {
   if (preferred) {
-    try {
-      if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
-    } catch {
-      /* fall through to homedir */
+    if (isTccProtected(preferred)) {
+      console.warn(
+        `[safeCwd] refusing TCC-protected preferred path "${preferred}" — falling back`,
+      );
+    } else {
+      try {
+        if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
+      } catch {
+        /* fall through to homedir */
+      }
     }
   }
   return homedir();
+}
+
+/** True iff the path lives under a macOS TCC-protected user folder
+ * (Desktop / Documents / Downloads). Used to keep `cwd` away from
+ * directories that would prompt the user on first access. */
+function isTccProtected(p: string): boolean {
+  const home = homedir();
+  const protectedPrefixes = [
+    `${home}/Desktop`,
+    `${home}/Documents`,
+    `${home}/Downloads`,
+  ];
+  return protectedPrefixes.some((prefix) => p === prefix || p.startsWith(prefix + '/'));
 }
 
 export interface ExplainArgs {
@@ -154,7 +180,11 @@ export async function explain(args: ExplainArgs): Promise<string> {
   console.log(`[Lens AI ${logId}] passage: ${args.regionText.slice(0, 300)}${args.regionText.length > 300 ? '…' : ''}`);
   args.onPromptSent?.(userPrompt);
 
-  const cwd = safeCwd(args.indexPath ?? (args.pdfPath ? dirname(args.pdfPath) : undefined));
+  // Prefer the per-paper sidecar (always inside userData → no TCC).
+  // Never fall through to `dirname(pdfPath)` — if the user keeps the
+  // PDF on their Desktop, that dirname is exactly the path that
+  // triggers the TCC prompt we're trying to avoid.
+  const cwd = safeCwd(args.indexPath);
   const pathToClaudeCodeExecutable = resolveClaudeExecutablePath() ?? undefined;
 
   // Fold user-configured extra directories into additionalDirectories so

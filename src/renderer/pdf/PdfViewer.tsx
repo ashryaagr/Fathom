@@ -580,6 +580,15 @@ function captureViewportContent(
 
 /**
  * Apply a wheel-driven zoom step that keeps the document point under the cursor stationary.
+ *
+ * On zoom-OUT the scroller's content shrinks, and the browser immediately
+ * clamps `scrollTop` / `scrollLeft` to the new maxima when our React state
+ * update propagates to layout. If we read `scroller.scrollLeft` inside the
+ * rAF callback AFTER the clamp, the reading is stale relative to the
+ * pre-zoom cursor anchor — we'd then add `scrollDelta` onto a clamped
+ * origin, producing a visible scroll jump (pages sliding under the
+ * cursor rather than zooming around it). Compute absolute targets from
+ * the PRE-zoom origin and assign them verbatim in rAF.
  */
 function applyAnchoredZoom(
   scroller: HTMLElement,
@@ -595,18 +604,20 @@ function applyAnchoredZoom(
   if (realFactor === 1) return;
 
   const rect = scroller.getBoundingClientRect();
-  const cursorInScrollerX = clientX - rect.left + scroller.scrollLeft;
-  const cursorInScrollerY = clientY - rect.top + scroller.scrollTop;
-  const newCursorInScrollerX = cursorInScrollerX * realFactor;
-  const newCursorInScrollerY = cursorInScrollerY * realFactor;
-  const scrollDeltaX = newCursorInScrollerX - cursorInScrollerX;
-  const scrollDeltaY = newCursorInScrollerY - cursorInScrollerY;
+  const preZoomScrollLeft = scroller.scrollLeft;
+  const preZoomScrollTop = scroller.scrollTop;
+  const cursorInScrollerX = clientX - rect.left + preZoomScrollLeft;
+  const cursorInScrollerY = clientY - rect.top + preZoomScrollTop;
+  // After zoom, the same document point sits at cursor*factor inside the
+  // scroller; to keep it under the cursor we must scroll by that delta.
+  const targetScrollLeft = preZoomScrollLeft + cursorInScrollerX * (realFactor - 1);
+  const targetScrollTop = preZoomScrollTop + cursorInScrollerY * (realFactor - 1);
 
   multiplyZoom(realFactor);
 
   requestAnimationFrame(() => {
-    scroller.scrollLeft = scroller.scrollLeft + scrollDeltaX;
-    scroller.scrollTop = scroller.scrollTop + scrollDeltaY;
+    scroller.scrollLeft = targetScrollLeft;
+    scroller.scrollTop = targetScrollTop;
   });
 }
 

@@ -49,29 +49,80 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
     return () => observer.disconnect();
   }, [pageNumber]);
 
-  // Zoom-lag fix: the moment `zoom` changes, the parent slot
-  // (`slotWidth = baseSize.width * zoom`) resizes synchronously, but
-  // the canvas inside it keeps its OLD CSS dimensions until the
-  // async pdf.js render completes. That gap produces the "page
-  // falls behind my pinch" feel — a few hundred ms where the
-  // canvas is sized for the old zoom while the slot is sized for
-  // the new one. Resizing the canvas's CSS dimensions immediately
-  // (synchronous DOM write, no pdf.js call needed) keeps it
-  // visually in lockstep with the slot. The pixel buffer is still
-  // at the previous DPR until the heavy re-render below finishes,
-  // so the transition is softly resampled by the browser for one
-  // frame — much better than a layout drift.
+  // Zoom-lag fix (v2, supersedes the CSS-width-write in v1.0.12):
+  //
+  // The slot div `baseSize * zoom` reflows synchronously on every zoom
+  // change (React re-render), so neighboring pages resize instantly —
+  // that part is fine. The problem is the CANVAS inside the slot: its
+  // intrinsic pixel buffer (`canvas.width`/`canvas.height`) stays at
+  // `renderedZoom * DPR` until the async pdf.js render finishes, which
+  // can be 100-600 ms per page at higher zooms and much longer when
+  // multiple pages re-render in parallel during a pinch.
+  //
+  // v1.0.12 tried to hide the gap by setting `canvas.style.width` to the
+  // new slot width the instant `zoom` changed. That forced the browser
+  // to bilinear-resample a large pixel buffer into a small CSS box every
+  // frame — visually soft, and on zoom-OUT specifically, the slot and
+  // canvas appeared to lag behind each other for a frame because the
+  // resample isn't subpixel-stable. That's the "sweep-over" the user
+  // sees: the top-layer canvas drifts over the underlying slot geometry
+  // as the browser recomputes its resampled downscale across paint
+  // frames. It also meant several pages' worth of heavy bitmap scaling
+  // ran on the main thread simultaneously during a wheel-driven pinch.
+  //
+  // The fix: don't touch canvas CSS w/h during the gap. Apply a compositor
+  // transform instead — `transform: scale(zoom / renderedZoom)` with
+  // `transform-origin: top left`. The canvas's CSS box stays 1:1 with its
+  // backing store (no resample), and the compositor cheaply scales the
+  // already-painted pixels to fit the new slot — GPU path, no paint
+  // invalidation, stable across frames. On first mount (no renderedZoom
+  // yet) we sync canvas CSS to the current zoom so there's nothing to
+  // scale. When the pdf.js render below completes, it sets the new
+  // intrinsic buffer + CSS dimensions + renderedZoomRef all at once;
+  // the effect re-runs on the next zoom tick and snaps transform to
+  // identity. Text layer gets the same treatment: its span positions
+  // are baked in px at render time, so we transform the container to
+  // keep it visually locked to the canvas during the gap.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const textLayerContainer = textLayerRef.current;
     if (!canvas || !textLayerContainer) return;
-    const cssWidth = baseSize.width * zoom;
-    const cssHeight = baseSize.height * zoom;
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
-    textLayerContainer.style.width = `${cssWidth}px`;
-    textLayerContainer.style.height = `${cssHeight}px`;
-    textLayerContainer.style.setProperty('--total-scale-factor', String(zoom));
+    const rendered = renderedZoomRef.current;
+    if (rendered === null) {
+      // Not rendered yet — align CSS box with the slot so the eventual
+      // first render has no transform jump. Pixel buffer will be set
+      // inside the render effect below.
+      const cssWidth = baseSize.width * zoom;
+      const cssHeight = baseSize.height * zoom;
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+      canvas.style.transform = '';
+      canvas.style.transformOrigin = '';
+      textLayerContainer.style.width = `${cssWidth}px`;
+      textLayerContainer.style.height = `${cssHeight}px`;
+      textLayerContainer.style.transform = '';
+      textLayerContainer.style.transformOrigin = '';
+      textLayerContainer.style.setProperty('--total-scale-factor', String(zoom));
+      return;
+    }
+    if (rendered === zoom) {
+      // Post-render (or idle at same zoom): identity.
+      canvas.style.transform = '';
+      canvas.style.transformOrigin = '';
+      textLayerContainer.style.transform = '';
+      textLayerContainer.style.transformOrigin = '';
+      return;
+    }
+    // Zoom has changed but the new pdf.js render hasn't landed yet.
+    // Scale from rendered → current via compositor transform. No bitmap
+    // resampling, no paint invalidation — the sweep-over artifact goes
+    // away because the browser is composing an already-painted layer,
+    // not redrawing one whose source and destination sizes disagree.
+    const scale = zoom / rendered;
+    canvas.style.transformOrigin = 'top left';
+    canvas.style.transform = `scale(${scale})`;
+    textLayerContainer.style.transformOrigin = 'top left';
+    textLayerContainer.style.transform = `scale(${scale})`;
   }, [zoom, baseSize.width, baseSize.height]);
 
   // Canvas + text layer + region extraction. One effect so they stay in sync as zoom changes.
@@ -106,8 +157,17 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
       canvas.height = Math.ceil(renderViewport.height);
       canvas.style.width = `${cssViewport.width}px`;
       canvas.style.height = `${cssViewport.height}px`;
+      // Clear the compositor transform from the zoom-lag useLayoutEffect:
+      // the pixel buffer now matches the current zoom, so we want a 1:1
+      // display with no transform. If we don't clear it here, a prior
+      // scale(zoom/renderedZoom) would linger and double-scale the
+      // freshly-rendered pixels.
+      canvas.style.transform = '';
+      canvas.style.transformOrigin = '';
       textLayerContainer.style.width = `${cssViewport.width}px`;
       textLayerContainer.style.height = `${cssViewport.height}px`;
+      textLayerContainer.style.transform = '';
+      textLayerContainer.style.transformOrigin = '';
       // CSS variable consumed by pdfjs-dist text-layer styles.
       textLayerContainer.style.setProperty('--total-scale-factor', String(cssScale));
 

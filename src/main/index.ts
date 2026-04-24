@@ -999,6 +999,21 @@ async function showClaudeHealthDialog(win: BrowserWindow): Promise<void> {
   });
 }
 
+// Reset process.cwd() to userData *before* any subprocess gets spawned.
+// macOS launchers (Finder double-click, drag-onto-dock) can hand us a
+// cwd of `~/Desktop`, `~/Documents`, or `~/Downloads`. Every child
+// process Fathom spawns inherits that cwd by default — which means
+// the Claude Code subprocess we run for explanations triggers a TCC
+// permission prompt the first time it does *anything* in those dirs,
+// even though we never want it to look there. Forcing cwd to userData
+// (always safe, always writable, no TCC) at startup solves the whole
+// class. Inherited cwd never leaks to a child again.
+try {
+  process.chdir(app.getPath('userData'));
+} catch (err) {
+  console.warn('[startup] could not chdir to userData', err);
+}
+
 app.whenReady().then(async () => {
   // File-logging first so any downstream init failures are captured for the user
   // to share via the Help menu instead of being eaten by the GUI's silent stdout.
@@ -1051,6 +1066,32 @@ app.whenReady().then(async () => {
           console.warn('[QA] offscreen capture failed', err);
         }
       })();
+    });
+    // QA navigation globals — these mirror the in-window keyboard
+    // shortcuts (⌘⇧D dive, ⌘[ back, ⌘] forward, ⌘, prefs) but are
+    // *global* so the QA harness can drive Fathom without first
+    // calling `tell app "Fathom" to activate` — that activate call
+    // was yanking the user back to Fathom's Space whenever a QA
+    // run happened on a separate display. F-key combos avoid
+    // collisions with common app shortcuts. Human users keep using
+    // the window-level shortcuts; these are agent-only.
+    globalShortcut.register('CommandOrControl+Shift+F8', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('qa:triggerDive');
+      }
+    });
+    globalShortcut.register('CommandOrControl+Shift+F7', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('qa:triggerBack');
+      }
+    });
+    globalShortcut.register('CommandOrControl+Shift+F6', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('qa:triggerForward');
+      }
+    });
+    globalShortcut.register('CommandOrControl+Shift+F5', () => {
+      safeSend('settings:show');
     });
   }
   app.on('activate', async () => {

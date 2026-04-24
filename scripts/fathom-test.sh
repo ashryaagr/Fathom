@@ -138,36 +138,34 @@ EOF
     osascript -e "tell application \"System Events\" to key code $keycode"
     ;;
 
-  # --- Gesture keyboard equivalents ---
+  # --- QA gesture aliases — non-disruptive ---
+  # Each fires a global keyboard shortcut that Fathom's main process
+  # registered on startup, so the keystroke reaches Fathom regardless
+  # of which app is frontmost. NO `tell app to activate` calls — the
+  # user keeps their cursor + Space focus where they were.
   dive|ask)
-    # ⌘⇧D / ⌘⇧A — semantic-zoom commit on current viewport.
-    osascript -e 'tell application "Fathom" to activate' \
-      -e 'delay 0.2' \
-      -e 'tell application "System Events" to keystroke "d" using {command down, shift down}'
+    # ⌘⇧F8 → renderer triggers commit-semantic-focus on current viewport.
+    osascript -e 'tell application "System Events" to key code 100 using {command down, shift down}' 2>/dev/null
     ;;
   back)
-    # ⌘[ — swipe back through lens history.
-    osascript -e 'tell application "Fathom" to activate' \
-      -e 'delay 0.2' \
-      -e 'tell application "System Events" to keystroke "[" using {command down}'
+    # ⌘⇧F7 → renderer pops the lens stack.
+    osascript -e 'tell application "System Events" to key code 98 using {command down, shift down}' 2>/dev/null
     ;;
   forward)
-    # ⌘] — swipe forward.
-    osascript -e 'tell application "Fathom" to activate' \
-      -e 'delay 0.2' \
-      -e 'tell application "System Events" to keystroke "]" using {command down}'
+    # ⌘⇧F6 → renderer advances the forward stack.
+    osascript -e 'tell application "System Events" to key code 97 using {command down, shift down}' 2>/dev/null
     ;;
   prefs)
-    # ⌘, — open Preferences.
-    osascript -e 'tell application "Fathom" to activate' \
-      -e 'delay 0.2' \
-      -e 'tell application "System Events" to keystroke "," using {command down}'
+    # ⌘⇧F5 → main-process opens Preferences modal.
+    osascript -e 'tell application "System Events" to key code 96 using {command down, shift down}' 2>/dev/null
     ;;
   open-pdf)
-    # ⌘O — open the PDF picker.
-    osascript -e 'tell application "Fathom" to activate' \
-      -e 'delay 0.2' \
-      -e 'tell application "System Events" to keystroke "o" using {command down}'
+    # No global shortcut for this one yet — the file picker requires
+    # an active window context. Falls back to window-targeted
+    # keystroke; *will* steal focus if Fathom isn't already on the
+    # active Space. Document this; agents should prefer `sample` in
+    # QA flows.
+    osascript -e 'tell application "System Events" to keystroke "o" using {command down}' 2>/dev/null
     ;;
 
   *)

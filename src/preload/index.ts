@@ -163,6 +163,27 @@ const api = {
     return () => ipcRenderer.removeListener('qa:triggerSample', listener);
   },
 
+  /** QA-harness gesture aliases. Each fires the same in-app code path
+   * the corresponding window-level keyboard shortcut would, but
+   * routed via a *global* shortcut so the QA agent doesn't have to
+   * `tell app to activate` first (which yanks the user across
+   * Spaces). Human users keep using ⌘⇧D / ⌘[ / ⌘] / ⌘,. */
+  onQaTriggerDive: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerDive', listener);
+    return () => ipcRenderer.removeListener('qa:triggerDive', listener);
+  },
+  onQaTriggerBack: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerBack', listener);
+    return () => ipcRenderer.removeListener('qa:triggerBack', listener);
+  },
+  onQaTriggerForward: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerForward', listener);
+    return () => ipcRenderer.removeListener('qa:triggerForward', listener);
+  },
+
   // ---- settings (tiny JSON under userData) ----
   getSettings: (): Promise<{
     lastOpenDir?: string;

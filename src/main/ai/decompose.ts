@@ -33,12 +33,27 @@ export interface PaperDigest {
   rawBody?: string;
 }
 
+/** Same TCC-aware cwd selector used by client.ts. Reject preferred
+ * paths that live under ~/Desktop / ~/Documents / ~/Downloads so
+ * the spawned Claude subprocess never trips macOS's first-access
+ * permission prompt mid-question. */
 function safeCwd(preferred?: string): string {
   if (preferred) {
-    try {
-      if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
-    } catch {
-      /* fall through */
+    const home = homedir();
+    const protectedPrefixes = [
+      `${home}/Desktop`,
+      `${home}/Documents`,
+      `${home}/Downloads`,
+    ];
+    const isProtected = protectedPrefixes.some(
+      (prefix) => preferred === prefix || preferred.startsWith(prefix + '/'),
+    );
+    if (!isProtected) {
+      try {
+        if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
+      } catch {
+        /* fall through */
+      }
     }
   }
   return homedir();
