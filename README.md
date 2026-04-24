@@ -10,11 +10,13 @@
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
 Reading a PDF hasn't changed in forty years. We scroll, we copy, we paste
-into Claude, we scroll back. Fathom is a new way to read research papers
-— one where zooming in on a passage zooms in on your understanding of it.
-Hold ⌘, pinch on what you're looking at, and the page gives way to a
-clearer view, grounded in the paper itself, streaming as you read. Pinch a
-phrase inside to go deeper. Swipe back to surface.
+into Claude, we scroll back.
+
+Fathom is a new way to read research papers — one where zooming in on a
+passage zooms in on your understanding of it. Hold ⌘, pinch on what you're
+looking at, and the page gives way to a clearer view, grounded in the paper
+itself, streaming as you read. Pinch a phrase inside to go deeper. Swipe
+back to surface.
 
 It's a reading assistant shaped like the way you already read.
 
