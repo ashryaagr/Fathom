@@ -370,6 +370,26 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
 
 // Renderer-invoked "Show log" — used by the error toast so a user can share
 // the log file in one click without hunting through Help menus.
+// Renderer → main log bridge. Renderer components (gesture handlers,
+// lens pipeline, error boundaries) call window.lens.logDev(…) and the
+// payload lands in fathom.log alongside the main-process lines. This
+// closes the observability gap where a "white screen" crash was
+// invisible to me because it only wrote to DevTools console.
+ipcMain.handle(
+  'log:dev',
+  async (
+    _e,
+    payload: { level: 'info' | 'warn' | 'error'; tag: string; message: string; data?: unknown },
+  ) => {
+    const prefix = `[${payload.tag}]`;
+    const body = payload.data ? ` ${JSON.stringify(payload.data)}` : '';
+    const line = `${prefix} ${payload.message}${body}`;
+    if (payload.level === 'error') console.error(line);
+    else if (payload.level === 'warn') console.warn(line);
+    else console.log(line);
+  },
+);
+
 ipcMain.handle('log:reveal', async () => {
   const p = logFilePath();
   if (existsSync(p)) shell.showItemInFolder(p);

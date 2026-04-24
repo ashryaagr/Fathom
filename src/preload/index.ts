@@ -117,6 +117,17 @@ const api = {
   /** Open Finder on the Fathom log file so a user can share it in one drag. */
   revealLogFile: (): Promise<void> => ipcRenderer.invoke('log:reveal'),
 
+  /** Renderer → main log bridge. Use from any renderer-side codepath
+   * where a failure is otherwise invisible to fathom.log (lens open
+   * pipeline, error boundaries, gesture classifier). Lands as a
+   * regular [<tag>] line in the main log. */
+  logDev: (
+    level: 'info' | 'warn' | 'error',
+    tag: string,
+    message: string,
+    data?: unknown,
+  ): Promise<void> => ipcRenderer.invoke('log:dev', { level, tag, message, data }),
+
   // ---- settings (tiny JSON under userData) ----
   getSettings: (): Promise<{
     lastOpenDir?: string;

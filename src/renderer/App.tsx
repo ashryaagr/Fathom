@@ -15,6 +15,7 @@ import GestureFeedback from './lens/GestureFeedback';
 import UpdateToast from './lens/UpdateToast';
 import { useTourStore } from './lens/tourStore';
 import { createHighlightFromSelection } from './pdf/highlightFromSelection';
+import ErrorBoundary from './ErrorBoundary';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -552,14 +553,21 @@ export default function App() {
       </header>
       <main className="relative flex-1 overflow-hidden">
         {docState ? (
-          <PdfViewer />
+          <ErrorBoundary where="PdfViewer">
+            <PdfViewer />
+          </ErrorBoundary>
         ) : (
-          <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p) => void openPdf(p)} />
+          <ErrorBoundary where="EmptyState">
+            <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p) => void openPdf(p)} />
+          </ErrorBoundary>
         )}
       </main>
 
-      {/* Focus view overlays everything when active. */}
-      <FocusView />
+      {/* Focus view overlays everything when active. Its own boundary so
+          a lens-render crash doesn't blank the whole document behind. */}
+      <ErrorBoundary where="FocusView">
+        <FocusView />
+      </ErrorBoundary>
 
       {showHelp && (
         <HelpOverlay
