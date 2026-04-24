@@ -223,19 +223,15 @@ function FocusPane({
       exit={{ opacity: 0, clipPath: rectToClip(focused.sourceRect) }}
       transition={motionTransition}
     >
-      {/* Header */}
+      {/* Header — left-pad past the macOS traffic-light region so our
+          controls don't overlap the native window buttons. The Back /
+          Close action moves to the right side to clear the red/yellow/
+          green entirely — clicks intended for macOS's close button
+          were landing on our back-arrow before. */}
       <header
-        className="relative z-20 flex h-11 items-center border-b border-black/5 bg-[color:var(--color-paper)]/95 px-4 text-[12px] text-black/55 backdrop-blur"
+        className="relative z-20 flex h-11 items-center border-b border-black/5 bg-[color:var(--color-paper)]/95 pl-[92px] pr-3 text-[12px] text-black/55 backdrop-blur"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <button
-          onClick={backStackLen > 0 ? back : closeAll}
-          className="rounded-md px-2 py-1 text-[13px] font-medium text-black/70 hover:bg-black/5"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          aria-label="Back"
-        >
-          ← {backStackLen > 0 ? 'Back' : 'Close'}
-        </button>
         <div className="flex-1 truncate text-center select-none">
           {focused.origin === 'region' && <span>page {focused.page}</span>}
           {focused.origin === 'viewport' && <span>page {focused.page} · viewport</span>}
@@ -245,11 +241,33 @@ function FocusPane({
           {backStackLen > 0 && <span className="ml-2 text-black/35">· {backStackLen + 1} deep</span>}
         </div>
         <span
-          className="px-2 text-[11px] tracking-wide text-black/35 uppercase"
+          className="mr-2 hidden md:inline px-2 text-[11px] tracking-wide text-black/35 uppercase"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           ⌘ pinch · swipe back
         </span>
+        <button
+          onClick={backStackLen > 0 ? back : closeAll}
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] font-medium text-black/70 hover:bg-black/5"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          aria-label={backStackLen > 0 ? 'Back' : 'Close lens'}
+          title={backStackLen > 0 ? 'Back (⌘[)' : 'Close lens (swipe right or ⌘[)'}
+        >
+          {backStackLen > 0 ? (
+            // ← arrow
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 6 L8 12 L14 18" />
+            </svg>
+          ) : (
+            // × close glyph
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 6 L18 18 M6 18 L18 6" />
+            </svg>
+          )}
+          <span>{backStackLen > 0 ? 'Back' : 'Close'}</span>
+        </button>
       </header>
 
       {/* Body */}

@@ -853,41 +853,18 @@ function buildAppMenu(): void {
 }
 
 /**
- * First time anyone launches Fathom we greet them with a brief native dialog —
- * confirms the Gatekeeper approval worked, names the core gesture, and points
- * them at Open PDF. Deliberately tiny: we want to be out of their way. A full
- * in-app welcome tour is a separate concern.
+ * First-run greeting has moved into the renderer's EmptyState welcome
+ * card — cream paper, handwritten brand, two balanced buttons. The old
+ * native `dialog.showMessageBox` version fires on top of that card and
+ * ends up offering the same two options twice, which is exactly the
+ * "why do I see this menu" confusion the user reported. This function
+ * stays as a silent flag-setter so other code that keys off
+ * `firstRunCompletedAt` continues to work; no UI fires from here.
  */
-async function maybeShowFirstRunWelcome(win: BrowserWindow): Promise<void> {
+async function maybeShowFirstRunWelcome(_win: BrowserWindow): Promise<void> {
   const settings = readSettings();
   if (settings.firstRunCompletedAt) return;
-
-  const result = await dialog.showMessageBox(win, {
-    type: 'none',
-    icon: join(__dirname, '../../resources/icon.png'),
-    title: 'Welcome to Fathom',
-    message: 'You’re in.',
-    detail:
-      'Fathom is a PDF reader for research papers. The one thing you need to know:\n\n' +
-      '    • Hold ⌘ (Command) and pinch on any passage.\n' +
-      '    • The page gives way to a full-screen lens with a streaming, grounded explanation.\n' +
-      '    • Pinch a phrase inside the lens to dive deeper. Swipe back to return.\n\n' +
-      'Tip: right-click the Fathom icon in the Dock and choose Options → Keep in Dock so it’s a click away.',
-    buttons: ['Try with sample paper', 'Open a PDF…', 'Later'],
-    defaultId: 0,
-    cancelId: 2,
-    noLink: true,
-  });
-
   writeSettings({ firstRunCompletedAt: new Date().toISOString() });
-
-  if (result.response === 0) {
-    await openSamplePaper();
-  } else if (result.response === 1) {
-    // Forward to the existing open-PDF path so the welcome exits straight into
-    // the core interaction the user was promised.
-    win.webContents.send('pdf:openRequest');
-  }
 }
 
 // macOS sends `open-file` when a user drags a PDF onto the Fathom dock icon
