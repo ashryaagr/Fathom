@@ -20,10 +20,11 @@ assistant bolted onto a PDF viewer.
 ## Built out of necessity
 
 I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of
-research papers, and I got tired of the same moment: hit a dense paragraph,
-copy it out, switch to another window, lose my place, miss the point. So I
-built the reader I wanted. When it was polished enough for me to use daily,
-it felt like it might be useful to someone else.
+research papers, and I got tired of the same spiral: hit a dense paragraph,
+paste it into Claude, ask for clarification, then clarification of the
+clarification, then of *that* — and by the time I'd surfaced, the paper was
+gone. So I built the reader I wanted. When it was polished enough for me to
+use daily, it felt like it might be useful to someone else.
 
 There's nothing to sign up for, no subscription, no account. If you already
 pay for Claude, you have everything Fathom needs.
