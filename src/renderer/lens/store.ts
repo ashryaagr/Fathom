@@ -84,8 +84,15 @@ export interface DrillEdge {
 interface LensState {
   /** Cache of completed turns (Q&A history) keyed by focus id. Persists across open/close. */
   cache: Map<string, Turn[]>;
-  /** Absolute zoom-image path per region id — hydrated from disk on paper reopen so cached
-   * markers restore their visual anchor exactly. */
+  /** Absolute zoom-image path per LENS id (which equals region id for
+   * region-origin lenses, and a synthetic vp:/drill: id otherwise).
+   * Populated on lens.open() so the in-session re-open path finds it,
+   * and re-populated on paper-open hydration for cross-session
+   * reopens. The bug it fixed (v1.0.16): closing a lens and clicking
+   * its marker again in the same session previously lost the
+   * anchor image, because this map was paper-open-only and the
+   * lookup keyed on regionId silently missed for viewport-origin
+   * lenses. */
   persistedZoomPaths: Map<string, string>;
   /** Visual zoom-markers — the amber dots that show on the paper
    * after a user closes a lens. Registered on every open (except
@@ -176,6 +183,11 @@ export const useLensStore = create<LensState>((set, get) => ({
       return { cache: next };
     }),
 
+  // Note: the param name stays `regionId` for back-compat with existing
+  // callers, but the map is now keyed by LENS id (which equals
+  // region.id for region-origin lenses, and a synthetic vp:/drill: id
+  // otherwise). Region-origin callers continue to work without changes;
+  // viewport- and drill-origin callers can pass `lens.id` directly.
   setPersistedZoomPath: (regionId: string, path: string) =>
     set((s) => {
       const next = new Map(s.persistedZoomPaths);
@@ -231,6 +243,15 @@ export const useLensStore = create<LensState>((set, get) => ({
           anchorText: lens.anchorText ?? null,
         })
         .catch((err) => console.warn('[Lens] saveLensAnchor failed', err));
+      // ALSO write to the in-memory persistedZoomPaths map keyed by
+      // lens.id so a same-session reopen via marker click can find
+      // the path without waiting for paper-open hydration. v1.0.15
+      // and earlier shipped a bug where the map was hydration-only;
+      // closing and reopening a lens in the same session showed the
+      // magnifying-glass placeholder instead of the saved figure.
+      const persistedZoomPaths = lens.zoomImagePath
+        ? new Map(s.persistedZoomPaths).set(lens.id, lens.zoomImagePath)
+        : s.persistedZoomPaths;
       return {
         cache,
         focused: next,
@@ -238,6 +259,7 @@ export const useLensStore = create<LensState>((set, get) => ({
         forwardStack: [],
         transition: 'open',
         lensMarkers,
+        persistedZoomPaths,
       };
     }),
 

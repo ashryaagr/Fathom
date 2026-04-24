@@ -412,6 +412,46 @@ reports are triageable from logs alone — no DevTools required at
 the moment of frustration. Skill rule §12 codifies this for all
 gesture classifiers going forward.
 
+## 34. Universal control panel — ✅ DONE in v1.0.16
+The header (Ask, Highlight, Preferences, Help, Open) was at default
+z so the lens overlay (z-30) covered it completely once a lens
+opened. Header is now `z-[50]` with `bg-[var(--color-paper)]/95
+backdrop-blur`, and the lens is `top-12` so the header stays
+visually above. Same controls clickable from the PDF, from a lens,
+and from a deep drill — only the *target* changes.
+
+The Ask button is now context-aware: dispatches `fathom:askInLens`
+when a lens is focused (FocusView listens and focuses the
+InstructionInput's input), `fathom:askCurrentViewport` otherwise
+(PdfViewer listens and dives into the viewport). Highlight and
+Preferences already worked at every depth after v1.0.15.
+
+## 35. Anchor image lost on reopen — ✅ DONE in v1.0.16
+User report: first zoom shows the figure; close + reopen via
+marker shows the magnifying-glass placeholder. Two bugs:
+
+1. **persistedZoomPaths was hydration-only.** The map was
+   populated only on paper-open hydration; in-session lens close +
+   reopen had an empty map, so `openCached` couldn't find the
+   zoom path and rendered the placeholder. `store.open()` now
+   writes to the map immediately when a lens opens with a
+   `zoomImagePath`.
+
+2. **Hydration skipped viewport-origin lenses.** App.tsx had
+   `if (a.zoom_image_path && a.region_id)` — the `&& region_id`
+   silently filtered out every viewport- and drill-origin row.
+   Now keys by `lens_id` (which equals `region.id` for region-
+   origin and a synthetic id otherwise) so all origins
+   round-trip equally.
+
+Plus: viewport markers had no click handler (purely decorative).
+Now they're clickable buttons that call `openCachedViewport`,
+which reuses `persistedZoomPaths.get(lens.id)` to restore the
+saved figure. PageView's reopen paths log to fathom.log via
+logDev when the path lookup misses or when readAssetAsDataUrl
+throws — future "image disappeared" reports diagnosable from
+logs alone (per skill rule §12).
+
 ## 33. Harness retrospective — ✅ DONE in v1.0.15
 User asked: "Where exactly did our hardening break?" The diagnosis:
 

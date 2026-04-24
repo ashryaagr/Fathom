@@ -353,6 +353,62 @@ function CachedLensMarkers({
   if (lensFocused) return null;
   if (cachedRegions.length === 0 && viewportMarkers.length === 0) return null;
 
+  const openCachedViewport = async (m: { lensId: string; bbox: { x: number; y: number; width: number; height: number }; origin: string }) => {
+    const pageRect = getPageRect();
+    if (!pageRect) return;
+    const sourceRect = {
+      x: pageRect.left + m.bbox.x * zoom,
+      y: pageRect.top + (pageHeight - m.bbox.y - m.bbox.height) * zoom,
+      width: Math.max(20, m.bbox.width * zoom),
+      height: Math.max(20, m.bbox.height * zoom),
+    };
+    let anchorImage: FocusedLens['anchorImage'];
+    // persistedZoomPaths is keyed by lens.id (== m.lensId here), so
+    // the previously-saved image rehydrates regardless of whether the
+    // lens was region-origin or viewport-origin. The bug fixed in
+    // v1.0.16 was specifically that this lookup keyed by region.id
+    // missed for viewport-origin lenses (no region) and silently
+    // showed the magnifying-glass placeholder.
+    const zoomPath = useLensStore.getState().persistedZoomPaths.get(m.lensId);
+    if (zoomPath) {
+      try {
+        const dataUrl = await window.lens.readAssetAsDataUrl(zoomPath);
+        anchorImage = { dataUrl, width: 0, height: 0 };
+      } catch (err) {
+        console.warn('failed to load cached viewport zoom image', err);
+        void window.lens.logDev?.(
+          'warn',
+          'Lens',
+          `viewport marker reopen: readAssetAsDataUrl failed for ${zoomPath}`,
+        );
+      }
+    } else {
+      void window.lens.logDev?.(
+        'info',
+        'Lens',
+        `viewport marker reopen: no persistedZoomPath for ${m.lensId} — placeholder will show`,
+      );
+    }
+    const lens: FocusedLens = {
+      id: m.lensId,
+      origin: 'viewport',
+      paperHash,
+      page: pageNumber,
+      bbox: m.bbox,
+      sourceRect,
+      anchorText: '',
+      focusPhrase: `visual on page ${pageNumber}`,
+      prevTexts: [],
+      nextTexts: [],
+      parentBody: null,
+      regionId: null,
+      turns: [],
+      anchorImage,
+      zoomImagePath: zoomPath,
+    };
+    useLensStore.getState().open(lens);
+  };
+
   const openCached = async (region: Region) => {
     const pageRect = getPageRect();
     if (!pageRect) return;
@@ -381,7 +437,18 @@ function CachedLensMarkers({
         anchorImage = { dataUrl, width: 0, height: 0 };
       } catch (err) {
         console.warn('failed to load cached zoom image', err);
+        void window.lens.logDev?.(
+          'warn',
+          'Lens',
+          `region marker reopen: readAssetAsDataUrl failed for ${zoomPath}`,
+        );
       }
+    } else {
+      void window.lens.logDev?.(
+        'info',
+        'Lens',
+        `region marker reopen: no persistedZoomPath for ${region.id} — placeholder will show`,
+      );
     }
     const lens: FocusedLens = {
       id: region.id,
@@ -433,12 +500,13 @@ function CachedLensMarkers({
         const topCss = Math.max(0, (pageHeight - m.bbox.y - m.bbox.height) * zoom);
         const rightEdge = (m.bbox.x + m.bbox.width) * zoom;
         return (
-          <div
+          <button
             key={m.lensId}
-            className="absolute z-[100] h-3.5 w-3.5 rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] opacity-80"
+            onClick={() => void openCachedViewport(m)}
+            className="absolute z-[100] h-3.5 w-3.5 cursor-pointer rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] opacity-80 transition hover:scale-110 hover:opacity-100"
             style={{ left: rightEdge - 14, top: topCss + 4 }}
-            title="You dove in around this area"
-            aria-label="Previous zoom marker"
+            title="Reopen this zoom"
+            aria-label="Reopen previous zoom"
           />
         );
       })}

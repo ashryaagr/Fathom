@@ -76,6 +76,29 @@ function FocusPane({
     [],
   );
 
+  // Universal Ask button → focus the lens's input. The header's Ask
+  // button dispatches `fathom:askInLens` whenever a lens is focused;
+  // we catch it here and focus the InstructionInput's input element
+  // so the user can immediately type. CLAUDE.md §0 + the user's
+  // "controls don't change with depth" rule.
+  useEffect(() => {
+    const handler = () => {
+      const root = containerRef.current;
+      if (!root) return;
+      const footer = root.querySelector<HTMLElement>('[data-lens-ask-footer="true"]');
+      if (!footer) return;
+      const input = footer.querySelector<HTMLInputElement>('input');
+      if (input) {
+        input.focus();
+        // Scroll the footer into view too — ensures a long chat
+        // history doesn't hide the input behind the body scroll.
+        footer.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('fathom:askInLens', handler);
+    return () => window.removeEventListener('fathom:askInLens', handler);
+  }, []);
+
   // Auto-scroll so the ask box + explanation are immediately visible. Context above
   // is scrolled out of view so it doesn't distract; user can scroll up to see it.
   useEffect(() => {
@@ -238,7 +261,13 @@ function FocusPane({
   return (
     <motion.div
       ref={containerRef}
-      className="fixed inset-0 z-30 flex flex-col bg-[color:var(--color-paper)]"
+      // top-12 (48 px) leaves room for the universal header — the
+      // "control panel that doesn't change with depth" the user
+      // requires. Header z-50 + lens z-30 puts the header strictly on
+      // top, but we ALSO offset the lens vertically so the header bar
+      // is visually distinct from the lens (no overlap on the anchor
+      // image, no clipped tooltips on the header buttons).
+      className="fixed top-12 inset-x-0 bottom-0 z-30 flex flex-col bg-[color:var(--color-paper)]"
       initial={
         isBackNavigation ? false : { opacity: 0, clipPath: rectToClip(focused.sourceRect) }
       }
@@ -393,7 +422,10 @@ function FocusPane({
 
       {/* Sticky Ask footer — always visible so the user can type a follow-up without
           scrolling back through a long chat history. */}
-      <div className="relative z-20 border-t border-black/5 bg-[color:var(--color-paper)]/95 px-8 py-3 backdrop-blur">
+      <div
+        className="relative z-20 border-t border-black/5 bg-[color:var(--color-paper)]/95 px-8 py-3 backdrop-blur"
+        data-lens-ask-footer="true"
+      >
         <div className="mx-auto w-full max-w-[720px]">
           <InstructionInput
             streaming={anyStreaming}

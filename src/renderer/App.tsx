@@ -189,8 +189,14 @@ export default function App() {
           // model often skips). See todo.md #21 for the audit.
           if (state.lensAnchors && state.lensAnchors.length > 0) {
             for (const a of state.lensAnchors) {
-              if (a.zoom_image_path && a.region_id) {
-                useLensStore.getState().setPersistedZoomPath(a.region_id, a.zoom_image_path);
+              // persistedZoomPaths is keyed by LENS id (== region.id for
+              // region-origin, synthetic id otherwise). Hydrating
+              // from lens_anchors regardless of region_id is what
+              // makes viewport-origin reopens show the saved figure
+              // instead of the magnifying-glass placeholder. The
+              // earlier `&& a.region_id` guard silently skipped them.
+              if (a.zoom_image_path) {
+                useLensStore.getState().setPersistedZoomPath(a.lens_id, a.zoom_image_path);
               }
               if (a.origin !== 'drill') {
                 let bbox = { x: 0, y: 0, width: 0, height: 0 };
@@ -717,7 +723,16 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <header
-        className="relative flex h-12 items-center justify-center border-b border-black/5 px-3 text-[13px] font-medium text-black/60 select-none"
+        // z-[50] keeps the header — the universal control panel — above
+        // the lens overlay (which sits at z-30). CLAUDE.md §2 + the
+        // user's explicit instruction: "the basic control panel or top
+        // right should not change, even when I'm going deep". The same
+        // controls are visible and clickable from the PDF, from a lens,
+        // and from a deep drill — only their *target* changes (Ask
+        // dives into PDF when no lens, focuses the lens Ask input when
+        // a lens is open). The lens itself is offset-top: 48 px so the
+        // header isn't visually overlapping the anchor image either.
+        className="relative z-[50] flex h-12 items-center justify-center border-b border-black/5 bg-[color:var(--color-paper)]/95 px-3 text-[13px] font-medium text-black/60 backdrop-blur select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <span className="truncate">{docState ? docState.name : 'Fathom'}</span>
@@ -729,9 +744,19 @@ export default function App() {
             <HeaderAction
               label="Ask"
               tip="Ask Claude about what's on screen (⌘+pinch)"
-              onClick={() =>
-                window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'))
-              }
+              onClick={() => {
+                // The Ask button is context-aware: in the PDF view it
+                // dives into the current viewport; inside a lens it
+                // focuses the lens's Ask input. Same control, same UI,
+                // different target depending on depth — per the user's
+                // "the controls should not change with depth" rule.
+                const lensFocused = useLensStore.getState().focused !== null;
+                if (lensFocused) {
+                  window.dispatchEvent(new CustomEvent('fathom:askInLens'));
+                } else {
+                  window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'));
+                }
+              }}
             />
           )}
           {docState && (
