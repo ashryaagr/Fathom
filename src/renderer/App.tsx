@@ -31,6 +31,13 @@ export default function App() {
   const [showIndexToast, setShowIndexToast] = useState(false);
   const [showTour, setShowTour] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setFlash = useCallback((msg: string) => {
+    setFlashMessage(msg);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => setFlashMessage(null), 2200);
+  }, []);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to decomposition status events from the main process.
@@ -519,73 +526,59 @@ export default function App() {
           className="absolute right-2 flex items-center gap-1"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          {/* Explicit "Ask" — opens a lens on the current viewport without
-              requiring the pinch gesture. The PdfViewer listens for the
-              fathom:askCurrentViewport event and runs the same flow. */}
           {docState && (
-            <button
+            <HeaderAction
+              label="Ask"
+              tip="Ask Claude about what's on screen (⌘+pinch)"
               onClick={() =>
                 window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'))
               }
-              className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
-              title="Ask Claude about what's on screen (⌘+pinch)"
-            >
-              Ask
-            </button>
+            />
           )}
           {docState && (
-            <button
-              onClick={() => void createHighlightFromSelection(docState.contentHash)}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-black/55 hover:bg-[color:var(--color-lens-soft)]"
+            <HeaderIcon
+              tip="Highlight selected text (⌘H)"
               aria-label="Highlight selection"
-              title="Highlight selected text (⌘H)"
+              onClick={async () => {
+                const count = await createHighlightFromSelection(docState.contentHash);
+                if (count === 0) {
+                  setFlash('Select text first, then click Highlight.');
+                } else {
+                  setFlash(
+                    count === 1 ? 'Highlighted.' : `${count} highlights added.`,
+                  );
+                }
+              }}
             >
-              {/* marker-pen icon, thin amber strokes */}
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 13 L3 11 L10.5 3.5 L12.5 5.5 L5 13 Z" />
                 <path d="M9.5 4.5 L11.5 6.5" />
                 <path d="M3 13 L2 14" />
               </svg>
-            </button>
+            </HeaderIcon>
           )}
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex h-6 w-6 items-center justify-center rounded-full text-black/55 hover:bg-black/5"
+          <HeaderIcon
+            tip="Preferences (⌘,)"
             aria-label="Preferences"
-            title="Preferences (⌘,)"
+            onClick={() => setShowSettings(true)}
           >
-            {/* Gear icon, minimal strokes */}
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="8" cy="8" r="2.2"/>
               <path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/>
             </svg>
-          </button>
-          <button
-            onClick={() => setShowHelp((v) => !v)}
-            className="flex h-6 w-6 items-center justify-center rounded-full text-[12px] text-black/55 hover:bg-black/5"
+          </HeaderIcon>
+          <HeaderIcon
+            tip="Show controls (?)"
             aria-label="Help"
-            title="Show controls (?)"
+            onClick={() => setShowHelp((v) => !v)}
           >
-            ?
-          </button>
-          <button
+            <span className="text-[12px] font-medium">?</span>
+          </HeaderIcon>
+          <HeaderAction
+            label="Open…"
+            tip="Open a PDF from disk (⌘O)"
             onClick={() => void openPdf()}
-            className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
-            title="Open a PDF from disk (⌘O)"
-            aria-label="Open a PDF"
-          >
-            Open…
-          </button>
+          />
         </div>
       </header>
       <main className="relative flex-1 overflow-hidden">
@@ -634,6 +627,25 @@ export default function App() {
       <CoachHint />
       <GestureFeedback />
       <UpdateToast />
+
+      {/* Transient in-app confirmation / hint pill. Fires from
+          header actions so the user gets visible feedback — "select
+          text first", "highlighted", etc. — without a system-level
+          notification. */}
+      <AnimatePresence>
+        {flashMessage && (
+          <motion.div
+            key={flashMessage}
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}
+            className="pointer-events-none fixed top-14 left-1/2 z-[130] -translate-x-1/2 rounded-full bg-black/78 px-3.5 py-1.5 text-[12px] font-medium text-white/95 shadow-[0_6px_18px_rgba(0,0,0,0.2)] backdrop-blur-sm"
+          >
+            {flashMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <SettingsPanel
         visible={showSettings}
@@ -1012,5 +1024,76 @@ function Row({ k, v }: { k: string; v: string }) {
       </dt>
       <dd className="text-[13px] text-black/75">{v}</dd>
     </div>
+  );
+}
+
+/**
+ * Header icon-only control with a custom tooltip (faster + more
+ * reliable than the native `title=` attribute, which Chromium delays
+ * ~1.5s and sometimes skips entirely in Electron). Shows on hover
+ * after 180 ms, positioned below the icon. Button itself gains a
+ * clear pressed / active visual state so the user sees the click
+ * land.
+ */
+function HeaderIcon({
+  tip,
+  onClick,
+  children,
+  'aria-label': ariaLabel,
+}: {
+  tip: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  'aria-label': string;
+}) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        onClick={onClick}
+        aria-label={ariaLabel}
+        title={tip}
+        className="flex h-6 w-6 items-center justify-center rounded-full text-black/55 transition hover:bg-black/5 hover:text-black/80 active:scale-90 active:bg-black/10"
+      >
+        {children}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-1/2 z-[200] mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/82 px-2 py-1 text-[11px] font-medium text-white/95 opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-sm transition-opacity delay-150 group-hover:opacity-100"
+      >
+        {tip}
+      </span>
+    </span>
+  );
+}
+
+/** Text-label variant of HeaderIcon — same tooltip + active state
+ * treatment but renders a short label (e.g. "Ask", "Open…") instead
+ * of an SVG. */
+function HeaderAction({
+  label,
+  tip,
+  onClick,
+}: {
+  label: string;
+  tip: string;
+  onClick: () => void;
+}) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        onClick={onClick}
+        aria-label={label}
+        title={tip}
+        className="rounded px-2 py-0.5 text-xs text-black/60 transition hover:bg-black/5 hover:text-black/85 active:scale-95 active:bg-black/10"
+      >
+        {label}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-1/2 z-[200] mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/82 px-2 py-1 text-[11px] font-medium text-white/95 opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-sm transition-opacity delay-150 group-hover:opacity-100"
+      >
+        {tip}
+      </span>
+    </span>
   );
 }

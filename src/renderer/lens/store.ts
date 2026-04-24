@@ -59,12 +59,28 @@ export interface FocusedLens {
   sessionId?: string;
 }
 
+/** A marker tied to a particular lens-open. Registered the moment the
+ * user zooms, whether or not they ever ask Claude anything. Keyed by
+ * `paperHash:page` for cheap per-page lookup from PageView. */
+export interface LensMarker {
+  lensId: string;
+  bbox: { x: number; y: number; width: number; height: number };
+  origin: 'region' | 'viewport';
+}
+
 interface LensState {
   /** Cache of completed turns (Q&A history) keyed by focus id. Persists across open/close. */
   cache: Map<string, Turn[]>;
   /** Absolute zoom-image path per region id — hydrated from disk on paper reopen so cached
    * markers restore their visual anchor exactly. */
   persistedZoomPaths: Map<string, string>;
+  /** Visual zoom-markers — the amber dots that show on the paper
+   * after a user closes a lens. Registered on every open (except
+   * drills, which live inside the lens, not on the PDF page). A
+   * region-origin lens also appears in `cache`; viewport-origin
+   * lenses used to be invisible because the marker-render path only
+   * matched on `cache.has(region.id)`. Now they appear here. */
+  lensMarkers: Map<string, LensMarker[]>;
   /** Currently focused lens (the one shown in FocusView). */
   focused: FocusedLens | null;
   /** Stack of previous focuses — Cmd+pinch-out / two-finger swipe right navigates back. */
@@ -103,11 +119,21 @@ interface LensState {
   setStreamError: (lensId: string, message: string) => void;
   /** Convenience: start a new turn from a user-typed question. */
   askFollowUp: (question: string) => void;
+  /** Register a visible amber dot for the lens on its page. Safe to
+   * call repeatedly (de-duplicates by lensId). */
+  registerMarker: (
+    paperHash: string,
+    page: number,
+    marker: LensMarker,
+  ) => void;
+  /** Read-only helper used by PageView to render amber dots. */
+  markersForPage: (paperHash: string, page: number) => LensMarker[];
 }
 
 export const useLensStore = create<LensState>((set, get) => ({
   cache: new Map(),
   persistedZoomPaths: new Map(),
+  lensMarkers: new Map(),
   focused: null,
   backStack: [],
   forwardStack: [],
@@ -138,8 +164,35 @@ export const useLensStore = create<LensState>((set, get) => ({
       const backStack = s.focused ? [...s.backStack, finalize(s.focused)] : s.backStack;
       const cache = new Map(s.cache);
       if (!cached || cached.length === 0) cache.set(lens.id, turns);
+      // Register the marker now — the moment the user dives — so it
+      // appears on the paper as soon as they navigate back, regardless
+      // of whether they've asked Claude anything. Drills live inside a
+      // lens, not on a PDF page, so they don't get a paper-level marker.
+      let lensMarkers = s.lensMarkers;
+      if (lens.origin !== 'drill') {
+        const key = `${lens.paperHash}:${lens.page}`;
+        const existing = s.lensMarkers.get(key) ?? [];
+        if (!existing.some((m) => m.lensId === lens.id)) {
+          lensMarkers = new Map(s.lensMarkers);
+          lensMarkers.set(key, [
+            ...existing,
+            {
+              lensId: lens.id,
+              bbox: lens.bbox,
+              origin: lens.origin === 'viewport' ? 'viewport' : 'region',
+            },
+          ]);
+        }
+      }
       // Opening a fresh lens invalidates any forward history — just like a browser.
-      return { cache, focused: next, backStack, forwardStack: [], transition: 'open' };
+      return {
+        cache,
+        focused: next,
+        backStack,
+        forwardStack: [],
+        transition: 'open',
+        lensMarkers,
+      };
     }),
 
   drillOn: (args) => {
@@ -180,7 +233,7 @@ export const useLensStore = create<LensState>((set, get) => ({
       nextTexts: [],
       parentBody,
       regionId: focused.regionId,
-      turns: [{ question: null, body: '', progress: '', streaming: true }],
+      turns: [], // user-driven chat; empty until they ask
     };
     set((s) => {
       const cached = s.cache.get(id);
@@ -363,6 +416,21 @@ export const useLensStore = create<LensState>((set, get) => ({
     const q = question.trim();
     if (!q) return;
     get().beginTurn(focused.id, q);
+  },
+
+  registerMarker: (paperHash, page, marker) =>
+    set((s) => {
+      const key = `${paperHash}:${page}`;
+      const existing = s.lensMarkers.get(key) ?? [];
+      if (existing.some((m) => m.lensId === marker.lensId)) return s;
+      const lensMarkers = new Map(s.lensMarkers);
+      lensMarkers.set(key, [...existing, marker]);
+      return { lensMarkers };
+    }),
+
+  markersForPage: (paperHash, page) => {
+    const s = get();
+    return s.lensMarkers.get(`${paperHash}:${page}`) ?? [];
   },
 }));
 

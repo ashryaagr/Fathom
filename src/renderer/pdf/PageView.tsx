@@ -227,6 +227,7 @@ function CachedLensMarkers({
   // in v1.0.3.
   const cache = useLensStore((s) => s.cache);
   const lensFocused = useLensStore((s) => s.focused !== null);
+  const lensMarkersMap = useLensStore((s) => s.lensMarkers);
   // Map reference is stable when regions haven't changed; resolving
   // inside useMemo avoids allocating a new `[]` on every render (which
   // would itself cause a useSyncExternalStore re-render loop).
@@ -243,6 +244,15 @@ function CachedLensMarkers({
     }
     return result;
   }, [byPage, paperHash, pageNumber, cache]);
+  // Viewport-origin markers — users who pinched without a region
+  // directly under the cursor. These aren't in `regions` at all; they
+  // live only in the store's lensMarkers map. Filter out any that
+  // also have a matching region marker to avoid doubling up.
+  const viewportMarkers = useMemo(() => {
+    const list = lensMarkersMap.get(`${paperHash}:${pageNumber}`) ?? [];
+    const regionIds = new Set(cachedRegions.map((r) => r.id));
+    return list.filter((m) => m.origin === 'viewport' && !regionIds.has(m.lensId));
+  }, [lensMarkersMap, paperHash, pageNumber, cachedRegions]);
 
   // Hide markers while the lens is focused. Two problems they caused
   // otherwise: (a) at z-[100] they could bleed through the lens overlay
@@ -250,7 +260,7 @@ function CachedLensMarkers({
   // clickable through the lens, letting the user recursively re-open
   // the same lens in a loop.
   if (lensFocused) return null;
-  if (cachedRegions.length === 0) return null;
+  if (cachedRegions.length === 0 && viewportMarkers.length === 0) return null;
 
   const openCached = async (region: Region) => {
     const pageRect = getPageRect();
@@ -295,7 +305,7 @@ function CachedLensMarkers({
       nextTexts,
       parentBody: null,
       regionId: region.id,
-      turns: [{ question: null, body: '', progress: '', streaming: true }],
+      turns: [], // user-driven chat; empty until they ask
       anchorImage,
       zoomImagePath: zoomPath,
     };
@@ -319,8 +329,25 @@ function CachedLensMarkers({
             onClick={() => openCached(r)}
             className="absolute z-[100] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] transition-transform hover:scale-125 focus:outline-none"
             style={{ left: rightEdge - 14, top: topCss + 4 }}
-            title="Re-open lens (cached)"
-            aria-label="Re-open cached lens"
+            title="Re-open lens"
+            aria-label="Re-open lens"
+          />
+        );
+      })}
+      {viewportMarkers.map((m) => {
+        // Viewport origin: bbox may span a wide area or be approximate.
+        // Pin the dot to the bbox's top-right corner so it sits near
+        // the section the user was looking at without intruding on
+        // body text.
+        const topCss = Math.max(0, (pageHeight - m.bbox.y - m.bbox.height) * zoom);
+        const rightEdge = (m.bbox.x + m.bbox.width) * zoom;
+        return (
+          <div
+            key={m.lensId}
+            className="absolute z-[100] h-3.5 w-3.5 rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] opacity-80"
+            style={{ left: rightEdge - 14, top: topCss + 4 }}
+            title="You dove in around this area"
+            aria-label="Previous zoom marker"
           />
         );
       })}

@@ -116,6 +116,8 @@ Fathom. They override any conflicting default behaviour.
 
 ## 3. The semantic-zoom gesture
 
+- **Zoom frames the passage; the user asks the question.** The lens opens anchored on exactly what the user was looking at, with an input focused at the bottom. Fathom does NOT auto-prompt Claude on zoom. This was the original design and it kept guessing wrong — sometimes the user wanted a definition, sometimes a summary, sometimes to chase a citation. Shipping the auto-prompt spent latency on answers the user didn't ask for. The current rule: zoom sets context; the user types what they want; Claude answers that specific question. Drill inside a lens works the same way — pinch a phrase, lens opens anchored on the phrase, user asks.
+- **The marker appears the moment the user zooms.** Not when the answer lands, not when the lens closes. As soon as a lens opens on a region or viewport, an amber dot is registered for that paper+page; when the lens closes the dot is visible on the PDF. Drill-origin lenses (selection inside a lens) don't get a PDF marker — they live inside the lens history, not on the page.
 - **⌘ + pinch arms semantic mode.** Plain pinch stays visual.
 - **Visual zoom is always cursor-anchored.** The point under the cursor must stay stationary through the zoom. Anything else is broken.
 - **Commit moment = ⌘ key release.** Not gesture-start, not gesture-end. The user finishes framing what they want, then releases ⌘, then the lens opens.

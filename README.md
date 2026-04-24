@@ -33,11 +33,11 @@ There's nothing to sign up for, no subscription, no account. If you already pay 
 
 ## What it feels like
 
-Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens, and the explanation starts streaming in. Pinch a phrase inside the lens to drill deeper — recursively, as far as the idea goes. Swipe back, the way you came. Every lens persists across sessions: close the PDF, open it next month, pinch the same paragraph, and the thread you had is still there, exactly where you left it.
+Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens, anchored on exactly what you were looking at. Type whatever you want to know. Pinch a phrase inside the lens to drill deeper — recursively, as far as the idea goes. Swipe back, the way you came. Every lens persists across sessions: close the PDF, open it next month, pinch the same paragraph, and the thread you had is still there, exactly where you left it.
 
 ## What makes it different
 
-- **The zoom is the explanation.** No side panel, no context switch, no "AI assistant" icon. The gesture you'd already use to look closer is how you ask for help.
+- **The zoom is the context, not the question.** Instead of guessing what you wanted explained, Fathom lets the zoom *frame* the passage and then you ask. One less thing the machine tries to predict. Simpler, faster, under your control.
 - **Grounded in the paper itself.** Claude is given a file-system index of the paper — `content.md`, per-figure PNGs, a digest — and navigates it with `Read` / `Grep` / `Glob`. No RAG, no embeddings, no similarity search. The paper is a filesystem; the AI is a shell.
 - **Diagrams when they help.** Architectures, pipelines, and relationships render as hand-drawn inline SVG. Never ASCII, never Mermaid.
 - **Durable across sessions.** Every lens round-trips across app restarts: the viewport crop, the full thread, the exact prompt that was sent.

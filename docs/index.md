@@ -23,10 +23,10 @@ Fathom needs.
 
 ## A new way to read a paper
 
-Fathom asks you not to leave the document. The explanation comes to the
-page, right where your eye already is. You pinch in when you want to
-understand; you swipe back when you want to keep going. One gesture — the
-same pinch you'd already use to look closer — is how you ask for help.
+Fathom asks you not to leave the document. The zoom *frames* the passage;
+you ask what you actually want to know. Nothing is predicted, nothing
+streams unprompted. One gesture to focus, one sentence to ask. Swipe
+back when you want to keep going.
 
 It's a reading app shaped around the way you already read, not an AI
 assistant bolted onto a PDF viewer.
@@ -34,11 +34,12 @@ assistant bolted onto a PDF viewer.
 ## What it feels like
 
 Hold **⌘** and pinch on any passage. The page gives way to a full-screen
-lens, and the explanation starts streaming in. Pinch a phrase inside the
-lens to drill deeper — recursively, as far as the idea goes. Swipe back,
-the way you came. Every lens persists across sessions: close the PDF, open
-it next month, pinch the same paragraph, and the thread you had is still
-there, exactly where you left it.
+lens anchored on exactly what you were looking at, with an input at the
+bottom. Type your question — the answer streams in. Pinch a phrase
+inside the lens to drill deeper. Swipe back, the way you came. Every
+lens persists across sessions: close the PDF, open it next month, click
+the amber marker on the page, and the thread you had is still there,
+exactly where you left it.
 
 ## What makes it different
 

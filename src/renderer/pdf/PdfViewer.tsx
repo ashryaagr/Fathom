@@ -404,7 +404,7 @@ async function commitSemanticFocus(
           nextTexts,
           parentBody: null,
           regionId: region.id,
-          turns: [{ question: null, body: '', progress: '', streaming: true }],
+          turns: [],  // chat is user-driven: empty until they ask
           anchorImage,
           zoomImagePath,
         });
@@ -435,7 +435,7 @@ async function commitSemanticFocus(
       nextTexts: [],
       parentBody: null,
       regionId: null,
-      turns: [{ question: null, body: '', progress: '', streaming: true }],
+      turns: [],  // chat is user-driven: empty until they ask
       anchorImage: vpImage,
     });
     return;
@@ -502,7 +502,7 @@ function captureViewportContent(
       nextTexts: [],
       parentBody: null,
       regionId: null,
-      turns: [{ question: null, body: '', progress: '', streaming: true }],
+      turns: [],  // chat is user-driven: empty until they ask
     };
   }
 
@@ -556,7 +556,7 @@ function captureViewportContent(
     nextTexts,
     parentBody: null,
     regionId: captured.length === 1 ? captured[0].region.id : null,
-    turns: [{ question: null, body: '', progress: '', streaming: true }],
+    turns: [],  // chat is user-driven: empty until they ask
   };
 }
 
