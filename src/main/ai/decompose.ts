@@ -1,13 +1,37 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, statSync } from 'node:fs';
 
 /**
- * See notes in ai/client.ts — the SDK's child process can blow up with
- * `spawn ENOTDIR` if process.cwd() isn't a real directory (common when the app
- * is launched from Finder). Always hand the SDK a validated cwd.
+ * Build a structured digest of the paper from the on-disk index we've already
+ * written to `<pdf>.fathom/`:
+ *
+ *   content.md            — full paper text in reading order, page boundaries
+ *                           marked by `<!-- PAGE N -->` and `## Page N`,
+ *                           figure references inline at the right page.
+ *   images/page-NNN-fig-K.png — cropped figure PNGs, referenced from content.md.
+ *
+ * We deliberately DO NOT ask Claude to `Read` the raw PDF here. The old
+ * approach did — which invoked the Agent SDK's PDF reader path and required
+ * `poppler` (pdftoppm / pdftocairo) to be installed on the user's machine.
+ * That's now a ghost dependency: every pixel Claude might want is already a
+ * PNG we wrote with pdf.js during the renderer's `buildPaperIndex` pass, so
+ * Read on a PNG is all that's needed.
  */
+const DECOMPOSE_SYSTEM = `You index research papers for an in-place PDF reader. Your input is a pre-built per-paper index folder (content.md + cropped figure PNGs). Produce a compact, faithful JSON digest.`;
+
+export interface PaperDigest {
+  title?: string;
+  authors?: string[];
+  abstract?: string;
+  sections?: Array<{ name: string; summary: string; pages?: number[] }>;
+  figures?: Array<{ id?: string; page?: number; caption?: string; description?: string }>;
+  equations?: Array<{ id?: string; page?: number; summary?: string }>;
+  glossary?: Array<{ term: string; definition: string }>;
+  /** If JSON parsing failed, keep the raw markdown body so downstream can still use it. */
+  rawBody?: string;
+}
+
 function safeCwd(preferred?: string): string {
   if (preferred) {
     try {
@@ -19,47 +43,25 @@ function safeCwd(preferred?: string): string {
   return homedir();
 }
 
-const DECOMPOSE_SYSTEM = `You index research papers for an in-place PDF reader. You will be asked to read a PDF file and produce a compact JSON digest of it. Be precise, concise, and faithful to the source.`;
-
-export interface PaperDigest {
-  title?: string;
-  authors?: string[];
-  abstract?: string;
-  sections?: Array<{ name: string; summary: string; pages?: number[] }>;
-  figures?: Array<{ id?: string; page?: number; caption?: string; description?: string }>;
-  equations?: Array<{ id?: string; page?: number; summary?: string }>;
-  glossary?: Array<{ term: string; definition: string }>;
-  /** If JSON parsing failed, we keep the raw markdown body here so downstream can still use it. */
-  rawBody?: string;
-}
-
 /**
- * Run one Agent SDK invocation that reads the PDF end-to-end and produces a structured
- * digest. Used as a best-effort background task on PDF open; subsequent explain calls
- * receive this digest as compact grounding context.
- *
- * @param numPages Total pages in the PDF — used to chunk Read calls into ≤15-page slices.
+ * Decompose the paper into a structured digest. Reads ONLY the per-paper
+ * index folder — no raw PDF access, no poppler needed.
  */
 export async function decomposePaper(
-  pdfPath: string,
-  numPages: number,
+  indexPath: string,
   abortController?: AbortController,
 ): Promise<PaperDigest> {
-  const chunks: string[] = [];
-  for (let start = 1; start <= numPages; start += 15) {
-    const end = Math.min(numPages, start + 14);
-    chunks.push(start === end ? `${start}` : `${start}-${end}`);
-  }
-  const readInstructions = chunks
-    .map((c, i) => `  ${i + 1}. Use Read on "${pdfPath}" with pages: "${c}".`)
-    .join('\n');
+  const prompt = `You have a pre-built index of this paper at "${indexPath}".
 
-  const prompt = `Read the entire PDF and produce a structured JSON digest of it.
+Files:
+  - "${indexPath}/content.md" — the FULL paper text in reading order. Page boundaries are marked by \`<!-- PAGE N -->\` comments and \`## Page N\` headings. Figure references appear inline right after each page heading as markdown images, e.g. \`![Figure 1 on page 3](./images/page-003-fig-1.png)\`.
+  - "${indexPath}/images/page-NNN-fig-K.png" — cropped figure PNGs. Read these when a figure's visual content matters for its description.
 
 Steps:
-${readInstructions}
+  1. Read "${indexPath}/content.md" end-to-end.
+  2. For each figure referenced in content.md, Read the corresponding PNG if a short visual description of the figure's content is load-bearing for the digest (otherwise the caption alone is enough).
 
-After reading, output a single JSON object with this shape (and nothing else — no preamble, no trailing prose):
+Then output a single JSON object — no preamble, no trailing prose:
 
 \`\`\`json
 {
@@ -83,21 +85,22 @@ After reading, output a single JSON object with this shape (and nothing else —
 
 Be faithful — only include items that actually appear in the paper. If a section has no figures or equations, omit those arrays. Keep descriptions under 30 words each.`;
 
-  const cwd = safeCwd(dirname(pdfPath));
-  console.log(`[Lens Decompose] cwd=${cwd} pdf=${pdfPath} pages=${numPages}`);
+  const cwd = safeCwd(indexPath);
+  console.log(`[Lens Decompose] indexPath=${indexPath} cwd=${cwd}`);
 
   const q = query({
     prompt,
     options: {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: DECOMPOSE_SYSTEM },
-      allowedTools: ['Read'],
-      additionalDirectories: [dirname(pdfPath)],
+      allowedTools: ['Read', 'Grep', 'Glob'],
+      additionalDirectories: [indexPath],
       includePartialMessages: false,
       permissionMode: 'bypassPermissions',
       abortController,
       cwd,
-      // Decompose often takes multiple Read turns + a final JSON turn; leave headroom.
-      maxTurns: Math.max(6, chunks.length + 2),
+      // One Read of content.md + ~a handful of figure PNGs + one JSON turn.
+      // Large papers with many figures may need more; 16 is a comfortable ceiling.
+      maxTurns: 16,
     },
   });
 

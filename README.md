@@ -55,7 +55,8 @@ Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked 
 Fathom talks to Claude through the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI. You need:
 
 - **Claude Code installed and authenticated.** `claude` in your `$PATH`, logged in. Fathom uses your existing Claude subscription — no API keys to paste anywhere.
-- *(Optional)* **poppler** — `brew install poppler`. Only needed during the one-time indexing pass if you want Claude to see figure pixels via the PDF directly. After indexing, Fathom uses the cropped figure PNGs and doesn't need poppler again.
+
+That's it. Fathom extracts text and figures from the PDF with its own pdf.js pipeline; there's no poppler / pdftoppm / Ghostscript dependency on your machine.
 
 ## How it works
 

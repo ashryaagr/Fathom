@@ -95,19 +95,10 @@ the indexing toast will say so. (macOS GUI apps inherit PATH from
 installed somewhere in the system PATH — `/usr/local/bin` or `/opt/homebrew/bin`
 both work.)
 
-### poppler (optional, for now)
-
-Needed during the one-time indexing pass if you want Claude to read figure
-pixels straight from the source PDF. After indexing, Fathom uses the cropped
-figure PNGs it wrote to the sidecar folder and does not need poppler again.
-
-```bash
-brew install poppler
-```
-
-Without poppler, indexing may fail or produce a lower-precision digest on
-figure-heavy papers. Removing this dependency entirely (rendering pages via
-our own pdf.js pipeline during indexing) is on the roadmap.
+That's the only runtime prerequisite. Fathom extracts PDF text and figure
+images through its own pdf.js pipeline, then feeds the resulting on-disk
+index to Claude — no external PDF tooling (poppler, pdftoppm, Ghostscript,
+etc.) needs to be installed.
 
 ---
 
@@ -204,7 +195,7 @@ rm -rf ~/Library/Application\ Support/Fathom
 2. Click **Open PDF…** and pick a research paper.
 3. A toast at the bottom-right reads **"Indexing paper…"** (spinner). After
    10–60 seconds it flips to green **"Paper indexed ✓"** or red **"Indexing
-   failed — …"**. Follow the error hint if red (usually "install poppler").
+   failed — …"**. Follow the error hint if red.
 4. Hold **⌘** and pinch on any paragraph → release ⌘ → the Focus View opens
    with a streaming explanation within 1–3 seconds.
 5. DevTools console (Cmd+Option+I) shows `[Fathom] …` lines for every

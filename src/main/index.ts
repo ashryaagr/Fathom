@@ -450,26 +450,10 @@ ipcMain.handle(
     });
 
     try {
-      const digest = await decomposePaper(req.pdfPath, req.numPages, ctl);
-      // Detect the poppler-missing failure — Claude gives us back a free-form message
-      // instead of JSON when its PDF reader can't render. Flag it so the user knows
-      // *why* indexing is degraded and how to fix it.
-      const rawBody = digest.rawBody ?? '';
-      const popplerMissing =
-        /poppler|pdftoppm|pdftocairo|PDF reader couldn[’']?t render/i.test(rawBody);
-      if (popplerMissing) {
-        activeDecomposes.delete(req.paperHash);
-        event.sender.send('paper:decompose:status', {
-          paperHash: req.paperHash,
-          state: 'error',
-          message:
-            'Claude needs poppler to see figures in PDFs. Run `brew install poppler` and reopen the PDF.',
-        });
-        return {
-          state: 'error',
-          message: 'poppler not installed',
-        };
-      }
+      // Decompose reads the per-paper index folder (content.md + cropped figure PNGs)
+      // that the renderer already built — no raw-PDF access, no poppler dependency.
+      const indexPath = indexDirFor(req.paperHash);
+      const digest = await decomposePaper(indexPath, ctl);
       Papers.upsert({ contentHash: req.paperHash, digest });
       activeDecomposes.delete(req.paperHash);
       event.sender.send('paper:decompose:status', {
