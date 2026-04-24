@@ -27,9 +27,11 @@ module.exports = {
     output: 'dist',
     buildResources: 'resources',
   },
-  // Bundle the welcome/sample paper so the first-run dialog can offer it.
+  // Bundle the welcome/sample paper so the first-run dialog can offer it,
+  // and the install/update script so the in-app updater can spawn it.
   extraResources: [
     { from: 'resources/sample-paper.pdf', to: 'sample-paper.pdf' },
+    { from: 'install.sh', to: 'install.sh' },
   ],
   // Register Fathom as a handler for .pdf files so Finder shows "Open With → Fathom"
   // and the user can drop a PDF onto the app icon.

@@ -3,9 +3,16 @@
 
 /*
  * Fathom docs site.
- * A custom layout, not cayman. Warm cream paper + amber accent + handwritten
- * hero. Generous whitespace, serif-free body for scan-ability, handwritten
- * only where a human touch is earned.
+ *
+ * The aesthetic is the app's aesthetic: warm cream paper, amber accent,
+ * and Excalifont — the same handwritten typeface the app uses inside the
+ * lens — used liberally. Headings, prose, pull-quotes all share the
+ * hand-drawn feel. Only code blocks, inline code, and small-print
+ * metadata fall back to the system sans/mono stacks, because handwriting
+ * genuinely hurts readability there.
+ *
+ * Side-effect of the font swap: line-height opens up (handwriting needs
+ * more breathing room than sans-serif at body sizes), so we bump it.
  */
 
 $paper:        #faf4e8;
@@ -44,10 +51,11 @@ html {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand',
+               -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
                'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 19px;         /* handwriting needs a touch more than sans */
+  line-height: 1.75;       /* and more vertical breathing room */
   color: $ink-soft;
   background: $paper;
 }
@@ -58,7 +66,10 @@ a:hover { color: $amber-dark; }
 ::selection { background: rgba(201, 131, 42, 0.3); color: $ink; }
 
 /* --- Top navigation --- */
+/* Chrome stays in system sans — navigation is for scanning, not reading. */
 .site-nav {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -200,17 +211,19 @@ a:hover { color: $amber-dark; }
 .content h2,
 .content h3,
 .content h4 {
+  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
   color: $ink;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-  margin-top: 2.25em;
-  margin-bottom: 0.6em;
+  font-weight: 400;                /* handwriting is one weight */
+  letter-spacing: -0.005em;
+  line-height: 1.2;
+  margin-top: 2em;
+  margin-bottom: 0.55em;
 }
 
-.content h1 { font-size: 1.85rem; }
-.content h2 { font-size: 1.4rem; }
-.content h3 { font-size: 1.15rem; }
+.content h1 { font-size: 2.35rem; color: $amber-dark; }
+.content h2 { font-size: 1.85rem; color: $amber-dark; }
+.content h3 { font-size: 1.45rem; }
+.content h4 { font-size: 1.2rem; }
 
 .content p { margin: 0 0 1.15em; }
 .content ul, .content ol { margin: 0 0 1.25em; padding-left: 1.5em; }
@@ -279,12 +292,16 @@ a:hover { color: $amber-dark; }
   font-size: inherit;
 }
 
-/* Tables */
+/* Tables — sans-serif for tabular legibility. Handwriting in tables
+   is genuinely harder to scan row-by-row. */
 .content table {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   width: 100%;
   border-collapse: collapse;
   margin: 1.5em 0;
   font-size: 15px;
+  line-height: 1.5;
 }
 .content th, .content td {
   border: 1px solid $rule;
@@ -332,6 +349,8 @@ a:hover { color: $amber-dark; }
 }
 
 .footer-inner {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   max-width: 780px;
   margin: 0 auto;
   display: flex;

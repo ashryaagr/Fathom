@@ -11,12 +11,16 @@ src/renderer/public/pdfjs-cmaps/
 src/renderer/public/pdfjs-fonts/
 src/renderer/public/pdfjs-wasm/
 
-# Working notes / product-principles doc — not part of the shipped repo.
-CLAUDE.md
-
 # Per-paper Fathom sidecar folders created next to PDFs.
 *.pdf.fathom/
 **/*.pdf.fathom/
+
+# Local-only working notes and helper scripts. The actual git hooks
+# live in .git/hooks/ (already untracked), but guard against any
+# stray tracked hooks / local dirs too.
+.local/
+hooks/
+.githooks/
 
 # Generated app icons (built from resources/icon.svg by scripts/build-icon.mjs).
 resources/icon.iconset/

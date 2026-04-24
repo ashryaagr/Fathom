@@ -13,14 +13,19 @@ Reading a research paper today means every few minutes you leave the page,
 copy-paste into Claude, scroll back, lose your place, or get lost in the PDF.
 
 Fathom asks you not to leave. The explanation comes to the page, right
-where your eye already is. An addictive way to read PDFs — one PDF is
-all you need.
+where your eye already is. An addictive way to read PDFs.
 
 ### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
 
-*Apple Silicon · ~200 MB · [first-launch approval](./docs/INSTALL.md#2-first-launch-approve-the-app) is one click in System Settings*
+*Apple Silicon · ~200 MB*
 
-[Install guide](./docs/INSTALL.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
+…or install from terminal — no Gatekeeper ritual, no drag-to-Applications:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
+```
+
+[Install guide](./docs/INSTALL.md) · [Distribution](./docs/DISTRIBUTION.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
 </div>
 
@@ -28,7 +33,7 @@ all you need.
 
 ## Built out of necessity
 
-I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers, and I got tired of the same spiral: hit a dense paragraph, paste it into Claude, ask for clarification, then clarification of the clarification, then of *that* — and by the time I'd surfaced, the paper was gone. So I built the reader I wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
+I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers and, I got tired of the same spiral: hit a paragraph full of jargons I have no freaking clue about => go to Claude & ask for clarification => then clarification of the clarification => and by the time I'd surfaced, where the hell am I?. So I built the reader I always wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
 
 There's nothing to sign up for, no subscription, no account. If you already pay for Claude, you have everything Fathom needs.
 
@@ -46,15 +51,46 @@ Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens,
 
 ## Download
 
-**macOS — Apple Silicon**
+**macOS — Apple Silicon**. Two ways to install. Pick whichever feels natural; both end up at the same place, and both route through the same in-app updater afterwards.
+
+### Option A — DMG (familiar Mac install)
 
 **→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
 
-That link always resolves to the most recent release. Zipped `.app` at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+Drag `Fathom.app` onto `Applications`. On first launch macOS asks you to approve it — one click in **System Settings → Privacy & Security → Open Anyway**. Full walkthrough in the [install guide](./docs/INSTALL.md#2-first-launch-approve-the-app). After that, Fathom launches like any other Mac app.
 
-### First launch
+### Option B — Terminal (no Gatekeeper prompt, no drag)
 
-Fathom v1 isn't enrolled in the Apple Developer Program, so macOS asks you to approve it the first time you open it — a one-time click in **System Settings → Privacy & Security → Open Anyway**. Full walkthrough in the [install guide](./docs/INSTALL.md#2-first-launch-approve-the-app). After that, Fathom launches like any other Mac app.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
+```
+
+The script downloads the zipped `.app`, extracts to `/Applications`, clears the `com.apple.quarantine` xattr (that's the thing that makes Gatekeeper ask for approval), ad-hoc re-signs, and drops a `fathom` launcher at `~/.local/bin/fathom` so you can `fathom paper.pdf` from any terminal. It's also the update mechanism Option A uses under the hood — see [Distribution](./docs/DISTRIBUTION.md) for why both paths converge.
+
+Want to read the script before running it? That's healthy — it's [here](./install.sh). Or:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh -o install.sh
+less install.sh          # read it
+bash install.sh          # run it
+```
+
+Terminal verbs once installed:
+```bash
+fathom                   # open Fathom
+fathom paper.pdf         # open Fathom with a paper
+fathom update            # pull the latest version
+fathom --version         # print the installed version
+fathom uninstall         # remove Fathom
+```
+
+### Updates are seamless from either entry point
+
+Both install paths arrive at the same `Fathom.app`. From that moment, the in-app updater checks GitHub Releases in the background, downloads the zip silently, and offers a one-click "Restart to install" — no drag-to-Applications, no Gatekeeper re-prompt, no DMG mount. See [docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md) for the design rationale.
+
+### Other artifacts
+
+Zipped `.app` at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 
