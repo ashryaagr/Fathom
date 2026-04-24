@@ -5,9 +5,9 @@ title: Fathom
 
 ## A new way to read a paper
 
-Reading a research paper hasn't changed in forty years. Every few minutes,
-you leave the page — copy, paste into Claude, scroll back. Every time, you
-lose your place.
+Reading a research paper today means every few minutes you leave the page,
+copy-paste into Claude, scroll back, lose your place, or get lost in the
+PDF.
 
 Fathom asks you not to leave. The explanation comes to the page, right
 where your eye already is. You pinch in when you want to understand; you
