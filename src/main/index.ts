@@ -559,20 +559,26 @@ ipcMain.handle(
 );
 
 /**
- * Copy the bundled sample PDF into ~/Documents (so the `.fathom` sidecar
- * folder can be written alongside it — the in-bundle Resources folder is
- * read-only) and open it via the normal flow. Idempotent: if the file is
- * already there and unchanged, we skip the copy and just open it.
+ * Copy the bundled sample PDF into a user-writable location (not ~/Documents,
+ * which TCC blocks without a permission prompt — and blocks silently on our
+ * first attempt, which is why "Try with sample paper" used to fail without
+ * any visible error). We use the app's userData dir, which is always
+ * writable for our app and can still host the `.fathom` sidecar alongside.
+ *
+ * Idempotent: if the file is already there and unchanged, skip the copy and
+ * just open it. Log the resolved paths so a user shipping us a log can see
+ * exactly where the file was sourced and written.
  */
 async function openSamplePaper(): Promise<void> {
   if (!mainWindow) return;
-  // In production the sample lives under Resources/ next to the .app; in dev
-  // the same relative path resolves into the repo's resources/ folder.
+  // Source: in production under Resources/ next to the .app; in dev the same
+  // relative path resolves into the repo's resources/ folder.
   const sourcePath = app.isPackaged
     ? join(process.resourcesPath, 'sample-paper.pdf')
     : join(__dirname, '../../resources/sample-paper.pdf');
+  console.log(`[sample] source=${sourcePath}`);
   if (!existsSync(sourcePath)) {
-    dialog.showMessageBox(mainWindow, {
+    void dialog.showMessageBox(mainWindow, {
       type: 'info',
       message: 'Sample paper missing',
       detail: `Expected at ${sourcePath}. This is a build problem — please open an issue.`,
@@ -580,15 +586,31 @@ async function openSamplePaper(): Promise<void> {
     });
     return;
   }
-  const destDir = app.getPath('documents');
+
+  // userData is the app's private Library folder — always writable, no TCC
+  // prompts. Sidecar goes next to the PDF here, same as for user-opened PDFs.
+  const destDir = app.getPath('userData');
   const destPath = join(destDir, 'Fathom — Short Tour.pdf');
   try {
+    await mkdir(destDir, { recursive: true });
     const src = await readFile(sourcePath);
-    if (!existsSync(destPath) || Buffer.compare(src, await readFile(destPath)) !== 0) {
+    const needsWrite =
+      !existsSync(destPath) || Buffer.compare(src, await readFile(destPath)) !== 0;
+    if (needsWrite) {
       await writeFile(destPath, src);
+      console.log(`[sample] copied to ${destPath} (${src.length} bytes)`);
+    } else {
+      console.log(`[sample] reusing existing copy at ${destPath}`);
     }
   } catch (err) {
-    console.warn('[sample] could not copy sample to Documents:', err);
+    console.error('[sample] copy failed:', err);
+    void dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      message: "Couldn't open the sample paper",
+      detail: `${err instanceof Error ? err.message : String(err)}\n\nIf the problem persists, Help → Reveal Log File and share the log.`,
+      buttons: ['OK'],
+    });
+    return;
   }
   mainWindow.webContents.send('pdf:openExternal', destPath);
 }

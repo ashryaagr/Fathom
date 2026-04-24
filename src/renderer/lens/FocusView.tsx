@@ -6,6 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import DOMPurify from 'dompurify';
 import { useLensStore, type FocusedLens, type Turn } from './store';
+import { useTourStore } from './tourStore';
 import {
   streamExplanationForFocused,
   paperTextFromRegions,
@@ -147,6 +148,10 @@ function FocusPane({
           selection: capturedSelection.text,
         });
         window.getSelection()?.removeAllRanges();
+        // Interactive tour: a drill advances past 'drill'.
+        if (useTourStore.getState().step === 'drill') {
+          useTourStore.getState().advance('swipe');
+        }
       } else {
         setHint({ x: window.innerWidth / 2, y: 90, text: 'Select a phrase to dive into it' });
         setTimeout(() => setHint(null), 1500);
@@ -219,19 +224,16 @@ function FocusPane({
                 style={{ maxHeight: 360, objectFit: 'contain' }}
               />
             </figure>
-          ) : focused.anchorText ? (
-            <blockquote
-              className={
-                focused.origin === 'drill'
-                  ? 'rounded-md bg-[color:var(--color-lens-soft)]/70 px-4 py-2 font-serif text-[13.5px] leading-[1.5] text-black/80'
-                  : 'border-l-[3px] border-[color:var(--color-lens)]/55 pl-4 font-serif text-[13.5px] leading-[1.55] text-black/80'
-              }
-            >
-              {focused.anchorText}
-            </blockquote>
           ) : (
-            <div className="rounded-md border border-dashed border-black/10 bg-white/40 px-4 py-2 text-[12px] text-black/45 italic">
-              Visual content on page {focused.page} — Claude is reading the page directly.
+            // No extracted-text fallback — per product rule the lens never
+            // shows the OCR'd/extracted text of what was zoomed into. If the
+            // viewport image failed to capture, show a minimal placeholder
+            // (not the passage as a blockquote).
+            <div className="rounded-md border border-dashed border-black/10 bg-white/40 px-4 py-3 text-[12px] italic text-black/45">
+              Zoomed on page {focused.page}
+              {focused.focusPhrase && (
+                <> · {focused.focusPhrase}</>
+              )}
             </div>
           )}
 
@@ -264,7 +266,13 @@ function FocusPane({
         <div className="mx-auto w-full max-w-[720px]">
           <InstructionInput
             streaming={anyStreaming}
-            onSubmit={(text) => askFollowUpAndStream(text)}
+            onSubmit={(text) => {
+              askFollowUpAndStream(text);
+              // Interactive tour: a submitted question advances past 'ask'.
+              if (useTourStore.getState().step === 'ask') {
+                useTourStore.getState().advance('drill');
+              }
+            }}
           />
         </div>
       </div>

@@ -3,6 +3,7 @@ import { useDocumentStore, MIN_ZOOM, MAX_ZOOM } from '../state/document';
 import PageView from './PageView';
 import { findRegionUnderCursor } from '../gestures/hitTest';
 import { useLensStore, type FocusedLens } from '../lens/store';
+import { useTourStore } from '../lens/tourStore';
 import { useRegionsStore } from '../state/regions';
 import type { Region } from './extractRegions';
 import { captureScrollerViewport, captureCanvasRect } from './captureViewport';
@@ -130,6 +131,12 @@ export default function PdfViewer() {
           useDocumentStore.getState().zoom,
           lastCursor,
         );
+        // Interactive tour: advance past the 'pinch' step the moment the
+        // user successfully commits a semantic focus (we'll know a lens
+        // opened by watching useLensStore but this is fine too).
+        if (useTourStore.getState().step === 'pinch') {
+          useTourStore.getState().advance('ask');
+        }
       } else {
         const lens = useLensStore.getState();
         if (lens.focused) {

@@ -9,6 +9,8 @@ import PdfViewer from './pdf/PdfViewer';
 import FocusView from './lens/FocusView';
 import FirstRunTour from './lens/FirstRunTour';
 import SettingsPanel from './lens/SettingsPanel';
+import CoachHint from './lens/CoachHint';
+import { useTourStore } from './lens/tourStore';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -291,6 +293,10 @@ export default function App() {
         committed = true;
         e.preventDefault();
         useLensStore.getState().back();
+        // Interactive tour: the 'swipe' step is the final one.
+        if (useTourStore.getState().step === 'swipe') {
+          useTourStore.getState().advance('celebrated');
+        }
       } else if (accum >= threshold) {
         committed = true;
         e.preventDefault();
@@ -382,9 +388,14 @@ export default function App() {
         visible={showTour}
         onDone={() => {
           setShowTour(false);
-          void window.lens.markTourDone();
+          // Welcome card dismissing is the trigger for the interactive
+          // coach — we don't mark tour done here; the coach does that
+          // when the user reaches the swipe step (or hits Skip).
+          useTourStore.getState().start();
         }}
       />
+
+      <CoachHint />
 
       <SettingsPanel
         visible={showSettings}
