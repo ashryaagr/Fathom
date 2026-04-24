@@ -218,24 +218,22 @@ function CachedLensMarkers({
   zoom: number;
   getPageRect: () => DOMRect | null;
 }) {
+  // HOOKS FIRST, EARLY RETURNS AFTER. All useX calls must execute in the
+  // same order every render — React enforces this with error #300
+  // ("Maximum update depth exceeded") when an early return changes how
+  // many hooks a component runs. Previous layout had `if (lensFocused)
+  // return null` placed BEFORE the useRegionsStore + useMemo hooks,
+  // which tripped the boundary on every dive; the QA agent surfaced it
+  // in v1.0.3.
   const cache = useLensStore((s) => s.cache);
-  // Don't render any markers while a lens is focused. Two problems they
-  // caused otherwise: (a) at z-[100] they could bleed through the lens
-  // overlay and appear on top of the anchor image, looking as though the
-  // markers lived on the zoomed figure itself; (b) they were still
-  // clickable through the lens, which let the user recursively re-open
-  // the same lens in a loop. Markers are only meaningful in the reading
-  // view; the lens has its own navigation.
   const lensFocused = useLensStore((s) => s.focused !== null);
-  if (lensFocused) return null;
-  // Select the Map reference itself — stable when regions haven't changed — and resolve
-  // the array inside useMemo. Returning `... ?? []` directly from a selector would allocate
-  // a new empty array each render and cause an infinite useSyncExternalStore update loop.
+  // Map reference is stable when regions haven't changed; resolving
+  // inside useMemo avoids allocating a new `[]` on every render (which
+  // would itself cause a useSyncExternalStore re-render loop).
   const byPage = useRegionsStore((s) => s.byPage);
   const cachedRegions = useMemo(() => {
     const regions = byPage.get(`${paperHash}:${pageNumber}`) ?? [];
     const result = regions.filter((r) => cache.has(r.id));
-    // Telemetry — helps diagnose "where did my markers go?" at a glance in DevTools.
     if (regions.length > 0) {
       console.log('[Lens] CachedLensMarkers', {
         page: pageNumber,
@@ -246,6 +244,12 @@ function CachedLensMarkers({
     return result;
   }, [byPage, paperHash, pageNumber, cache]);
 
+  // Hide markers while the lens is focused. Two problems they caused
+  // otherwise: (a) at z-[100] they could bleed through the lens overlay
+  // and appear on top of the anchor image; (b) they were still
+  // clickable through the lens, letting the user recursively re-open
+  // the same lens in a loop.
+  if (lensFocused) return null;
   if (cachedRegions.length === 0) return null;
 
   const openCached = async (region: Region) => {

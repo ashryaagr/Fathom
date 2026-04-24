@@ -35,6 +35,24 @@ Fathom. They override any conflicting default behaviour.
   invoke the `fathom-ux-review` skill (or its checklist) before
   committing. UX regressions are regressions.
 
+- **Communication matches the dev workflow.** Fathom is a dev-first
+  tool — we build, ship, and update it via terminal. Our external
+  communication must reflect that ordering: the terminal install is
+  the *primary* path everywhere it shows up (README, docs home,
+  INSTALL guide, release notes, in-app tour). The DMG is a text
+  link to a Mac-install section — never the hero CTA, never
+  accompanied by an app-store-style icon. Every contributor surface
+  should read "we use our own CLI; here is that CLI." See
+  `.claude/skills/fathom-communication.md` for the typographic +
+  copy rules that enforce this.
+
+- **Pre-release QA is mandatory.** Every release runs through
+  `.claude/skills/fathom-qa.md`'s canonical flow before the tag is
+  pushed. Typecheck is free; state+logs check is cheap; screenshot
+  grading is the critical step that catches "lens crashes on dive"
+  and its cousins. Do not declare a release done on the basis of
+  "the code looks right" — that has now misled us multiple times.
+
 - **Reported-failure retrospection.** When the user reports that a
   fix we've already shipped isn't actually working for them, treat
   it as a systemic failure of our agent harness — not a retry prompt.

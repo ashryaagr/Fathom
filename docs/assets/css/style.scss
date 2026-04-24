@@ -164,66 +164,102 @@ a:hover { color: $amber-dark; }
   color: $amber-dark;
 }
 
-.btn-download {
-  /* Platform-affordance control — intentionally NOT handwritten so
-     the macOS download signal (Apple glyph + tight tracking) reads
-     as a real action, not a flourish. */
+/* --- Primary install chip — the hero CTA. Fathom's primary install
+   path is the terminal; the chip is sized to announce that. Big,
+   warm ink-on-paper card, monospace command, amber copy button on
+   the right. The DMG link is text-only underneath. --- */
+.install-chip {
+  /* System sans+mono; no handwriting in a CTA — this is a control,
+     not a voice moment. */
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
                'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 13px 28px;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0;
+  margin: 36px auto 14px;
+  max-width: min(720px, 94vw);
   background: $ink;
-  color: $paper !important;
-  font-size: 15.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  border-radius: 999px;
-  border: none;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(201, 131, 42, 0.18);
-  transition: transform .15s ease, box-shadow .15s ease;
-}
-.btn-download .btn-apple {
-  display: inline-block;
-  margin-top: -2px;
-}
-.btn-download:hover {
-  background: $amber-dark;
-  color: $paper !important;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 12px 32px rgba(201, 131, 42, 0.24);
+  color: $paper;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 18px 48px rgba(26, 22, 20, 0.22),
+              0 8px 28px rgba(201, 131, 42, 0.18);
 }
 
-/* Alternative-install block: curl one-liner under the DMG button. */
-.hero-alt {
-  margin-top: 30px;
-  display: flex;
-  flex-direction: column;
+.install-chip-code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 22px 22px 22px 26px;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Roboto Mono', ui-monospace, monospace;
+  font-size: clamp(13px, 1.6vw, 15.5px);
+  line-height: 1.4;
+  color: $paper;
+  white-space: nowrap;
+  overflow-x: auto;
+  -webkit-user-select: all;
+          user-select: all;
+  /* Subtle left gutter so the command doesn't hug the bevel. */
+  background: linear-gradient(to right, rgba(250,244,232,0.04), rgba(250,244,232,0));
+}
+/* Hide the awkward terminal-scrollbar on hover for a cleaner look;
+   mobile/touch users keep the native scrollbar. */
+.install-chip-code::-webkit-scrollbar { height: 0; }
+
+.install-chip-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 0 22px;
+  border: none;
+  border-left: 1px solid rgba(250, 244, 232, 0.12);
+  background: $amber;
+  color: $ink;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background .14s ease, transform .14s ease;
 }
-.hero-alt-label {
-  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
-  font-size: 1.1rem;
-  color: $amber-dark;
-  margin: 0;
+.install-chip-copy:hover { background: $amber-dark; color: $paper; }
+.install-chip-copy:active { transform: scale(0.98); }
+.install-chip-copy--done { background: #7aa36b !important; color: $paper !important; }
+.install-chip-copy-icon { margin-top: -1px; flex: 0 0 auto; }
+
+/* Meta + alternative install link under the chip. */
+.install-meta {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+  color: $ink-faint;
+  margin: 6px 0 0;
+  text-align: center;
 }
-.hero-alt-code {
-  /* Monospace + soft chip so the command reads as a terminal line. */
+.install-meta code {
   font-family: 'SF Mono', 'Menlo', 'Consolas', 'Roboto Mono', ui-monospace, monospace;
   font-size: 12.5px;
   background: $paper-dim;
-  color: $ink;
   border: 1px solid $rule;
-  border-radius: 8px;
-  padding: 8px 14px;
-  max-width: min(640px, 92vw);
-  overflow-x: auto;
-  white-space: nowrap;
-  -webkit-user-select: all;
-          user-select: all;
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: $ink;
 }
+.install-alt {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13.5px;
+  color: $ink-faint;
+  margin: 22px 0 0;
+  text-align: center;
+}
+.install-alt a {
+  color: $amber-dark;
+  border-bottom: 1px solid rgba(201, 131, 42, 0.35);
+  transition: border-color .12s ease;
+}
+.install-alt a:hover { border-bottom-color: $amber-dark; }
 
 .hero-meta {
   margin-top: 18px;

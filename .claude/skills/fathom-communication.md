@@ -98,14 +98,25 @@ special once everything is handwritten.
 
 ## Platform affordances
 
-- The macOS **download** button uses the Apple glyph, system sans,
-  tight letter-spacing, and solid ink-on-paper contrast. It reads as
-  a real action, not a flourish. ✗ Never render "Download for Mac"
-  in handwriting — users stop reading that button as a download
-  control.
+- **The terminal install is the PRIMARY CTA, everywhere.** Fathom's
+  build / ship / update workflow is terminal-first, and the
+  external communication must reflect that. Any install surface —
+  README, docs home hero, `INSTALL.md`, in-app about, release
+  notes — leads with the `curl … | bash` chip, sized to announce
+  itself (our docs hero uses a full-width ink card with an amber
+  copy button). The DMG is always a *text link* underneath —
+  e.g. "Prefer a drag-to-Applications install? Get the Mac DMG →"
+  — that jumps to a Mac-install section containing the numbered
+  steps plus the DMG download link inside those steps.
+- **No Apple-glyph DMG button in the hero.** We killed that in
+  v1.0.5. The Apple glyph on a big dark pill trains users to
+  think of the GUI install as the "real" one; our workflow says
+  the terminal is the real one. The download icon belongs inside
+  the Mac-install section, attached to the download-step link.
 - **Code / commands** stay in a monospace chip (SF Mono / Menlo).
-  Selectable (`user-select: all`). Terminal commands are a proof of
-  authenticity; treat them as evidence, not ornament.
+  Selectable (`user-select: all`). Terminal commands are a proof
+  of authenticity; treat them as evidence, not ornament. Hero-
+  level install chips get a one-click copy button next to them.
 - **Keyboard shortcuts** in body text use `<kbd>`: ⌘, ⌘H, etc.
 
 ## Aesthetic direction

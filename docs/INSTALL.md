@@ -27,29 +27,13 @@ Both require the Claude Code CLI at runtime — see
 
 ## 1. Download Fathom
 
-### Option A — DMG
-
-**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
-
-| Architecture | Direct link |
-|---|---|
-| Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
-| Apple Silicon, zipped `.app` | [Fathom-arm64.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip) |
-| Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
-
-GitHub resolves `/releases/latest/download/<asset>` to the newest release,
-so these links stay valid across versions. Double-click the DMG, drag
-`Fathom.app` onto the Applications folder in the DMG window, then close
-the disk image. The app now lives in `/Applications`. Proceed to
-[Section 2](#2-first-launch-approve-the-app) for the first-launch approval.
-
-### Option B — `install.sh`
+### Option A — `install.sh` (primary)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
 ```
 
-What this does:
+That's it. The script:
 
 1. Downloads `Fathom-arm64.zip` from the latest GitHub Release.
 2. Extracts to `/Applications/Fathom.app` (or `~/Applications/` if the
@@ -66,12 +50,12 @@ What this does:
    fathom --version
    fathom uninstall
    ```
+6. Launches Fathom — you land on the welcome screen in one motion.
 
 If `~/.local/bin` isn't already on your `PATH`, the script prints the
 one line you need to add to `~/.zshrc` (or `~/.bashrc`).
 
-**Worried about curl-piping an unknown script?** Legitimate concern.
-Read it first:
+**Want to read the script before piping it to bash?**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh -o install.sh
@@ -79,21 +63,40 @@ less install.sh
 bash install.sh
 ```
 
-The script is [here in the repo](../install.sh) and is about 200 lines.
+The script lives [here in the repo](../install.sh) — about 200 lines.
 
 **Install a specific version:**
 ```bash
-curl -fsSL …/install.sh | bash -s -- --version v1.0.2
+curl -fsSL …/install.sh | bash -s -- --version v1.0.4
 ```
 
 **Uninstall:**
 ```bash
 fathom uninstall
-# or, if you never set up the launcher:
-curl -fsSL …/install.sh | bash -s -- --uninstall
 ```
 
-Once installed, auto-updates happen in-app (see [DISTRIBUTION.md](./DISTRIBUTION.md)) — from either Option A or Option B.
+### Option B — DMG
+
+If you'd rather drag-to-Applications:
+
+1. **Download** [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg).
+2. Double-click the DMG to mount it.
+3. Drag `Fathom.app` onto the **Applications** folder shown in the DMG window.
+4. Close the disk image.
+5. Open `/Applications/Fathom.app`. macOS will block it the first time
+   with a "can't be opened because Apple cannot check it" warning —
+   that's expected. Continue to
+   [Section 2](#2-first-launch-approve-the-app) for the one-time
+   approval.
+
+| Architecture | Direct link |
+|---|---|
+| Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
+| Apple Silicon, zipped `.app` | [Fathom-arm64.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip) |
+| Intel | *(build from source; prebuilt x64 lands when demand warrants)* |
+
+Auto-updates are identical for both paths — once installed, Fathom
+pulls new versions in-app; see [DISTRIBUTION.md](./DISTRIBUTION.md).
 
 ---
 

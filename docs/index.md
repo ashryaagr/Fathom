@@ -54,27 +54,24 @@ there, exactly where you left it.
 
 ## Install
 
-Two ways in. Pick whichever feels natural; both land you on the same app,
-and both route through the same in-app updater afterwards.
-
-**Download the DMG** — the familiar drag-to-Applications flow. One
-first-launch approval in System Settings → Privacy & Security, then
-Fathom opens like any other Mac app.
-
-[**Download Fathom for macOS**](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg){: .btn .btn-primary}
-
-Apple Silicon · ~200 MB.
-
-**Or a simpler, smoother way** — one terminal line, no Gatekeeper
-prompt, no drag:
+Fathom's primary install path is the terminal. One line — see the
+chip at the top of this page, or copy from here:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
 ```
 
-Adds a `fathom` launcher at `~/.local/bin/fathom` so `fathom`,
-`fathom paper.pdf`, and `fathom update` work from any shell. Full
-walkthrough in the [install guide]({{ '/INSTALL' | relative_url }}).
+The script extracts Fathom to `/Applications`, clears the
+`com.apple.quarantine` xattr so Gatekeeper doesn't prompt, ad-hoc
+re-signs, and drops a `fathom` launcher at `~/.local/bin/fathom`
+so `fathom`, `fathom paper.pdf`, and `fathom update` work from any
+shell. Then it launches Fathom — you land on the welcome screen in
+one motion. Full walkthrough in the
+[install guide]({{ '/INSTALL' | relative_url }}).
+
+Prefer a drag-to-Applications install?
+See the [Mac DMG section of the install guide]({{ '/INSTALL' | relative_url }}#option-b--dmg)
+— the DMG download link + the one-time Gatekeeper approval walkthrough live there.
 
 ## Your data stays yours
 

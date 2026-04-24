@@ -9,15 +9,15 @@
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
-### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
-
-*Apple Silicon · ~200 MB*
-
-…or a simpler, smoother way to install:
+### Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
 ```
+
+*Apple Silicon · adds a `fathom` launcher · no Gatekeeper prompt*
+
+Prefer drag-to-Applications? [Get the Mac DMG →](./docs/INSTALL.md#option-b--dmg)
 
 [Install guide](./docs/INSTALL.md) · [Distribution](./docs/DISTRIBUTION.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
@@ -43,33 +43,19 @@ Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens,
 - **Durable across sessions.** Every lens round-trips across app restarts: the viewport crop, the full thread, the exact prompt that was sent.
 - **Yours to shape.** Preferences (⌘,) let you point Fathom at extra folders — a codebase the paper implements, a sibling paper — and add a standing instruction for every explanation.
 
-## Download
+## Install
 
-**macOS — Apple Silicon**. Two ways to install. Pick whichever feels natural; both end up at the same place, and both route through the same in-app updater afterwards.
-
-### Option A — DMG (familiar Mac install)
-
-**→ [`Fathom-arm64.dmg`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)**
-
-Drag `Fathom.app` onto `Applications`. On first launch macOS asks you to approve it — one click in **System Settings → Privacy & Security → Open Anyway**. Full walkthrough in the [install guide](./docs/INSTALL.md#2-first-launch-approve-the-app). After that, Fathom launches like any other Mac app.
-
-### Option B — Terminal (no Gatekeeper prompt, no drag)
+Fathom's primary install path is the terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
 ```
 
-The script downloads the zipped `.app`, extracts to `/Applications`, clears the `com.apple.quarantine` xattr (that's the thing that makes Gatekeeper ask for approval), ad-hoc re-signs, and drops a `fathom` launcher at `~/.local/bin/fathom` so you can `fathom paper.pdf` from any terminal. It's also the update mechanism Option A uses under the hood — see [Distribution](./docs/DISTRIBUTION.md) for why both paths converge.
+The script downloads the app, extracts to `/Applications`, clears the `com.apple.quarantine` xattr (so Gatekeeper doesn't ask for approval on first launch), ad-hoc re-signs, and drops a `fathom` launcher at `~/.local/bin/fathom` so you can `fathom paper.pdf` from any terminal. Same script handles updates — re-run it or type `fathom update`.
 
-Want to read the script before running it? That's healthy — it's [here](./install.sh). Or:
+Want to read it before piping it to bash? [It's here](./install.sh) — about 200 lines.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh -o install.sh
-less install.sh          # read it
-bash install.sh          # run it
-```
-
-Terminal verbs once installed:
+Once installed:
 ```bash
 fathom                   # open Fathom
 fathom paper.pdf         # open Fathom with a paper
@@ -78,13 +64,9 @@ fathom --version         # print the installed version
 fathom uninstall         # remove Fathom
 ```
 
-### Updates are seamless from either entry point
+### Prefer a drag-to-Applications install?
 
-Both install paths arrive at the same `Fathom.app`. From that moment, the in-app updater checks GitHub Releases in the background, downloads the zip silently, and offers a one-click "Restart to install" — no drag-to-Applications, no Gatekeeper re-prompt, no DMG mount. See [docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md) for the design rationale.
-
-### Other artifacts
-
-Zipped `.app` at [`Fathom-arm64.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+Download the Mac DMG: [`Fathom-arm64.dmg`](./docs/INSTALL.md#option-b--dmg). The [install guide](./docs/INSTALL.md#option-b--dmg) walks you through the one-time Gatekeeper approval that DMG users see on first launch. Both paths converge on the same `Fathom.app`, and both auto-update via the same in-app mechanism after — see [DISTRIBUTION.md](./docs/DISTRIBUTION.md).
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 
