@@ -426,6 +426,27 @@ InstructionInput's input), `fathom:askCurrentViewport` otherwise
 (PdfViewer listens and dives into the viewport). Highlight and
 Preferences already worked at every depth after v1.0.15.
 
+## 36. Viewport-origin lenses didn't persist their figure — ✅ DONE in v1.0.17
+QA agent caught a real gap that v1.0.16 missed: the viewport-origin
+fresh ⌘+pinch path in `PdfViewer.tsx` opened the lens without
+ever calling `saveZoomImageSync`. So `zoomImagePath` was undefined,
+the `lens_anchors` row stored `zoom_image_path: null`, and reopen
+fell through to the magnifying-glass placeholder regardless of
+the v1.0.16 hydration fix — there was nothing to load.
+
+Now both viewport-fallback paths (the page-level fallback at the
+old line 425 and the common viewport open at the old line 443)
+await `saveZoomImageSync(paperHash, lensId, dataUrl)` and pass
+the path into `lensStore.open`. The captured viewport's lens id
+is deterministic (`vp:${paperHash}:${page}:${djb2(regionIds)}`)
+so the file lands at the same path on every reopen of the same
+viewport.
+
+Also added `.claude/skills/fathom-qa.md` Step 8 — a mandatory
+anchor-image-survival check that runs on every release. The user
+flagged this regression class as "getting wrong frequently"; the
+check is now a permanent ship-blocker.
+
 ## 35. Anchor image lost on reopen — ✅ DONE in v1.0.16
 User report: first zoom shows the figure; close + reopen via
 marker shows the magnifying-glass placeholder. Two bugs:

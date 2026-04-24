@@ -1,6 +1,6 @@
 {
   "name": "fathom",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "A semantic-zoom PDF reader for research papers. Pinch with ⌘ on a passage — a full-screen lens opens with a streaming, grounded explanation from Claude.",
   "homepage": "https://github.com/ashryaagr/Fathom",
   "repository": {

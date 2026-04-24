@@ -175,7 +175,63 @@ scripts/fathom-test.sh key 4  # 'H'  — trigger ⌘H with the key harness
 # Expect log line: [Highlights] selection empty OR saved (either
 # proves the shortcut bound).
 
-# 8. Final clean-log check
+# 8. ANCHOR-IMAGE ROUND-TRIP CHECK (mandatory — this regresses
+#    frequently). Confirm a lens's saved figure survives both
+#    in-session close-and-reopen AND a full app restart.
+#
+# The bug class: persistedZoomPaths was hydration-only or the
+# hydration filter dropped viewport-origin rows; reopen showed
+# the magnifying-glass placeholder instead of the saved figure.
+# v1.0.16 closed two compounding holes; this regression check
+# is what stops a future change from re-opening them.
+
+# 8a. Same-session reopen (the v1.0.16 fix)
+scripts/fathom-test.sh dive            # open viewport-origin lens
+sleep 8                                 # let the explain stream + the
+                                        # zoom save complete
+scripts/fathom-test.sh shot 08a-zoomed  # vision-grade: figure visible
+                                        # in the anchor at the top
+scripts/fathom-test.sh back             # close lens → marker pinned
+sleep 1
+# Click the marker. The harness has no built-in for this yet —
+# use the dive shortcut as a proxy (it reopens viewport scope on
+# the same page) OR use mcp__claude-in-chrome to click the marker
+# DOM directly (look for `aria-label="Reopen previous zoom"`).
+scripts/fathom-test.sh dive
+sleep 2
+scripts/fathom-test.sh shot 08a-reopened
+# Expect: same anchor figure as 08a-zoomed. **NOT** the
+# magnifying-glass placeholder (rect with circle + path).
+# If you see the placeholder, the persistedZoomPaths in-session
+# write regressed — check src/renderer/lens/store.ts open().
+
+# 8b. Cross-session reopen (paper close-and-reopen via app restart)
+# Quit & relaunch the app, reopen the same paper, click the same
+# marker. Anchor figure should restore from the lens_anchors
+# zoom_image_path via the hydration loop in App.tsx. If it
+# doesn't, check that the loop's filter is not `&& a.region_id`
+# again (that filter dropped viewport-origin rows in v1.0.15
+# and earlier).
+pkill -x Fathom
+sleep 2
+scripts/fathom-test.sh launch
+sleep 5
+# Reopen the same sample paper; same marker click; same shot.
+scripts/fathom-test.sh click "Try with sample paper"
+sleep 5
+# Click marker via DOM if available, or take the shortcut path
+# the harness exposes:
+scripts/fathom-test.sh shot 08b-after-restart
+# Expect: marker still pinned next to the previously-zoomed
+# paragraph. After click → figure restored.
+
+# 8c. Logs — on miss, both reopen paths log to fathom.log
+grep -E 'no persistedZoomPath|readAssetAsDataUrl failed' \
+  ~/Library/Logs/Fathom/fathom.log | tail -5
+# Expect: empty. Any line here means the path lookup missed
+# and the user saw the placeholder. Triage from the line.
+
+# 9. Final clean-log check
 grep -E '\[error\]|uncaught|React error boundary tripped' \
   ~/Library/Logs/Fathom/fathom.log | tail
 # Expect: nothing from the window of this test run.
@@ -183,6 +239,18 @@ grep -E '\[error\]|uncaught|React error boundary tripped' \
 
 If any step fails, **do not ship the release**. The bug is real
 and the user will hit it.
+
+### Why step 8 is in every flow now
+
+The user has reported the "anchor image disappears on reopen"
+bug class three times across v1.0.x. Two distinct root causes
+(`persistedZoomPaths` hydration-only, hydration filter dropping
+viewport-origin rows) shipped under the same symptom. This step
+is the permanent trip-wire — if it fails, ship is blocked
+regardless of how clean the rest of the flow is. The user's
+explicit guidance (April 2026): *"there should be something to
+be checked by QA agent every time because this is getting wrong
+frequently."*
 
 ## Reading a screenshot — how to vision-grade
 

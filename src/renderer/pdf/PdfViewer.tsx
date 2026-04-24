@@ -422,8 +422,21 @@ async function commitSemanticFocus(
     if (!vpImage) return;
     const pageEls = Array.from(scroller.querySelectorAll<HTMLElement>('[data-page]'));
     const page = findPrimaryVisiblePage(scroller, pageEls) ?? 1;
+    const pageLensId = `vp:${paperHash.slice(0, 8)}:${page}:${djb2(String(Date.now()))}`;
+    // Persist the captured pixels to disk so a future close-and-reopen
+    // can restore the same anchor image. Without this save, the lens-
+    // anchor row stores zoom_image_path = null and reopen falls
+    // through to the magnifying-glass placeholder (the bug surfaced
+    // by the v1.0.16 QA review). Region-origin lenses do this above
+    // at line ~388; viewport-origin must do the symmetric thing.
+    let zoomImagePath: string | undefined;
+    try {
+      zoomImagePath = await saveZoomImageSync(paperHash, pageLensId, vpImage.dataUrl);
+    } catch (err) {
+      console.warn('[Lens] viewport-fallback zoom save failed', err);
+    }
     lensStore.open({
-      id: `vp:${paperHash.slice(0, 8)}:${page}:${djb2(String(Date.now()))}`,
+      id: pageLensId,
       origin: 'viewport',
       paperHash,
       page,
@@ -437,10 +450,23 @@ async function commitSemanticFocus(
       regionId: null,
       turns: [],  // chat is user-driven: empty until they ask
       anchorImage: vpImage,
+      zoomImagePath,
     });
     return;
   }
-  lensStore.open({ ...captured, anchorImage: vpImage });
+  // Common viewport path. captured.id is the deterministic vp:hash:page:idHash
+  // built in captureViewportContent (line ~524) — stable across sessions
+  // because it's derived from the visible region ids. We save the
+  // captured pixels under that lens id so reopen finds the same file.
+  let vpZoomImagePath: string | undefined;
+  if (vpImage) {
+    try {
+      vpZoomImagePath = await saveZoomImageSync(paperHash, captured.id, vpImage.dataUrl);
+    } catch (err) {
+      console.warn('[Lens] viewport zoom save failed', err);
+    }
+  }
+  lensStore.open({ ...captured, anchorImage: vpImage, zoomImagePath: vpZoomImagePath });
 }
 
 function captureViewportContent(
