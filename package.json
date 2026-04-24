@@ -1,12 +1,21 @@
 {
-  "name": "lens",
+  "name": "fathom",
   "version": "1.0.0",
-  "description": "A semantic-zoom PDF reader for research papers",
+  "description": "A semantic-zoom PDF reader for research papers. Pinch with ⌘ on a passage — a full-screen lens opens with a streaming, grounded explanation from Claude.",
+  "homepage": "https://github.com/ashryaagr/Fathom",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ashryaagr/Fathom.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ashryaagr/Fathom/issues"
+  },
+  "license": "MIT",
   "main": "out/main/index.js",
   "type": "module",
   "author": {
     "name": "Ashrya",
-    "email": "ashrya.microsoft@gmail.com"
+    "email": "ashryaagr@gmail.com"
   },
   "scripts": {
     "copy-pdfjs-assets": "mkdir -p src/renderer/public && rm -rf src/renderer/public/pdfjs-cmaps src/renderer/public/pdfjs-fonts src/renderer/public/pdfjs-wasm && cp -r node_modules/pdfjs-dist/cmaps src/renderer/public/pdfjs-cmaps && cp -r node_modules/pdfjs-dist/standard_fonts src/renderer/public/pdfjs-fonts && cp -r node_modules/pdfjs-dist/wasm src/renderer/public/pdfjs-wasm",
@@ -19,7 +28,10 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "dist": "npm run build && electron-builder --mac --arm64 --config electron-builder.config.cjs"
+    "build-icon": "node scripts/build-icon.mjs",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --config electron-builder.config.cjs",
+    "dist:mac-intel": "npm run build && electron-builder --mac --x64 --config electron-builder.config.cjs",
+    "dist:mac-both": "npm run build && electron-builder --mac --arm64 --x64 --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.118",
@@ -49,6 +61,7 @@
     "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.6.3",
     "vite": "^6.0.0"

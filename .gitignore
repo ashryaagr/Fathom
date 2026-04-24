@@ -14,6 +14,9 @@ src/renderer/public/pdfjs-wasm/
 # Working notes / product-principles doc — not part of the shipped repo.
 CLAUDE.md
 
-# Per-paper lens sidecar folders created next to PDFs.
-*.pdf.lens/
-**/*.pdf.lens/
+# Per-paper Fathom sidecar folders created next to PDFs.
+*.pdf.fathom/
+**/*.pdf.fathom/
+
+# Generated app icons (built from resources/icon.svg by scripts/build-icon.mjs).
+resources/icon.iconset/

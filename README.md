@@ -1,74 +1,139 @@
-# Lens
+<div align="center">
 
-A Mac PDF reader for research papers with a semantic-zoom gesture. Pinch on a passage with ⌘ held → a full-screen lens opens with a streaming, grounded explanation from Claude. Read [CLAUDE.md](./CLAUDE.md) for the product's core principles.
+<img src="resources/icon.png" alt="Fathom" width="128" height="128" />
+
+# Fathom
+
+**A semantic-zoom PDF reader for research papers.**
+
+Pinch with **⌘** on a passage — a full-screen lens opens with a streaming,
+grounded explanation from Claude. Dive into concepts the way you'd dive into
+water: by depth, recursively, and always coming back to where you were.
+
+[Download](#download) · [Install](./docs/INSTALL.md) · [How it works](#how-it-works) · [Build from source](#build-from-source)
+
+</div>
+
+---
+
+## What Fathom does
+
+When you read a research paper and hit something you don't understand, you have two bad options: stop reading and open ChatGPT in another window, or press on and accept you didn't really understand it. Fathom replaces that choice with a gesture.
+
+- **Pinch** with two fingers → cursor-anchored visual zoom (like Preview.app).
+- **⌘ + pinch** on a passage, then release ⌘ → a full-screen **lens** opens with a streaming Claude explanation, grounded in the paper via an on-disk file-system index (no RAG, no embeddings — Claude uses `Read`, `Grep`, `Glob`).
+- **Select a phrase** inside a lens and ⌘ + pinch on it → drill into that concept. Recursive. Back and forward via two-finger swipe, like a browser.
+- **Ask follow-ups** in the sticky footer. Each Q&A appends below as a chat history. Typing a new question cancels the in-flight answer.
+- **Every lens is durable.** A small amber marker appears next to the paragraph you zoomed into. Close the PDF, reopen it next week, and your lens — the exact viewport crop, the full chat history, the prompt — is all there.
+- **Diagrams when they help.** Claude emits inline SVG for architectures / pipelines / flows. Rendered live, never as ASCII.
 
 ## Download
 
-**macOS (Apple Silicon — M-series):**
+**macOS — Apple Silicon**
 
-- [`Lens-1.0.0-arm64.dmg`](./dist/Lens-1.0.0-arm64.dmg) (203 MB)
-- [`Lens-1.0.0-arm64-mac.zip`](./dist/Lens-1.0.0-arm64-mac.zip) (196 MB)
+See [Releases](https://github.com/ashryaagr/Fathom/releases) for the signed-on-next-release `.dmg` and `.zip`. For v1, binaries are unsigned: follow the first-launch steps in [INSTALL.md](./docs/INSTALL.md#first-launch-unsigned-build).
 
-Intel Macs are not supported in v1.
+Intel Macs are not supported in v1 (native module `better-sqlite3` is ABI-locked per architecture; an x64 build will land when demand exists — open an issue).
 
-## Install
+## Prerequisite
 
-1. Open the DMG and drag **Lens** to **Applications**.
-2. First launch — because v1 is unsigned, macOS will refuse to open it with a Gatekeeper warning. Fix by one of:
-   - Right-click `Lens.app` in Applications, choose **Open**, then **Open** again in the dialog.
-   - Or, once from Terminal: `xattr -cr /Applications/Lens.app` (removes quarantine), then launch normally.
+Fathom talks to Claude through the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI. You need:
 
-## Prerequisites
+- **Claude Code installed and authenticated.** `claude` in your `$PATH`, logged in. Fathom uses your existing Claude subscription — no API keys to paste anywhere.
+- *(Optional)* **poppler** — `brew install poppler`. Only needed during the one-time indexing pass if you want Claude to see figure pixels via the PDF directly. After indexing, Fathom uses the cropped figure PNGs and doesn't need poppler again.
 
-Lens talks to Claude through the Claude Code CLI. You need:
-
-- **Claude Code installed** (`claude` in your PATH) and authenticated — Lens uses your existing Claude subscription; no API key to paste.
-- *(Optional)* **poppler** — only needed if you want Claude to be able to re-read the original PDF during an explanation. After indexing succeeds once, poppler is not needed for subsequent calls.
-  ```
-  brew install poppler
-  ```
-
-## Using Lens
-
-- **Open a PDF**: File picker in the header, or drag a PDF onto the window.
-- **Visual zoom**: pinch with two fingers. Zoom anchors on the cursor.
-- **Semantic zoom**: hold **⌘** while pinching on a passage. Frame what you want, then release ⌘ — a full-screen lens opens with a streaming Claude explanation grounded in the paper.
-- **Drill deeper**: inside a lens, select a phrase you don't recognize, then ⌘+pinch on it. A new lens dives into that concept.
-- **Go back / forward**: two-finger swipe right = back. Two-finger swipe left = forward. ⌘+pinch-out, Esc, or the back button also work.
-- **Ask follow-ups**: the sticky Ask box at the bottom of the lens. Typing a new question while Claude is still answering will cancel the current stream.
-- **Cached markers**: every paragraph you've ever zoomed into gets a small amber dot next to it in the PDF. Click the dot to re-open that lens — the exact same viewport image + chat history restores.
-- **Inspect what's happening**: every lens turn has `▸ prompt to Claude` (collapsed) and `▾ working` panels showing the exact prompt and Claude's tool calls in real time.
-
-## Where your data lives
-
-Per-paper lens state is stored next to the PDF itself:
+## How it works
 
 ```
-~/Papers/foo.pdf
-~/Papers/foo.pdf.lens/
-├── content.md               # full paper text in reading order
-├── images/
-│   └── page-NNN-fig-K.png   # cropped figures
-├── zooms/
-│   └── <lensId>.png         # exact viewport crops for each lens
-├── digest.json              # structured index (sections, figures, glossary)
-└── MANIFEST.md              # how Claude should read this folder
+  PDF opened
+  │
+  ├─► pdf.js renders pages + extracts positioned text
+  │
+  ├─► Fathom builds an on-disk index next to the PDF:
+  │     paper.pdf.fathom/
+  │       content.md       ── full text, in reading order, <!-- PAGE N --> markers
+  │       images/          ── per-figure cropped PNGs (not whole-page screenshots)
+  │       digest.json      ── structured section / figure map from one Claude pass
+  │       zooms/           ── exact viewport PNG per lens you open
+  │       MANIFEST.md      ── teaches Claude the layout of this folder
+  │
+  └─► You ⌘+pinch → a lens opens → Claude is given:
+         • the path to the index folder
+         • the exact viewport image (ground truth for what you see)
+         • the extracted passage + page number
+         • tools: Read, Grep, Glob, WebSearch, WebFetch
+       Response streams into the lens as Markdown + KaTeX + inline SVG.
 ```
 
-SQLite metadata (regions, chat history, zoom-path mappings) lives in `~/Library/Application Support/lens/lens.db`.
+Claude navigates the index the same way a human colleague would:
+```bash
+Grep "\\[76\\]"  content.md     # resolve a citation
+Read             images/page-003-fig-1.png   # look at a figure
+Grep "self-attention" content.md  # locate where a concept is defined
+```
+
+No retrieval layer, no vector store. The paper is a filesystem; the AI is a shell.
+
+## Design principles
+
+The product was built on a small set of principles. [docs/PRINCIPLES.md](./docs/PRINCIPLES.md) spells them out — read it before proposing changes.
+
+Highlights:
+1. **The reader should never have to leave the document.** Claude is not a side-panel — it is the zoom.
+2. **Apple-level feel.** Gestures feel continuous; the semantic zoom is not a click-through wizard.
+3. **File-system-first AI.** No RAG. No embeddings. Claude uses `Read` / `Grep` / `Glob`.
+4. **Three-channel alignment.** What the user sees = what we capture = what Claude reads. Always the same pixels.
+5. **Everything is transparent.** The exact prompt sent to Claude is one click away on every lens turn. Tool calls stream live. You can see what the machine is doing.
 
 ## Build from source
 
-```
+```bash
+git clone https://github.com/ashryaagr/Fathom.git
+cd Fathom
 npm install
-npm run rebuild            # rebuild better-sqlite3 for Electron's ABI
-npm run dev                # dev mode with HMR
+npm run rebuild         # rebuild better-sqlite3 against Electron's Node ABI
+npm run dev             # Electron with HMR
 ```
 
+Produce a distributable:
+```bash
+npm run dist:mac        # → dist/Fathom-1.0.0-arm64.dmg
+npm run dist:mac-intel  # → dist/Fathom-1.0.0.dmg (Intel)
+npm run dist:mac-both   # both architectures
 ```
-npm run dist               # produces dist/Lens-<version>-arm64.dmg and .zip
+
+Containerized dev environment (for consistent builds): see [docs/DOCKER.md](./docs/DOCKER.md).
+
+## Architecture
+
 ```
+src/
+├── main/                    Electron main process
+│   ├── ai/
+│   │   ├── client.ts        Claude Agent SDK wrapper, streaming
+│   │   └── decompose.ts     One-shot PDF → structured digest
+│   ├── db/
+│   │   ├── schema.ts        SQLite schema + migrations
+│   │   └── repo.ts          Papers / Regions / Explanations CRUD
+│   └── index.ts             IPC handlers, window management
+├── preload/
+│   └── index.ts             contextBridge API surface (window.lens)
+└── renderer/                Electron renderer (React + Vite)
+    ├── pdf/                 pdf.js rendering, region extraction, figure crops
+    ├── gestures/            pinch / hit-test / swipe normalization
+    ├── lens/                focus-view UI, explanation streaming, store
+    ├── state/               Zustand: document, regions
+    └── App.tsx              App shell, PDF open, restore, global shortcuts
+```
+
+Core dependencies: Electron, React 18, pdfjs-dist, `@anthropic-ai/claude-agent-sdk`, Zustand, Framer Motion, react-markdown + rehype-katex + remark-math, DOMPurify, better-sqlite3.
+
+## Contributing
+
+Issues and PRs are welcome. Before opening a PR, check [docs/PRINCIPLES.md](./docs/PRINCIPLES.md) — if your change contradicts a principle there, the principle wins unless you can articulate why it should change.
+
+For bug reports, the DevTools console log (Cmd+Option+I in the running app) is more useful than a screenshot — every subsystem emits `[Fathom …]` lines with IDs so we can trace a failure end-to-end.
 
 ## License
 
-MIT. See [CLAUDE.md](./CLAUDE.md) for the product principles.
+MIT — see [LICENSE](./LICENSE).

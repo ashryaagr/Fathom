@@ -211,7 +211,7 @@ export default function App() {
         className="relative flex h-11 items-center justify-center border-b border-black/5 px-3 text-[13px] font-medium text-black/60 select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <span className="truncate">{docState ? docState.name : 'Lens'}</span>
+        <span className="truncate">{docState ? docState.name : 'Fathom'}</span>
         <div
           className="absolute right-2 flex items-center gap-1"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -355,7 +355,7 @@ function HelpOverlay({ onClose, focused }: { onClose: () => void; focused: boole
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-black/85">Lens controls</h2>
+          <h2 className="text-base font-semibold text-black/85">Fathom controls</h2>
           <button
             onClick={onClose}
             className="rounded p-1 text-black/40 hover:bg-black/5"

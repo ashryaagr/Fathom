@@ -9,8 +9,8 @@
  * Electron's Node ABI via @electron/rebuild before the pack step.
  */
 module.exports = {
-  appId: 'com.ashrya.lens',
-  productName: 'Lens',
+  appId: 'com.ashrya.fathom',
+  productName: 'Fathom',
   directories: {
     output: 'dist',
     buildResources: 'resources',
@@ -35,20 +35,20 @@ module.exports = {
   ],
   mac: {
     category: 'public.app-category.productivity',
-    // arm64 only — the host build machine is Apple Silicon and shipping a universal
-    // binary would require a parallel arm64+x64 rebuild of better-sqlite3.
     target: [
-      { target: 'dmg', arch: ['arm64'] },
-      { target: 'zip', arch: ['arm64'] },
+      { target: 'dmg' },
+      { target: 'zip' },
     ],
     identity: null,
     hardenedRuntime: false,
     gatekeeperAssess: false,
+    icon: 'resources/icon.icns',
   },
   dmg: {
-    title: 'Lens ${version}',
+    title: 'Fathom ${version}',
     writeUpdateInfo: false,
     sign: false,
+    icon: 'resources/icon.icns',
     contents: [
       { x: 130, y: 220, type: 'file' },
       { x: 410, y: 220, type: 'link', path: '/Applications' },

@@ -19,14 +19,14 @@ const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs');
 const indexDirByHash = new Map<string, string>();
 
 /**
- * Compute the lens folder that sits **next to** the user's PDF. Structure:
+ * Compute the Fathom sidecar folder that sits **next to** the user's PDF:
  *   /path/to/paper.pdf
- *   /path/to/paper.pdf.lens/           ← everything lens-related, one clean folder
+ *   /path/to/paper.pdf.fathom/         ← everything Fathom-related, one clean folder
  * If we can't write next to the source (permission issue, read-only volume), fall back to
  * the tmp-dir cache keyed by content hash.
  */
 function resolveIndexDir(pdfPath: string, contentHash: string): string {
-  const preferred = `${pdfPath}.lens`;
+  const preferred = `${pdfPath}.fathom`;
   return preferred.length > 0 && preferred.includes('/')
     ? preferred
     : join(PDF_CACHE_DIR, contentHash);
