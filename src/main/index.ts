@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
@@ -14,8 +15,45 @@ import {
   quitAndInstall,
   getLastUpdateStatus,
 } from './updater';
+import { initLogging, logFilePath } from './logger';
+import {
+  checkClaude,
+  ensureClaudeOnPath,
+  translateClaudeError,
+} from './claudeCheck';
 
 const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs');
+
+// --- Small settings store (last-opened folder, first-run flag, etc). ---
+// One JSON file under Electron's userData dir. Never throws; corruption
+// degrades gracefully to defaults so a bad settings file can't brick startup.
+interface FathomSettings {
+  lastOpenDir?: string;
+  firstRunCompletedAt?: string;
+}
+
+function settingsPath(): string {
+  return join(app.getPath('userData'), 'settings.json');
+}
+
+function readSettings(): FathomSettings {
+  try {
+    if (!existsSync(settingsPath())) return {};
+    return JSON.parse(readFileSync(settingsPath(), 'utf-8')) as FathomSettings;
+  } catch (err) {
+    console.warn('[settings] could not read settings:', err);
+    return {};
+  }
+}
+
+function writeSettings(patch: Partial<FathomSettings>): void {
+  try {
+    const next: FathomSettings = { ...readSettings(), ...patch };
+    writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[settings] could not persist settings:', err);
+  }
+}
 
 /**
  * We keep a content-hash → index-folder mapping in memory so handlers that only receive
@@ -101,13 +139,22 @@ async function createWindow(): Promise<void> {
 
 ipcMain.handle('pdf:open', async () => {
   if (!mainWindow) return null;
+  // First time a user opens a PDF we point them at ~/Downloads (that's where
+  // almost all paper downloads land). After that, honor the folder they last
+  // used so they don't have to re-navigate every time.
+  const settings = readSettings();
+  const defaultDir = settings.lastOpenDir && existsSync(settings.lastOpenDir)
+    ? settings.lastOpenDir
+    : app.getPath('downloads');
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open PDF',
+    defaultPath: defaultDir,
     properties: ['openFile'],
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const filePath = result.filePaths[0];
+  writeSettings({ lastOpenDir: dirname(filePath) });
   const bytes = await readFile(filePath);
   const contentHash = createHash('sha256').update(bytes).digest('hex');
   Papers.upsert({ contentHash, title: filePath.split('/').pop() });
@@ -209,11 +256,14 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
       }
       if (!sender.isDestroyed()) sender.send(channel, { type: 'done', text: fullText });
     } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const translated = translateClaudeError(err);
+      console.error(`[explain:start] failed — ${raw}`);
+      const message = translated.suggestion
+        ? `${translated.message}\n\n${translated.suggestion}`
+        : translated.message;
       if (!sender.isDestroyed()) {
-        sender.send(channel, {
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
+        sender.send(channel, { type: 'error', message });
       }
     } finally {
       activeExplains.delete(requestId);
@@ -429,7 +479,14 @@ ipcMain.handle(
       return { state: 'done' };
     } catch (err) {
       activeDecomposes.delete(req.paperHash);
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const translated = translateClaudeError(err);
+      // Include both the friendly headline and the fix hint in what we show,
+      // and keep the raw error in the log so the user can attach it to an issue.
+      const message = translated.suggestion
+        ? `${translated.message}\n\n${translated.suggestion}`
+        : translated.message;
+      console.error(`[paper:decompose] failed — ${raw}`);
       event.sender.send('paper:decompose:status', {
         paperHash: req.paperHash,
         state: 'error',
@@ -440,10 +497,127 @@ ipcMain.handle(
   },
 );
 
+function buildAppMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { role: 'appMenu' },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Reveal Log File in Finder',
+          click: () => {
+            // Reveal highlights the file in Finder for one-click attachment to a bug report.
+            const p = logFilePath();
+            if (existsSync(p)) shell.showItemInFolder(p);
+            else shell.openPath(dirname(p));
+          },
+        },
+        {
+          label: 'Copy Log File Path',
+          click: () => {
+            const { clipboard } = require('electron') as typeof import('electron');
+            clipboard.writeText(logFilePath());
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Report an Issue…',
+          click: () => {
+            shell.openExternal('https://github.com/ashryaagr/Fathom/issues/new');
+          },
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * First time anyone launches Fathom we greet them with a brief native dialog —
+ * confirms the Gatekeeper approval worked, names the core gesture, and points
+ * them at Open PDF. Deliberately tiny: we want to be out of their way. A full
+ * in-app welcome tour is a separate concern.
+ */
+async function maybeShowFirstRunWelcome(win: BrowserWindow): Promise<void> {
+  const settings = readSettings();
+  if (settings.firstRunCompletedAt) return;
+
+  const result = await dialog.showMessageBox(win, {
+    type: 'none',
+    icon: join(__dirname, '../../resources/icon.png'),
+    title: 'Welcome to Fathom',
+    message: 'You’re in.',
+    detail:
+      'Fathom is a PDF reader for research papers. The one thing you need to know:\n\n' +
+      '    • Hold ⌘ (Command) and pinch on any passage.\n' +
+      '    • The page gives way to a full-screen lens with a streaming, grounded explanation.\n' +
+      '    • Pinch a phrase inside the lens to dive deeper. Swipe back to return.\n\n' +
+      'Tip: right-click the Fathom icon in the Dock and choose Options → Keep in Dock so it’s a click away.',
+    buttons: ['Open a PDF…', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+
+  writeSettings({ firstRunCompletedAt: new Date().toISOString() });
+
+  if (result.response === 0) {
+    // Forward to the existing open-PDF path so the welcome exits straight into
+    // the core interaction the user was promised.
+    win.webContents.send('pdf:open-request');
+  }
+}
+
+/**
+ * Surface a clear, actionable "Claude Code isn't working" dialog. Called at
+ * startup if we can't find the CLI, and wherever a decompose / explain error
+ * turns out to mean the same thing.
+ */
+async function showClaudeHealthDialog(win: BrowserWindow): Promise<void> {
+  const status = checkClaude();
+  if (status.ok) return;
+
+  await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: status.error ?? 'Claude Code CLI needed',
+    message: status.error ?? 'Claude Code CLI needed',
+    detail: status.suggestion ?? '',
+    buttons: ['Open install instructions', 'OK'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  }).then((r) => {
+    if (r.response === 0) {
+      shell.openExternal('https://docs.anthropic.com/en/docs/claude-code/overview');
+    }
+  });
+}
+
 app.whenReady().then(async () => {
+  // File-logging first so any downstream init failures are captured for the user
+  // to share via the Help menu instead of being eaten by the GUI's silent stdout.
+  initLogging();
+  // Find the Claude CLI and make sure its directory is in PATH before any
+  // child_process.spawn('claude', …) happens — GUI-launched apps otherwise
+  // miss `~/.local/bin` where the official installer puts it.
+  const pathResult = ensureClaudeOnPath();
+  console.log(
+    `[startup] claude=${pathResult.path ?? 'NOT FOUND'} augmentedPath=${pathResult.addedDir ?? '(already on PATH)'}`,
+  );
+  buildAppMenu();
   // Eagerly initialize DB so a missing migration surfaces at startup, not on first explain.
   getDb();
   await createWindow();
+  if (mainWindow) {
+    // If Claude isn't usable, tell the user on arrival — no point waiting for
+    // them to hit the failure through a pinch gesture 3 minutes in.
+    await showClaudeHealthDialog(mainWindow);
+    await maybeShowFirstRunWelcome(mainWindow);
+  }
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow();
   });

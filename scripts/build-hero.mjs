@@ -20,9 +20,19 @@ const scale = 2;
 const width = 1600;
 const height = 220;
 
+// A soft cream background so the dark handwritten text stays readable on
+// GitHub's dark theme — GitHub won't honor prefers-color-scheme for inline
+// README images, so the image must carry its own background.
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
      width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#faf4e8"/>
+      <stop offset="100%" stop-color="#f3ead7"/>
+    </linearGradient>
+  </defs>
+  <rect width="${width}" height="${height}" rx="18" fill="url(#bg)"/>
   <style>
     text {
       font-family: 'Bradley Hand', 'Marker Felt', 'Segoe Print', 'Comic Sans MS', cursive;

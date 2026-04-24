@@ -139,7 +139,7 @@ Outputs land in `dist/`:
 - `Fathom-arm64-mac.zip`
 - `latest-mac.yml` (auto-updater metadata)
 
-The build runs an `afterSign` hook (see `electron-builder.config.cjs`) that
+The build runs an `afterSign` step (see `electron-builder.config.cjs`) that
 ad-hoc signs the full bundle with `codesign --deep --force --sign -` so the
 resulting app clears Gatekeeper's "damaged" check when downloaded.
 

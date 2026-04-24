@@ -1,5 +1,26 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { existsSync, statSync } from 'node:fs';
+
+/**
+ * Pick a cwd that is guaranteed to be a real directory. Claude Agent SDK spawns
+ * the `claude` binary as a subprocess and inherits process.cwd() by default —
+ * and when Fathom is launched from Finder, process.cwd() is often `/` or a
+ * quirky path that makes the SDK (or one of its child processes) throw
+ * `spawn ENOTDIR`. Passing an explicit, validated cwd avoids that class of
+ * failure entirely.
+ */
+function safeCwd(preferred?: string): string {
+  if (preferred) {
+    try {
+      if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
+    } catch {
+      /* fall through to homedir */
+    }
+  }
+  return homedir();
+}
 
 export interface ExplainArgs {
   /** Original text from the PDF that the user wants clarified. */
@@ -120,6 +141,9 @@ export async function explain(args: ExplainArgs): Promise<string> {
   console.log(`[Lens AI ${logId}] passage: ${args.regionText.slice(0, 300)}${args.regionText.length > 300 ? '…' : ''}`);
   args.onPromptSent?.(userPrompt);
 
+  const cwd = safeCwd(args.indexPath ?? (args.pdfPath ? dirname(args.pdfPath) : undefined));
+  console.log(`[Lens AI ${logId}] cwd=${cwd}`);
+
   const q = query({
     prompt: userPrompt,
     options: {
@@ -129,6 +153,7 @@ export async function explain(args: ExplainArgs): Promise<string> {
       includePartialMessages: true,
       permissionMode: 'bypassPermissions',
       abortController: args.abortController,
+      cwd,
       // Claude typically needs: (1) Read MANIFEST, (2-4) Grep/Read the index, (5) final
       // text output. Leave headroom for WebSearch and figure Reads.
       maxTurns: 24,

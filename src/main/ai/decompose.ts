@@ -1,5 +1,23 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { existsSync, statSync } from 'node:fs';
+
+/**
+ * See notes in ai/client.ts — the SDK's child process can blow up with
+ * `spawn ENOTDIR` if process.cwd() isn't a real directory (common when the app
+ * is launched from Finder). Always hand the SDK a validated cwd.
+ */
+function safeCwd(preferred?: string): string {
+  if (preferred) {
+    try {
+      if (existsSync(preferred) && statSync(preferred).isDirectory()) return preferred;
+    } catch {
+      /* fall through */
+    }
+  }
+  return homedir();
+}
 
 const DECOMPOSE_SYSTEM = `You index research papers for an in-place PDF reader. You will be asked to read a PDF file and produce a compact JSON digest of it. Be precise, concise, and faithful to the source.`;
 
@@ -65,6 +83,9 @@ After reading, output a single JSON object with this shape (and nothing else —
 
 Be faithful — only include items that actually appear in the paper. If a section has no figures or equations, omit those arrays. Keep descriptions under 30 words each.`;
 
+  const cwd = safeCwd(dirname(pdfPath));
+  console.log(`[Lens Decompose] cwd=${cwd} pdf=${pdfPath} pages=${numPages}`);
+
   const q = query({
     prompt,
     options: {
@@ -74,6 +95,7 @@ Be faithful — only include items that actually appear in the paper. If a secti
       includePartialMessages: false,
       permissionMode: 'bypassPermissions',
       abortController,
+      cwd,
       // Decompose often takes multiple Read turns + a final JSON turn; leave headroom.
       maxTurns: Math.max(6, chunks.length + 2),
     },
