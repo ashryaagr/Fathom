@@ -48,15 +48,22 @@ export default function FirstRunTour({
   onDone,
 }: {
   visible: boolean;
-  onDone: () => void;
+  /** startCoach=true → kicks off the interactive walkthrough after
+   * dismiss. =false → user opted out ("don't show again"). Either way
+   * the welcome modal is remembered as seen and won't re-appear. */
+  onDone: (startCoach: boolean) => void;
 }) {
-  // Dismiss on Enter or Escape — any key that reasonably means "got it".
+  // Dismiss on Enter (start coach) or Escape (skip). Both remember the
+  // decision so the modal doesn't re-fire next session.
   useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Enter') {
+      if (e.key === 'Enter') {
         e.preventDefault();
-        onDone();
+        onDone(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onDone(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -71,7 +78,7 @@ export default function FirstRunTour({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          onClick={onDone}
+          onClick={() => onDone(false)}
         >
           <motion.div
             initial={{ scale: 0.97, y: 10, opacity: 0 }}
@@ -107,9 +114,16 @@ export default function FirstRunTour({
                 card any time from the <kbd className="rounded bg-black/5 px-1.5 py-[1px] font-mono text-[11.5px]">?</kbd> in the header or
                 from Help → Show Welcome.
               </p>
-              <div className="flex items-center justify-end">
+              <div className="flex items-center justify-between gap-4">
                 <button
-                  onClick={onDone}
+                  onClick={() => onDone(false)}
+                  className="text-[12.5px] text-black/50 underline-offset-4 hover:text-black/80 hover:underline"
+                  title="Dismiss and never show this walkthrough again"
+                >
+                  Skip — don't show again
+                </button>
+                <button
+                  onClick={() => onDone(true)}
                   className="rounded-full px-6 py-2 text-[13px] font-medium shadow-sm transition"
                   style={{ background: PALETTE.ink, color: PALETTE.paper }}
                   onMouseEnter={(e) =>

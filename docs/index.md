@@ -3,19 +3,7 @@ layout: default
 title: Fathom
 ---
 
-## A new way to read a paper
-
-Reading a research paper today means every few minutes you leave the page,
-copy-paste into Claude, scroll back, lose your place, or get lost in the
-PDF.
-
-Fathom asks you not to leave. The explanation comes to the page, right
-where your eye already is. You pinch in when you want to understand; you
-swipe back when you want to keep going. An addictive way to read PDFs —
-one PDF is all you need.
-
-It's a reading app shaped around the way you already read — not an AI
-assistant bolted onto a PDF viewer.
+<div class="handwritten" markdown="1">
 
 ## Built out of necessity
 
@@ -29,13 +17,25 @@ use daily, it felt like it might be useful to someone else.
 There's nothing to sign up for, no subscription, no account. If you already
 pay for Claude, you have everything Fathom needs.
 
+</div>
+
+## A new way to read a paper
+
+Fathom asks you not to leave the document. The explanation comes to the
+page, right where your eye already is. You pinch in when you want to
+understand; you swipe back when you want to keep going. One gesture — the
+same pinch you'd already use to look closer — is how you ask for help.
+
+It's a reading app shaped around the way you already read, not an AI
+assistant bolted onto a PDF viewer.
+
 ## What it feels like
 
 Hold **⌘** and pinch on any passage. The page gives way to a full-screen
 lens, and the explanation starts streaming in. Pinch a phrase inside the
-lens to drill deeper — recursively, as far as the idea goes. Swipe back, the
-way you came. Every lens persists across sessions: close the PDF, open it
-next month, pinch the same paragraph, and the thread you had is still
+lens to drill deeper — recursively, as far as the idea goes. Swipe back,
+the way you came. Every lens persists across sessions: close the PDF, open
+it next month, pinch the same paragraph, and the thread you had is still
 there, exactly where you left it.
 
 ## What makes it different
@@ -54,12 +54,27 @@ there, exactly where you left it.
 
 ## Install
 
-One download. One first-launch approval in System Settings → Privacy &
-Security. Then Fathom opens like any other Mac app.
+Two ways in. Pick whichever feels natural; both land you on the same app,
+and both route through the same in-app updater afterwards.
+
+**Download the DMG** — the familiar drag-to-Applications flow. One
+first-launch approval in System Settings → Privacy & Security, then
+Fathom opens like any other Mac app.
 
 [**Download Fathom for macOS**](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg){: .btn .btn-primary}
 
-Apple Silicon · ~200 MB · [full install guide]({{ '/INSTALL' | relative_url }})
+Apple Silicon · ~200 MB.
+
+**Or a simpler, smoother way** — one terminal line, no Gatekeeper
+prompt, no drag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | bash
+```
+
+Adds a `fathom` launcher at `~/.local/bin/fathom` so `fathom`,
+`fathom paper.pdf`, and `fathom update` work from any shell. Full
+walkthrough in the [install guide]({{ '/INSTALL' | relative_url }}).
 
 ## Your data stays yours
 

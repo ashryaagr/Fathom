@@ -4,15 +4,19 @@
 /*
  * Fathom docs site.
  *
- * The aesthetic is the app's aesthetic: warm cream paper, amber accent,
- * and Excalifont — the same handwritten typeface the app uses inside the
- * lens — used liberally. Headings, prose, pull-quotes all share the
- * hand-drawn feel. Only code blocks, inline code, and small-print
- * metadata fall back to the system sans/mono stacks, because handwriting
- * genuinely hurts readability there.
+ * Typography policy — the voice rule:
+ *   • Handwritten (Excalifont) = *personal voice*. The Fathom wordmark,
+ *     the tagline, the "Built out of necessity" section — places where a
+ *     human is speaking directly to the reader. People don't scan
+ *     handwriting; they stop and read it, exactly once. Use it
+ *     sparingly so the stopping actually happens.
+ *   • Sans (system) = *information*. Navigation, section bodies,
+ *     tables, download controls. Information should scan; handwriting
+ *     doesn't help scan.
  *
- * Side-effect of the font swap: line-height opens up (handwriting needs
- * more breathing room than sans-serif at body sizes), so we bump it.
+ * This split is enforced by limiting Excalifont to the hero and the
+ * `.handwritten` class scope. Everything else inherits the system
+ * stack. Keep it that way.
  */
 
 $paper:        #faf4e8;
@@ -51,11 +55,10 @@ html {
 
 body {
   margin: 0;
-  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand',
-               -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
                'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  font-size: 19px;         /* handwriting needs a touch more than sans */
-  line-height: 1.75;       /* and more vertical breathing room */
+  font-size: 17px;
+  line-height: 1.6;
   color: $ink-soft;
   background: $paper;
 }
@@ -66,7 +69,7 @@ a:hover { color: $amber-dark; }
 ::selection { background: rgba(201, 131, 42, 0.3); color: $ink; }
 
 /* --- Top navigation --- */
-/* Chrome stays in system sans — navigation is for scanning, not reading. */
+/* Nav is information, not voice — system sans. */
 .site-nav {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
                'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -110,6 +113,11 @@ a:hover { color: $amber-dark; }
   .nav-links a:hover { color: $amber; }
 
   .github-link {
+    /* Keep the chip in sans — it reads as a control, not a link. */
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+                 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13.5px;
+    font-weight: 500;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -157,7 +165,14 @@ a:hover { color: $amber-dark; }
 }
 
 .btn-download {
-  display: inline-block;
+  /* Platform-affordance control — intentionally NOT handwritten so
+     the macOS download signal (Apple glyph + tight tracking) reads
+     as a real action, not a flourish. */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+               'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   padding: 13px 28px;
   background: $ink;
   color: $paper !important;
@@ -169,11 +184,45 @@ a:hover { color: $amber-dark; }
   box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(201, 131, 42, 0.18);
   transition: transform .15s ease, box-shadow .15s ease;
 }
+.btn-download .btn-apple {
+  display: inline-block;
+  margin-top: -2px;
+}
 .btn-download:hover {
   background: $amber-dark;
   color: $paper !important;
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 12px 32px rgba(201, 131, 42, 0.24);
+}
+
+/* Alternative-install block: curl one-liner under the DMG button. */
+.hero-alt {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.hero-alt-label {
+  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
+  font-size: 1.1rem;
+  color: $amber-dark;
+  margin: 0;
+}
+.hero-alt-code {
+  /* Monospace + soft chip so the command reads as a terminal line. */
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Roboto Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  background: $paper-dim;
+  color: $ink;
+  border: 1px solid $rule;
+  border-radius: 8px;
+  padding: 8px 14px;
+  max-width: min(640px, 92vw);
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-user-select: all;
+          user-select: all;
 }
 
 .hero-meta {
@@ -207,23 +256,46 @@ a:hover { color: $amber-dark; }
   padding: 40px 28px 80px;
 }
 
+/* Content headings use system sans — they're section markers, not
+   voice. Handwritten headings belong inside a `.handwritten` scope. */
 .content h1,
 .content h2,
 .content h3,
 .content h4 {
-  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
   color: $ink;
-  font-weight: 400;                /* handwriting is one weight */
-  letter-spacing: -0.005em;
-  line-height: 1.2;
-  margin-top: 2em;
-  margin-bottom: 0.55em;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  margin-top: 2.25em;
+  margin-bottom: 0.6em;
 }
 
-.content h1 { font-size: 2.35rem; color: $amber-dark; }
-.content h2 { font-size: 1.85rem; color: $amber-dark; }
-.content h3 { font-size: 1.45rem; }
-.content h4 { font-size: 1.2rem; }
+.content h1 { font-size: 1.85rem; }
+.content h2 { font-size: 1.4rem; }
+.content h3 { font-size: 1.15rem; }
+
+/* `.handwritten` — the scoped personal-voice style. Wrap any
+   paragraph, heading, or section in <div class="handwritten">…</div>
+   (or via kramdown's {:.handwritten} attribute) and every text
+   element inside picks up Excalifont + slightly looser line-height.
+   Reserved for the hero + "Built out of necessity" on the home page;
+   use sparingly elsewhere. */
+.content .handwritten,
+.content .handwritten p,
+.content .handwritten h1,
+.content .handwritten h2,
+.content .handwritten h3,
+.content .handwritten h4,
+.content .handwritten li {
+  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  line-height: 1.55;
+}
+.content .handwritten h1 { font-size: 2.1rem; color: $amber-dark; }
+.content .handwritten h2 { font-size: 1.75rem; color: $amber-dark; }
+.content .handwritten h3 { font-size: 1.35rem; color: $ink; }
+.content .handwritten p { font-size: 1.1rem; color: $ink-soft; }
 
 .content p { margin: 0 0 1.15em; }
 .content ul, .content ol { margin: 0 0 1.25em; padding-left: 1.5em; }

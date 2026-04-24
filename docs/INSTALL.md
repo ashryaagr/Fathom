@@ -34,7 +34,7 @@ Both require the Claude Code CLI at runtime — see
 | Architecture | Direct link |
 |---|---|
 | Apple Silicon (M1 / M2 / M3 / M4) | [Fathom-arm64.dmg](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg) |
-| Apple Silicon, zipped `.app` | [Fathom-arm64-mac.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip) |
+| Apple Silicon, zipped `.app` | [Fathom-arm64.zip](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip) |
 | Intel | *(v1: build from source; prebuilt x64 lands when demand warrants)* |
 
 GitHub resolves `/releases/latest/download/<asset>` to the newest release,
@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | 
 
 What this does:
 
-1. Downloads `Fathom-arm64-mac.zip` from the latest GitHub Release.
+1. Downloads `Fathom-arm64.zip` from the latest GitHub Release.
 2. Extracts to `/Applications/Fathom.app` (or `~/Applications/` if the
    system directory isn't writable).
 3. Clears the `com.apple.quarantine` xattr — Gatekeeper treats the
@@ -198,7 +198,7 @@ npm run dist:mac-both      # both
 
 Outputs land in `dist/`:
 - `Fathom-arm64.dmg`
-- `Fathom-arm64-mac.zip`
+- `Fathom-arm64.zip`
 - `latest-mac.yml` (auto-updater metadata)
 
 The build runs an `afterSign` step (see `electron-builder.config.cjs`) that

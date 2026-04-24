@@ -84,7 +84,7 @@ Both install paths arrive at the same `Fathom.app`. From that moment, the in-app
 
 ### Other artifacts
 
-Zipped `.app` at [`Fathom-arm64-mac.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
+Zipped `.app` at [`Fathom-arm64.zip`](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip). Release notes and checksums live on the [Releases page](https://github.com/ashryaagr/Fathom/releases).
 
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 

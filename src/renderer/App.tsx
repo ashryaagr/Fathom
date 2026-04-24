@@ -574,12 +574,15 @@ export default function App() {
 
       <FirstRunTour
         visible={showTour}
-        onDone={() => {
+        onDone={(startCoach) => {
           setShowTour(false);
-          // Welcome card dismissing is the trigger for the interactive
-          // coach — we don't mark tour done here; the coach does that
-          // when the user reaches the swipe step (or hits Skip).
-          useTourStore.getState().start();
+          // Always mark the tour as seen — a user who closed the welcome
+          // has decided they don't need it again. The choice below is
+          // just whether they want the in-app coach to follow up.
+          void window.lens.markTourDone();
+          if (startCoach) {
+            useTourStore.getState().start();
+          }
         }}
       />
 

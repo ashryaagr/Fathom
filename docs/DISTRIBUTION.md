@@ -46,7 +46,7 @@ curl -fsSL …/install.sh | bash
 Same as the install flow developers know from Claude Code, `rustup`,
 `nvm`, `deno`, Homebrew. The script:
 
-1. Downloads `Fathom-arm64-mac.zip` from GitHub Releases.
+1. Downloads `Fathom-arm64.zip` from GitHub Releases.
 2. Extracts to `/Applications/Fathom.app` (or `~/Applications/` on
    managed Macs where `/Applications` isn't writable).
 3. Clears the `com.apple.quarantine` extended attribute — `curl`

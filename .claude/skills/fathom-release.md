@@ -42,7 +42,7 @@ echo "Releasing v$VERSION"
 npm run dist:mac
 # Produces:
 #   dist/Fathom-arm64.dmg            — drag-to-Applications installer
-#   dist/Fathom-arm64-mac.zip        — zipped .app (what install.sh consumes)
+#   dist/Fathom-arm64.zip        — zipped .app (what install.sh consumes)
 #   dist/latest-mac.yml              — electron-updater metadata
 
 # 3. Verify the ad-hoc signature before uploading
@@ -59,7 +59,7 @@ git push origin "v$VERSION"
 # 5. Create the GitHub release with all artifacts
 gh release create "v$VERSION" \
   dist/Fathom-arm64.dmg \
-  dist/Fathom-arm64-mac.zip \
+  dist/Fathom-arm64.zip \
   dist/latest-mac.yml \
   --title "v$VERSION" \
   --notes-file RELEASE_NOTES.md    # or --generate-notes

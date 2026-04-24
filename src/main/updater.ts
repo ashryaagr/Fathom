@@ -170,8 +170,8 @@ export function initAutoUpdater(window: BrowserWindow): void {
       // Fathom-arm64.zip as a stable name, so the /latest/download URL is
       // always valid. Falls back to a versioned name if the latest-link
       // route 404s.
-      const latestUrl = `https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-${arch}-mac.zip`;
-      const versionedUrl = `https://github.com/ashryaagr/Fathom/releases/download/v${info.version}/Fathom-${arch}-mac.zip`;
+      const latestUrl = `https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-${arch}.zip`;
+      const versionedUrl = `https://github.com/ashryaagr/Fathom/releases/download/v${info.version}/Fathom-${arch}.zip`;
       const zipPath = join(tmpdir(), `fathom-update-${info.version}.zip`);
 
       let succeeded = false;
@@ -196,7 +196,7 @@ export function initAutoUpdater(window: BrowserWindow): void {
         state: 'error',
         message: err instanceof Error ? err.message : String(err),
         downloadUrl:
-          'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip',
+          'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip',
       });
     }
   });
@@ -208,7 +208,7 @@ export function initAutoUpdater(window: BrowserWindow): void {
       state: 'error',
       message: err?.message ?? String(err),
       downloadUrl:
-        'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip',
+        'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip',
     }),
   );
 
@@ -244,7 +244,7 @@ export async function manualCheckForUpdates(): Promise<UpdateStatus> {
       state: 'error',
       message: err instanceof Error ? err.message : String(err),
       downloadUrl:
-        'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip',
+        'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip',
     });
   }
   return lastStatus;
@@ -260,7 +260,7 @@ export async function quitAndInstall(): Promise<void> {
     console.error('[Fathom Updater] quitAndInstall called with no staged zip');
     // Graceful degradation: open the download page.
     await shell.openExternal(
-      'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64-mac.zip',
+      'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip',
     );
     return;
   }

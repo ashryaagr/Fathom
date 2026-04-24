@@ -57,6 +57,23 @@ Fathom. They override any conflicting default behaviour.
      the rule. Same for `fathom-e2e-test` — is there a gesture
      sequence that would have exposed this? Add it.
 
+- **Agent harness as a first-class product.** We're not only building
+  a PDF reader; we're building the team of agents + skills + hooks
+  that builds, tests, and ships it. Treat every retrospection as an
+  opportunity to improve that harness. If two sessions in a row hit
+  the same shape of problem, that's a missing skill or a missing
+  instrumentation — fix the harness, not just the symptom.
+
+- **Local-only context.** At session start, read every `.local/*.md`
+  file if the directory exists. `.local/` is gitignored and holds
+  the author's working notes — operational rules, dev-machine
+  instrumentation, release timing preferences — that never belong
+  in the public repo. Content in `.local/` supersedes defaults in
+  this file when they conflict. Never reference `.local/` content
+  by quote or detail in any tracked file, commit message, or
+  release note; a neutral pointer (like this bullet) is the only
+  permitted leak.
+
 ---
 
 ## 1. Product intent

@@ -111,7 +111,7 @@ fi
 
 WORK_DIR="$(mktemp -d /tmp/fathom-install.XXXXXX)"
 trap 'rm -rf "$WORK_DIR"' EXIT
-ZIP_PATH="${WORK_DIR}/${APP_NAME}-${ARCH}-mac.zip"
+ZIP_PATH="${WORK_DIR}/${APP_NAME}-${ARCH}.zip"
 
 if [[ -n "$FROM_ZIP" ]]; then
   [[ -f "$FROM_ZIP" ]] || die "--from-zip '$FROM_ZIP' doesn't exist."
@@ -119,12 +119,12 @@ if [[ -n "$FROM_ZIP" ]]; then
   cp "$FROM_ZIP" "$ZIP_PATH"
 else
   if [[ -z "$VERSION" ]]; then
-    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${APP_NAME}-${ARCH}-mac.zip"
+    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${APP_NAME}-${ARCH}.zip"
     log "Fetching latest Fathom…"
   else
     # Normalize: accept "1.0.2" or "v1.0.2"
     [[ "$VERSION" == v* ]] || VERSION="v${VERSION}"
-    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}/${APP_NAME}-${ARCH}-mac.zip"
+    URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}/${APP_NAME}-${ARCH}.zip"
     log "Fetching Fathom ${VERSION}…"
   fi
   # -L follows redirects (GitHub hands out a presigned S3 URL), -f fails
