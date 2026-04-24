@@ -34,16 +34,19 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
   const setRegions = useRegionsStore((s) => s.setPage);
 
   // Visibility tracking — render well before the page scrolls into view.
-  // 2000px rootMargin = ~3 viewport heights of prefetch, so by the time
-  // the user scrolls to a page its canvas is already painted. The cost
-  // is a few extra pages' worth of pdf.js work at idle; the benefit is
-  // that "Rendering…" placeholders almost never appear during scroll.
+  // 4000 px rootMargin = ~5–6 viewport heights of prefetch (was 2000 in
+  // v1.0.7+; bumped in v1.0.15 because the user kept hitting "Rendering…"
+  // placeholders during fast scrolls on a 16" laptop). Cost is a few
+  // extra pages' worth of pdf.js work at idle, which is fine because
+  // the worker is otherwise idle. Real fix to "many pages render
+  // serially on one worker" is todo.md #26 (worker pool / canvas reuse)
+  // — this bump is the cheap part.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => setVisible(entry.isIntersecting),
-      { rootMargin: '2000px 0px' },
+      { rootMargin: '4000px 0px' },
     );
     observer.observe(el);
     return () => observer.disconnect();

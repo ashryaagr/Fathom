@@ -147,17 +147,22 @@ docs site. Nav, tables, code, footer stay sans-serif for scan-ability
 (handwriting in those hurts more than it helps).
 
 
-## 21. Comprehensive data-model audit — 🔄 PENDING
-User reports anchor image disappears 1-2 min after closing a lens.
-Root cause: zoom_image_path is persisted only on the `explanations`
-table, and with the new no-auto-prompt model an opened-but-never-
-asked lens has no explanation row → no persistence path. Fix is a
-new `lens_anchors` table that records every lens open (lens_id,
-paper_hash, origin, page, bbox_json, region_id, parent_lens_id,
-zoom_image_path, selection, created_at). Markers + drill edges +
-zoom paths all derive from it. Replaces the current ad-hoc spread
-across regions / explanations / lensMarkers / drill_edges.
-Schedule: v1.0.12.
+## 21. Comprehensive data-model audit — ✅ DONE across v1.0.12 / .14 / .15
+The user's "anchor image disappears" report opened a wider audit:
+- v1.0.12: `lens_anchors` table records every lens-open by lens_id
+  (regardless of origin), with bbox + zoom_image_path. Anchor
+  images now survive close-and-reopen even on never-asked lenses.
+- v1.0.14: `lens_turns` table records the streamed answer body
+  keyed by lens_id (not region_id) — closes the gap where viewport-
+  origin and drill-origin lens turns were silently dropped because
+  the legacy `explanations` table is region-keyed.
+- v1.0.15: `lens_highlights` table for in-lens highlights, anchored
+  by lens_id + selectedText (re-found on render, since the
+  markdown body re-flows).
+
+The data model is now lens-id-keyed for everything that's lens-
+specific, and region-id-keyed only for genuinely region-bound
+data (regions, explanations). No more ad-hoc spreads.
 
 ## 22. Animated thinking indicator inside the lens — 🔄 PENDING
 "Working…" / "thinking" text in the lens body during stream is
@@ -233,7 +238,7 @@ Fix shipped in v1.0.13:
 
 See commit in the v1.0.13 release notes.
 
-## 26. Initial render + scroll-to-new-page slow — 🔄 PENDING
+## 26. Initial render + scroll-to-new-page slow — 🔄 PARTIAL (rootMargin bumped in v1.0.15; worker pool deferred)
 Pages take a noticeable beat to render on first load and when
 scrolling to a not-yet-rendered page. We're already prefetching
 2000 px ahead (commit from #17) but it's not enough.
