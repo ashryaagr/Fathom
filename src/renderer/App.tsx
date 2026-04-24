@@ -7,6 +7,7 @@ import { useLensStore } from './lens/store';
 import { buildPaperIndex } from './pdf/buildIndex';
 import PdfViewer from './pdf/PdfViewer';
 import FocusView from './lens/FocusView';
+import FirstRunTour from './lens/FirstRunTour';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -20,6 +21,7 @@ export default function App() {
   const [indexState, setIndexState] = useState<IndexState>('idle');
   const [indexMessage, setIndexMessage] = useState<string | null>(null);
   const [showIndexToast, setShowIndexToast] = useState(false);
+  const [showTour, setShowTour] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to decomposition status events from the main process.
@@ -181,6 +183,32 @@ export default function App() {
   // Menu / first-run "Open PDF…" → pop the dialog.
   useEffect(() => window.lens.onOpenRequest(() => void openPdf()), [openPdf]);
 
+  // First time a PDF is opened (sample or user's own), show the guided tour
+  // unless it's already been completed. Fires on docState transition from
+  // null → non-null, then settles in for the session.
+  useEffect(() => {
+    if (!docState) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const settings = await window.lens.getSettings();
+        if (!cancelled && !settings.tourCompletedAt) setShowTour(true);
+      } catch {
+        /* if settings read fails, don't push a tour the user didn't ask for */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally depend on the *presence* of docState, not its identity —
+    // we want the tour exactly once per session (if uncompleted), not every
+    // time the user opens a new PDF.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!docState]);
+
+  // Help → Show Welcome Tour, or ? button → show the tour again from step 1.
+  useEffect(() => window.lens.onShowTour(() => setShowTour(true)), []);
+
   // External "here's a PDF" — drag onto dock icon, Finder Open With,
   // Open Sample Paper menu item. Path comes from the main process.
   useEffect(
@@ -279,6 +307,20 @@ export default function App() {
           className="absolute right-2 flex items-center gap-1"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
+          {/* Explicit "Ask" — opens a lens on the current viewport without
+              requiring the pinch gesture. The PdfViewer listens for the
+              fathom:askCurrentViewport event and runs the same flow. */}
+          {docState && (
+            <button
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'))
+              }
+              className="rounded px-2 py-0.5 text-xs text-black/60 hover:bg-black/5"
+              title="Ask Claude about what's on screen (⌘+pinch)"
+            >
+              Ask
+            </button>
+          )}
           <button
             onClick={() => setShowHelp((v) => !v)}
             className="flex h-6 w-6 items-center justify-center rounded-full text-[12px] text-black/55 hover:bg-black/5"
@@ -320,7 +362,24 @@ export default function App() {
       {/* Focus view overlays everything when active. */}
       <FocusView />
 
-      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} focused={focused != null} />}
+      {showHelp && (
+        <HelpOverlay
+          onClose={() => setShowHelp(false)}
+          focused={focused != null}
+          onStartTour={() => {
+            setShowHelp(false);
+            setShowTour(true);
+          }}
+        />
+      )}
+
+      <FirstRunTour
+        visible={showTour}
+        onDone={() => {
+          setShowTour(false);
+          void window.lens.markTourDone();
+        }}
+      />
 
       {/* Indexing toast — sticky bottom-right, non-intrusive */}
       <IndexingToast
@@ -414,7 +473,15 @@ function IndexingToast({
   );
 }
 
-function HelpOverlay({ onClose, focused }: { onClose: () => void; focused: boolean }) {
+function HelpOverlay({
+  onClose,
+  focused,
+  onStartTour,
+}: {
+  onClose: () => void;
+  focused: boolean;
+  onStartTour: () => void;
+}) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -460,6 +527,12 @@ function HelpOverlay({ onClose, focused }: { onClose: () => void; focused: boole
           Inside that view, select any phrase you don't recognize — an algorithm name, a term, an equation —
           and ⌘+pinch on it to dive deeper into that specific concept.
         </p>
+        <button
+          onClick={onStartTour}
+          className="mt-4 w-full rounded-full bg-[#1a1614] py-2 text-[12.5px] font-medium text-[#faf4e8] transition hover:bg-[#c9832a]"
+        >
+          Walk me through it again
+        </button>
       </div>
     </div>
   );

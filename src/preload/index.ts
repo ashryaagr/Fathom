@@ -90,6 +90,27 @@ const api = {
   /** Open Finder on the Fathom log file so a user can share it in one drag. */
   revealLogFile: (): Promise<void> => ipcRenderer.invoke('log:reveal'),
 
+  // ---- settings (tiny JSON under userData) ----
+  getSettings: (): Promise<{
+    lastOpenDir?: string;
+    firstRunCompletedAt?: string;
+    tourCompletedAt?: string;
+  }> => ipcRenderer.invoke('settings:get'),
+  markTourDone: (): Promise<void> => ipcRenderer.invoke('settings:markTourDone'),
+  onShowTour: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('tour:show', listener);
+    return () => ipcRenderer.removeListener('tour:show', listener);
+  },
+
+  // ---- auto-updater (manual check from the menu) ----
+  checkForUpdates: (): Promise<{
+    state: 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
+    version?: string;
+    message?: string;
+    downloadUrl?: string;
+  }> => ipcRenderer.invoke('update:check'),
+
   explain: (req: ExplainRequest, cb: ExplainCallbacks): Promise<ExplainHandle> =>
     (async () => {
       const { requestId, channel } = (await ipcRenderer.invoke('explain:start', req)) as {

@@ -170,6 +170,28 @@ export default function PdfViewer() {
     return () => window.removeEventListener('keydown', handler);
   }, [docState, multiplyZoom, setZoom]);
 
+  // Listen for the header's "Ask" button. It dispatches a custom event
+  // rather than going through a zustand action so we can reuse the exact
+  // commitSemanticFocus flow the trackpad gesture uses — same code path,
+  // same viewport fallback, same persistence.
+  useEffect(() => {
+    const handler = async () => {
+      const el = scrollerRef.current;
+      if (!el || !docState) return;
+      // No cursor — commitSemanticFocus will fall through to its viewport-
+      // scope branch, which is what "Ask about what's on screen" means.
+      await commitSemanticFocus(
+        el,
+        docState.contentHash,
+        pageBaseSizes,
+        useDocumentStore.getState().zoom,
+        null,
+      );
+    };
+    window.addEventListener('fathom:askCurrentViewport', handler);
+    return () => window.removeEventListener('fathom:askCurrentViewport', handler);
+  }, [docState, pageBaseSizes]);
+
   const pages = useMemo(() => {
     if (!docState) return [] as number[];
     return Array.from({ length: docState.numPages }, (_, i) => i + 1);

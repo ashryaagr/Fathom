@@ -30,6 +30,7 @@ const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs');
 interface FathomSettings {
   lastOpenDir?: string;
   firstRunCompletedAt?: string;
+  tourCompletedAt?: string;
 }
 
 function settingsPath(): string {
@@ -294,6 +295,14 @@ ipcMain.handle('log:reveal', async () => {
   const p = logFilePath();
   if (existsSync(p)) shell.showItemInFolder(p);
   else shell.openPath(dirname(p));
+});
+
+// Settings surface for the renderer — read-only get + targeted setters.
+// We deliberately don't expose a general-purpose setSettings() so the
+// renderer can't scribble arbitrary keys into the file.
+ipcMain.handle('settings:get', async () => readSettings());
+ipcMain.handle('settings:markTourDone', async () => {
+  writeSettings({ tourCompletedAt: new Date().toISOString() });
 });
 
 ipcMain.handle('explain:abort', async (_event, requestId: string) => {
@@ -569,9 +578,43 @@ function buildAppMenu(): void {
       role: 'help',
       submenu: [
         {
+          label: 'Show Welcome Tour',
+          click: () => {
+            mainWindow?.webContents.send('tour:show');
+          },
+        },
+        {
+          label: 'Check for Updates…',
+          click: async () => {
+            if (!mainWindow) return;
+            const status = await manualCheckForUpdates();
+            const { dialog } = require('electron') as typeof import('electron');
+            // Turn the updater state into a one-sentence summary the user can
+            // read and dismiss — no need for a toast system here.
+            const headline =
+              status.state === 'up-to-date'
+                ? "You're on the latest version."
+                : status.state === 'available'
+                  ? `Version ${status.version} is available and downloading in the background.`
+                  : status.state === 'ready'
+                    ? `Version ${status.version} is ready. Restart Fathom to apply.`
+                    : status.state === 'downloading'
+                      ? 'Downloading the update…'
+                      : status.state === 'error'
+                        ? `Update check failed: ${status.message ?? 'unknown error'}`
+                        : 'Checking…';
+            void dialog.showMessageBox(mainWindow, {
+              type: 'none',
+              message: headline,
+              buttons: ['OK'],
+              defaultId: 0,
+            });
+          },
+        },
+        { type: 'separator' },
+        {
           label: 'Reveal Log File in Finder',
           click: () => {
-            // Reveal highlights the file in Finder for one-click attachment to a bug report.
             const p = logFilePath();
             if (existsSync(p)) shell.showItemInFolder(p);
             else shell.openPath(dirname(p));
