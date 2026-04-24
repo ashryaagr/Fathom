@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>{% if page.url == '/' %}Fathom — In every paper, there's a page that loses you.{% else %}{{ page.title | default: page.name | replace: '.md', '' }} · Fathom{% endif %}</title>
+  <title>{% if page.url == '/' %}Fathom — For the paper you meant to finish.{% else %}{{ page.title | default: page.name | replace: '.md', '' }} · Fathom{% endif %}</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
   <link rel="icon" href="{{ '/assets/icon.png' | relative_url }}" type="image/png">
   <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
-  <meta property="og:title" content="Fathom — In every paper, there's a page that loses you.">
-  <meta property="og:description" content="A macOS reader that brings you back. Free and open source.">
+  <meta property="og:title" content="Fathom — For the paper you meant to finish.">
+  <meta property="og:description" content="A macOS reader where the explanation of any passage is one pinch away. Free and open source.">
   <meta property="og:image" content="{{ '/assets/icon.png' | absolute_url }}">
   <meta name="theme-color" content="#faf4e8">
 </head>
@@ -35,10 +35,7 @@
 {% if page.url == '/' %}
 <header class="hero">
   <h1 class="hero-title">Fathom</h1>
-  <p class="hero-hook">
-    In every paper, there's a page that loses you.<br>
-    <em>Fathom brings you back.</em>
-  </p>
+  <p class="hero-hook">For the paper you meant to finish.</p>
   <a class="btn-download" href="https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg">
     Download for Mac
   </a>

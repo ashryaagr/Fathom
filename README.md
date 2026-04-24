@@ -9,10 +9,11 @@
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
-Research papers assume you already know what they mean. Fathom is how you find
-out — pinch on a passage and the page gives way to a lens, with an explanation
-arriving grounded in the paper itself, streaming as you read. Pinch a phrase
-inside to dive deeper. Swipe back, like surfacing.
+A macOS reader where the explanation of any passage is one pinch away —
+streaming in place, grounded in the paper itself. Pinch a phrase inside a
+lens to dive deeper. Swipe back, the way you came. Every lens persists: close
+the PDF, open it next month, pinch the same paragraph — the thread you had
+is still there.
 
 ### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
 

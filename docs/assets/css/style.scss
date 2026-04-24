@@ -133,24 +133,16 @@ a:hover { color: $amber-dark; }
   margin: 0 0 28px;
 }
 
-/* The hook: two lines, the second in the handwritten accent for warmth. */
+/* The hook — one sentence, handwritten, sits under the wordmark like a caption. */
 .hero-hook {
   max-width: 30em;
-  margin: 0 auto 40px;
-  font-size: clamp(1.2rem, 2.3vw, 1.5rem);
-  line-height: 1.35;
-  color: $ink-soft;
+  margin: 0 auto 44px;
+  font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
   font-weight: 400;
-  letter-spacing: -0.01em;
-
-  em {
-    display: inline-block;
-    margin-top: 6px;
-    font-family: 'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive;
-    font-style: normal;
-    color: $amber-dark;
-    font-size: 1.1em;
-  }
+  font-size: clamp(1.4rem, 2.6vw, 1.8rem);
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: $amber-dark;
 }
 
 .btn-download {

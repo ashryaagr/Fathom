@@ -17,8 +17,8 @@ const root = join(__dirname, '..');
 
 // 2× density so the rendered PNG stays crisp on retina displays.
 const scale = 2;
-const width = 1400;
-const height = 240;
+const width = 1600;
+const height = 220;
 
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
@@ -28,11 +28,11 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
       font-family: 'Bradley Hand', 'Marker Felt', 'Segoe Print', 'Comic Sans MS', cursive;
       font-weight: 700;
       fill: #1a1614;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.005em;
     }
   </style>
-  <text x="${width / 2}" y="170" text-anchor="middle" font-size="132">
-    Dive into any paper.
+  <text x="${width / 2}" y="150" text-anchor="middle" font-size="104">
+    For the paper you meant to finish.
   </text>
 </svg>`;
 
