@@ -246,18 +246,26 @@ fi
 
 # --- Relaunch / final message ---------------------------------------------
 
+# In-app update flow (--relaunch was set by updater.ts): relaunch silently.
 if [[ $RELAUNCH -eq 1 ]]; then
   log "Relaunching Fathom…"
   open -a "$APP_PATH" || true
   exit 0
 fi
 
+# First-time curl install or manual `fathom update`: open the app so the
+# user lands on Fathom immediately. `open -a` is idempotent — if Fathom
+# is already running it just comes to front, so this is safe for both
+# cases. The user asked explicitly for this welcoming behaviour: install
+# should feel like one continuous motion from `curl | bash` to the
+# welcome screen.
+log "Launching Fathom…"
+open -a "$APP_PATH" || true
+
 log ""
 log "✓ Fathom installed to ${APP_PATH}"
 log ""
-log "Launch it:"
-log "  open -a Fathom           # from Finder / anywhere"
-log "  fathom                   # from terminal (if ~/.local/bin is on PATH)"
-log "  fathom some-paper.pdf    # with a paper"
-log ""
-log "Update later: fathom update"
+log "Terminal shortcuts (if ~/.local/bin is on PATH):"
+log "  fathom                   # launch Fathom"
+log "  fathom some-paper.pdf    # open a PDF directly"
+log "  fathom update            # pull the latest version"

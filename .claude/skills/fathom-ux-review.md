@@ -43,6 +43,33 @@ diff touches:
 - **⌘ + gesture** should augment, never contradict, the plain gesture
   — because users experiment by adding/removing ⌘ mid-motion.
 
+### 1b. Pinch vs swipe: pinch always wins the tie-break
+
+A pinch gesture on macOS emits a burst of `wheel` events that are
+*mostly* `ctrlKey=true` but can interleave with `ctrlKey=false`
+tail-end events when fingers lift asymmetrically. If the swipe
+classifier looks at those tail events in isolation, it sees
+horizontal drift and commits a phantom "back".
+
+Rules any wheel-based gesture handler must obey:
+
+- **Track `lastPinchTime` globally.** Every `ctrlKey=true` event
+  stamps it.
+- **Implement a lockout.** For ~400 ms after any pinch event, the
+  swipe classifier refuses to accumulate — no `preventDefault`,
+  no commit, accumulator cleared defensively.
+- **Pinch-zoom owns ctrlKey wheels.** Swipe handlers must return on
+  `e.ctrlKey === true`.
+- **Expose a debug flag.** `window.__fathomGestureDebug = true`
+  in DevTools must surface every wheel event + classification
+  decision. Without this a regression can only be diagnosed by
+  screen-recording — too expensive at moment-of-frustration.
+
+✗ Violation example (the v1.0.1 ship): the handler only had
+`if (e.ctrlKey) return;` — the non-ctrlKey tail events of a pinch
+accumulated past threshold and committed a spurious swipe any
+time the user zoomed with slight rightward drift.
+
 ### 2. A gesture doesn't fire if it has nothing to do
 
 This is the rule we learned the hard way: the swipe-right chevron

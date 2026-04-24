@@ -35,6 +35,28 @@ Fathom. They override any conflicting default behaviour.
   invoke the `fathom-ux-review` skill (or its checklist) before
   committing. UX regressions are regressions.
 
+- **Reported-failure retrospection.** When the user reports that a
+  fix we've already shipped isn't actually working for them, treat
+  it as a systemic failure of our agent harness — not a retry prompt.
+  Specifically:
+  1. **Retrospect honestly, out loud.** What failure mode did we
+     match the bug to, and what mode did we miss? Was our mental
+     model of the underlying system (trackpad driver, Gatekeeper,
+     Squirrel.Mac, Electron API surface) wrong?
+  2. **Add instrumentation before re-fixing.** A future recurrence
+     has to be diagnosable from the log file alone — the user
+     doesn't have DevTools open at the moment of frustration.
+     Debug flags are fine (e.g. `window.__fathomGestureDebug`).
+  3. **Capture the new pattern.** If you learned a design rule —
+     "pinch always wins the tie-break vs swipe" — it goes into
+     this file or into the relevant `.claude/skills/*` file so the
+     next session inherits it. Skills are the harness; treat them
+     as code.
+  4. **Skill-level detectable.** Ask: could `fathom-ux-review`
+     catch this regression just by reading the diff? If not, add
+     the rule. Same for `fathom-e2e-test` — is there a gesture
+     sequence that would have exposed this? Add it.
+
 ---
 
 ## 1. Product intent

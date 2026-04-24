@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 export interface OpenedPdf {
   path: string;
@@ -79,6 +79,14 @@ export interface PaperState {
 
 const api = {
   openPdf: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('pdf:open'),
+
+  /** Open the bundled sample paper. Same pipeline as a real PDF open. */
+  openSample: (): Promise<OpenedPdf | null> => ipcRenderer.invoke('pdf:openSample'),
+
+  /** Resolve the filesystem path of a dropped File. Electron 32+ removed
+   * the non-standard `File.path` property; this is the sanctioned
+   * replacement. Returns "" on renderer-synthesised files. */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   /** Open a PDF at a specific local path — used by drag-and-drop and the
    * OS's Open-With / open-file flow. Returns null on bad paths. */

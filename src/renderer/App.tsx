@@ -307,9 +307,9 @@ export default function App() {
     [openPdf],
   );
 
-  // Drag-and-drop anywhere on the window. Electron's renderer exposes the
-  // absolute local path via the non-standard File.path extension, so we
-  // don't need to round-trip bytes through the main process.
+  // Drag-and-drop anywhere on the window. Electron 32+ removed the
+  // non-standard `File.path` extension; we resolve the filesystem path
+  // via `webUtils.getPathForFile` exposed from the preload instead.
   useEffect(() => {
     const isPdfDrop = (e: DragEvent): boolean => {
       const items = e.dataTransfer?.items;
@@ -331,9 +331,7 @@ export default function App() {
         f.name.toLowerCase().endsWith('.pdf'),
       );
       if (!file) return;
-      // Electron's File objects carry a .path property (a non-standard
-      // extension) that gives the absolute local path.
-      const path = (file as File & { path?: string }).path;
+      const path = window.lens.getPathForFile(file);
       if (path) void openPdf(path);
     };
     window.addEventListener('dragover', onDragOver);
@@ -345,29 +343,63 @@ export default function App() {
   }, [openPdf]);
 
   // Two-finger horizontal swipe → browser-style back / forward through lens
-  // history. Two invariants protect against the user's "I was trying to
-  // pan/zoom the PDF and it navigated away" complaint:
+  // history. The hard part is distinguishing a swipe from a pinch — both
+  // land as `wheel` events on the trackpad, but a pinch carries
+  // ctrlKey=true *most* of the time and ctrlKey=false for the tail
+  // events that come when your fingers lift asymmetrically. Those tail
+  // events previously leaked into the swipe classifier and produced a
+  // phantom "back" every time you zoomed with any rightward drift.
   //
-  //   1. We only engage if there's something to navigate to — a lens is
-  //      focused OR the back/forward stacks aren't empty. Otherwise the
-  //      horizontal motion is treated as a normal PDF scroll and we don't
-  //      preventDefault on it. This removes the whole class of "fake
-  //      swipe" animations from appearing over plain PDF browsing.
+  // The mental model: **pinch wins the tie-break, always.** Any
+  // ctrlKey=true event stamps `lastPinchTime`; for 400 ms after that,
+  // every non-ctrlKey wheel event is treated as pinch-aftermath and the
+  // swipe classifier stays cold. No user physically pinches and then
+  // swipes in <400 ms — there's always a finger-lift between them.
   //
-  //   2. Pinch-zoom wheels carry ctrlKey=true — those are skipped up
-  //      front. We also require the gesture to be *strongly horizontal*
-  //      (|dx| > |dy| × 1.6 instead of ×1.4) so that diagonal smudges
-  //      during a pinch commit don't slip through the filter.
+  // Three more invariants protect against spurious navigation:
+  //   1. **Nav-target gate** — if there's nothing to go back/forward
+  //      to, horizontal wheels pass through to the PDF scroller. No
+  //      chevron, no preventDefault, nothing.
+  //   2. **Horizontal-dominance** — |dx| > |dy| × 1.6 so that diagonal
+  //      drift during a scroll doesn't commit.
+  //   3. **Quiet gap reset** — after 180 ms of no horizontal motion,
+  //      reset the accumulator so rapid back-to-back swipes each get a
+  //      fresh threshold.
   //
   // Listens in the capture phase on the window so we beat the PDF
   // scroller and Chromium's native window-edge back-gesture. The CSS
   // `overscroll-behavior: none` in index.css handles the scroller side.
+  //
+  // Debug: set `window.__fathomGestureDebug = true` in DevTools and
+  // every wheel event + classification decision streams as
+  // `[Gesture] …` — so if a user reports "it swiped while I zoomed",
+  // we can see exactly which event crossed the threshold.
   useEffect(() => {
     let accum = 0;
     let lastActive = 0;
     let committed = false;
+    let lastPinchTime = 0;
+    const PINCH_LOCKOUT_MS = 400;
+
+    const log = (line: string) => {
+      if ((window as unknown as { __fathomGestureDebug?: boolean }).__fathomGestureDebug) {
+        console.log(`[Gesture] ${line}`);
+      }
+    };
+
     const handler = (e: WheelEvent) => {
-      if (e.ctrlKey) return; // pinch-zoom owns ctrlKey-wheels
+      // Anything with ctrlKey=true is a pinch. Stamp the time, wipe
+      // any stale horizontal accumulator so a swipe that "almost
+      // committed" before the pinch started doesn't fire after.
+      if (e.ctrlKey) {
+        lastPinchTime = Date.now();
+        if (accum !== 0 || committed) {
+          accum = 0;
+          committed = false;
+        }
+        log(`pinch dx=${e.deltaX.toFixed(1)} dy=${e.deltaY.toFixed(1)} → lockout armed`);
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -378,9 +410,18 @@ export default function App() {
         return;
       }
 
+      // Pinch aftermath — fingers still lifting. ctrlKey has flickered
+      // off but this is not a swipe. Keep the accumulator cold.
+      const sincePinch = Date.now() - lastPinchTime;
+      if (sincePinch < PINCH_LOCKOUT_MS) {
+        accum = 0;
+        committed = false;
+        log(`aftermath dx=${e.deltaX.toFixed(1)} sincePinch=${sincePinch}ms — ignored`);
+        return;
+      }
+
       // Nav-target gate: if there's nowhere to go, horizontal wheels are
-      // the PDF's to handle. Don't preventDefault, don't accumulate,
-      // don't show a chevron. The user is just panning/scrolling.
+      // the PDF's to handle.
       const lens = useLensStore.getState();
       const canGoBack = lens.focused !== null || lens.backStack.length > 0;
       const canGoForward = lens.forwardStack.length > 0;
@@ -396,10 +437,6 @@ export default function App() {
         }
       }
 
-      // Stronger horizontal-dominance filter (×1.6). Pinch gestures that
-      // don't fire with ctrlKey=true (rare, but seen on some trackpad
-      // driver versions) often have ~equal |dx| and |dy| near the end of
-      // the gesture; this extra margin rejects those.
       if (horiz < Math.abs(e.deltaY) * 1.6) return;
       accum += e.deltaX;
       if (committed) {
@@ -408,11 +445,11 @@ export default function App() {
       }
       const threshold = 120;
       if (accum <= -threshold && canGoBack) {
-        // Natural-scroll: fingers swipe RIGHT → deltaX negative → BACK.
         e.preventDefault();
         committed = true;
         accum = 0;
         lens.back();
+        log(`commit BACK`);
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
           useTourStore.getState().advance('celebrated');
@@ -422,16 +459,12 @@ export default function App() {
         committed = true;
         accum = 0;
         lens.forward();
+        log(`commit FORWARD`);
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
       } else if (Math.abs(accum) >= threshold) {
         // Crossed the threshold in a direction with no target — reset
-        // silently without firing the chevron. The user's gesture just
-        // doesn't mean anything here.
+        // silently. The gesture doesn't mean anything here.
         accum = 0;
-      } else {
-        // Still accumulating — hold off on preventDefault until we
-        // actually commit, so a below-threshold drift doesn't block the
-        // scroller.
       }
     };
     window.addEventListener('wheel', handler, { passive: false, capture: true });
@@ -652,13 +685,18 @@ function IndexingToast({
 }
 
 /**
- * Fathom's empty state — the screen a user sees before any PDF is open.
+ * Fathom's welcome screen — what the user sees on first launch after a
+ * fresh install (and any later time no paper is open). Two balanced
+ * choices — *Try with sample paper* and *Open your own* — laid out on a
+ * warm paper-cream card with a handwritten tagline in Excalifont. The
+ * entire card also accepts a dragged PDF; visible affordance beats
+ * invisible ones. Drag state brightens the amber accents so the gesture
+ * feels alive.
  *
- * Two clearly-offered entry points: a big centered drop zone that accepts
- * a dragged PDF, and an "Open PDF…" button underneath for users who'd
- * rather click. The drop zone brightens when the user drags a PDF over it
- * so the affordance is obvious mid-gesture. Drag-and-drop at the window
- * level still works too — this is just the visible invitation.
+ * No dashed-border "drop zone" chrome; the card *is* the drop target.
+ * No "Pinch to zoom" hint either — that lives inside the lens footer
+ * and in the `?` reference. This screen is about getting one paper on
+ * screen; everything else is discoverable once they're reading.
  */
 function EmptyState({
   loading,
@@ -672,83 +710,168 @@ function EmptyState({
   onOpenPath: (path: string) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const [sampleLoading, setSampleLoading] = useState(false);
+
+  const openSample = useCallback(async () => {
+    setSampleLoading(true);
+    try {
+      await window.lens.openSample();
+      // Actual document handoff happens via onOpenExternal — no-op here.
+    } finally {
+      setSampleLoading(false);
+    }
+  }, []);
 
   return (
-    <div className="flex h-full items-center justify-center px-8">
-      <div
-        onDragOver={(e) => {
-          if (!e.dataTransfer?.types?.includes('Files')) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-          setDragOver(true);
+    <div
+      className="flex h-full items-center justify-center px-8"
+      onDragOver={(e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        // only clear when we actually leave the card, not on inner elements
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const file = Array.from(e.dataTransfer.files).find((f) =>
+          f.name.toLowerCase().endsWith('.pdf'),
+        );
+        if (!file) return;
+        const path = window.lens.getPathForFile(file);
+        if (path) onOpenPath(path);
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: 'easeOut' }}
+        className="relative w-[min(580px,92vw)] overflow-hidden rounded-[22px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_24px_64px_rgba(201,131,42,0.14)]"
+        style={{
+          background: '#faf4e8',
+          transform: dragOver ? 'scale(1.006)' : 'scale(1)',
+          transition: 'transform 140ms ease-out',
+          outline: dragOver
+            ? '2px solid rgba(201, 131, 42, 0.55)'
+            : '1px solid rgba(224, 211, 172, 0.6)',
+          outlineOffset: '-1px',
         }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          const file = Array.from(e.dataTransfer.files).find((f) =>
-            f.name.toLowerCase().endsWith('.pdf'),
-          );
-          if (!file) return;
-          const path = (file as File & { path?: string }).path;
-          if (path) onOpenPath(path);
-        }}
-        onClick={onOpen}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') onOpen();
-        }}
-        className={`group flex w-[min(520px,90vw)] cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-8 py-14 transition-all ${
-          dragOver
-            ? 'border-[color:var(--color-lens)] bg-[color:var(--color-lens-soft)]/60 scale-[1.01]'
-            : 'border-black/15 bg-white/30 hover:border-black/30 hover:bg-white/50'
-        }`}
       >
-        {/* Document + arrow icon */}
-        <svg
-          width="56"
-          height="56"
-          viewBox="0 0 56 56"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`transition-colors ${dragOver ? 'text-[color:var(--color-lens)]' : 'text-black/40'}`}
-          aria-hidden="true"
-        >
-          <path d="M14 8 L36 8 L44 16 L44 48 L14 48 Z" />
-          <path d="M36 8 L36 16 L44 16" />
-          {/* down-arrow into the doc */}
-          <path d="M28 22 L28 36" />
-          <path d="M22 30 L28 36 L34 30" />
-        </svg>
-
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="text-[15px] font-medium text-black/80">
-            {dragOver ? 'Drop it in' : 'Drop a PDF here'}
+        {/* Top strip — handwritten brand + tagline */}
+        <div className="flex flex-col items-center gap-1 px-10 pt-11 pb-6">
+          <div
+            className="text-[40px] leading-none tracking-tight"
+            style={{
+              fontFamily:
+                "'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive",
+              color: '#1a1614',
+            }}
+          >
+            Fathom
           </div>
-          <div className="text-[12px] text-black/40">
-            or click to browse · also File → Open PDF… (⌘O)
+          <div
+            className="text-[17px] leading-snug"
+            style={{
+              fontFamily:
+                "'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive",
+              color: '#9f661b',
+            }}
+          >
+            Dive into any paper.
           </div>
         </div>
-      </div>
 
-      <div className="pointer-events-none fixed bottom-8 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-[11.5px] text-black/35">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen();
-          }}
-          disabled={loading}
-          className="pointer-events-auto rounded-full bg-black/85 px-4 py-1.5 text-[12px] font-medium text-white/95 shadow-[0_4px_16px_rgba(0,0,0,0.1)] transition hover:bg-black disabled:opacity-50"
+        {/* Quiet divider */}
+        <div
+          aria-hidden="true"
+          className="mx-auto h-px w-16"
+          style={{ background: 'rgba(224, 211, 172, 0.9)' }}
+        />
+
+        {/* Choice grid */}
+        <div className="grid grid-cols-1 gap-3 px-10 pt-7 pb-4 sm:grid-cols-2">
+          <button
+            onClick={() => void openSample()}
+            disabled={sampleLoading || loading}
+            className="group flex flex-col items-start gap-2 rounded-[14px] border px-5 py-5 text-left transition disabled:cursor-progress disabled:opacity-60"
+            style={{
+              borderColor: 'rgba(201, 131, 42, 0.35)',
+              background: 'rgba(201, 131, 42, 0.06)',
+            }}
+          >
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-full"
+              style={{ background: 'rgba(201, 131, 42, 0.18)' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                   stroke="#9f661b" strokeWidth="1.7" strokeLinecap="round"
+                   strokeLinejoin="round" aria-hidden="true">
+                <circle cx="10.5" cy="10.5" r="6" />
+                <path d="M20 20 L15 15" />
+              </svg>
+            </div>
+            <div className="text-[14.5px] font-medium leading-tight" style={{ color: '#1a1614' }}>
+              {sampleLoading ? 'Opening sample…' : 'Try with sample paper'}
+            </div>
+            <div className="text-[12px] leading-snug" style={{ color: '#7a6a52' }}>
+              <em>Attention Is All You Need</em> — Vaswani et al., the paper that introduced the Transformer. Pinch any dense passage and see what Fathom does with it.
+            </div>
+          </button>
+
+          <button
+            onClick={onOpen}
+            disabled={loading}
+            className="group flex flex-col items-start gap-2 rounded-[14px] border px-5 py-5 text-left transition hover:bg-black/[0.015] disabled:cursor-progress disabled:opacity-60"
+            style={{ borderColor: 'rgba(26, 22, 20, 0.12)', background: 'transparent' }}
+          >
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-full"
+              style={{ background: 'rgba(26, 22, 20, 0.06)' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                   stroke="#1a1614" strokeWidth="1.6" strokeLinecap="round"
+                   strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6 L10 6 L12 8 L20 8 L20 19 L4 19 Z" />
+              </svg>
+            </div>
+            <div className="text-[14.5px] font-medium leading-tight" style={{ color: '#1a1614' }}>
+              {loading ? 'Opening…' : 'Open your own paper'}
+            </div>
+            <div className="text-[12px] leading-snug" style={{ color: '#7a6a52' }}>
+              Browse for a PDF, or drop one onto this card. `⌘O` also works.
+            </div>
+          </button>
+        </div>
+
+        {/* Drop hint — only surfaces while the user is dragging */}
+        <div
+          className="flex items-center justify-center gap-2 px-10 pt-1 pb-7 text-[12px]"
+          style={{ color: dragOver ? '#9f661b' : '#9c8b6a' }}
         >
-          {loading ? 'Opening…' : 'Or pick from a folder'}
-        </button>
-        {error && <div className="text-xs text-red-600">{error}</div>}
-        <div>Pinch to zoom · ⌘ + pinch to dive into a passage</div>
-      </div>
+          {dragOver ? (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                   strokeLinejoin="round">
+                <path d="M12 4 L12 16 M6 10 L12 16 L18 10" />
+              </svg>
+              <span style={{ fontFamily: "'Excalifont', 'Caveat', cursive" }}>Drop it anywhere on the card</span>
+            </>
+          ) : (
+            <span>… or just drag a PDF onto this window.</span>
+          )}
+        </div>
+
+        {error && (
+          <div className="px-10 pb-6 text-center text-[12px]" style={{ color: '#b02a2a' }}>
+            {error}
+          </div>
+        )}
+      </motion.div>
     </div>
   );
 }

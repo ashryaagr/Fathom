@@ -220,6 +220,31 @@ ipcMain.handle('pdf:openPath', async (_event, filePath: string) => {
   return prepareOpenedPdf(filePath);
 });
 
+// Renderer-triggered "open the bundled sample paper". Reuses the same
+// copy-into-userData flow the welcome dialog + menu item use, then
+// returns the prepared payload directly to the renderer instead of
+// round-tripping through onOpenExternal.
+ipcMain.handle('pdf:openSample', async () => {
+  const sourcePath = app.isPackaged
+    ? join(process.resourcesPath, 'sample-paper.pdf')
+    : join(__dirname, '../../resources/sample-paper.pdf');
+  if (!existsSync(sourcePath)) {
+    console.warn(`[sample] not found at ${sourcePath}`);
+    return null;
+  }
+  const destDir = app.getPath('userData');
+  const destPath = join(destDir, 'Fathom — Short Tour.pdf');
+  try {
+    await mkdir(destDir, { recursive: true });
+    const bytes = await readFile(sourcePath);
+    await writeFile(destPath, bytes);
+  } catch (err) {
+    console.warn('[sample] copy failed', err);
+    return null;
+  }
+  return prepareOpenedPdf(destPath);
+});
+
 interface ExplainRequest extends Omit<ExplainArgs, 'abortController' | 'onDelta'> {
   paperHash: string;
   regionId?: string;
