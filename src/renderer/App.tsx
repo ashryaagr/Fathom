@@ -271,7 +271,7 @@ export default function App() {
         useLensStore.getState().back();
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
-          useTourStore.getState().advance('celebrated');
+          useTourStore.getState().advance('marker');
         }
         return;
       }
@@ -495,7 +495,7 @@ export default function App() {
         log(`commit BACK`);
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
-          useTourStore.getState().advance('celebrated');
+          useTourStore.getState().advance('marker');
         }
       } else if (accum >= threshold && canGoForward) {
         e.preventDefault();

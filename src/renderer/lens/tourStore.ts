@@ -14,7 +14,7 @@ import { create } from 'zustand';
  * out-of-band DOM event bus.
  */
 
-export type TourStep = 'idle' | 'pinch' | 'ask' | 'drill' | 'swipe' | 'celebrated';
+export type TourStep = 'idle' | 'pinch' | 'ask' | 'drill' | 'swipe' | 'marker' | 'celebrated';
 
 interface TourState {
   step: TourStep;
@@ -35,7 +35,7 @@ export const useTourStore = create<TourState>((set, get) => ({
     const { active, step: current } = get();
     if (!active) return;
     // Ignore out-of-order events (e.g. a swipe while we're still on 'pinch').
-    const order: TourStep[] = ['idle', 'pinch', 'ask', 'drill', 'swipe', 'celebrated'];
+    const order: TourStep[] = ['idle', 'pinch', 'ask', 'drill', 'swipe', 'marker', 'celebrated'];
     if (order.indexOf(to) <= order.indexOf(current)) return;
     set({ step: to });
     if (to === 'celebrated') {

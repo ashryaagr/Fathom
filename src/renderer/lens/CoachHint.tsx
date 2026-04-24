@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTourStore } from './tourStore';
 import { useLensStore } from './store';
@@ -110,15 +110,33 @@ const DoneGlyph = () => (
   </svg>
 );
 
+// A miniature PDF page with an amber sticker on the paragraph you
+// dove into — the same visual vocabulary the real markers use.
+const MarkerGlyph = () => (
+  <svg viewBox="0 0 56 56" width="56" height="56" aria-hidden="true">
+    <rect x="10" y="8" width="32" height="40" rx="3" fill={PAPER} stroke={INK} strokeWidth="1.5"/>
+    <line x1="16" y1="18" x2="36" y2="18" stroke={INK} strokeWidth="1.1" opacity="0.35"/>
+    <line x1="16" y1="23" x2="34" y2="23" stroke={INK} strokeWidth="1.1" opacity="0.35"/>
+    {/* the paragraph the user zoomed into */}
+    <line x1="16" y1="28" x2="32" y2="28" stroke={AMBER} strokeWidth="1.4"/>
+    <line x1="16" y1="33" x2="30" y2="33" stroke={INK} strokeWidth="1.1" opacity="0.35"/>
+    <line x1="16" y1="38" x2="34" y2="38" stroke={INK} strokeWidth="1.1" opacity="0.35"/>
+    {/* the sticker */}
+    <circle cx="36" cy="28" r="3.6" fill={AMBER}/>
+    <circle cx="36" cy="28" r="3.6" fill="none" stroke={PAPER} strokeWidth="1.2"/>
+  </svg>
+);
+
 const STEPS: Record<
   Step,
   { index: number | null; total: number; label: string; glyph: () => JSX.Element; minimal: string }
 > = {
-  pinch:       { index: 1, total: 4, label: '⌘ + pinch',           glyph: PinchGlyph, minimal: 'on any paragraph' },
-  ask:         { index: 2, total: 4, label: 'Ask a question',      glyph: AskGlyph,   minimal: 'in the box below' },
-  drill:       { index: 3, total: 4, label: 'Select + pinch',      glyph: DrillGlyph, minimal: 'a phrase to drill' },
-  swipe:       { index: 4, total: 4, label: 'Swipe to return',     glyph: SwipeGlyph, minimal: 'two fingers, right →' },
-  celebrated:  { index: null, total: 4, label: "You're in",        glyph: DoneGlyph,  minimal: '⌘, for Preferences' },
+  pinch:       { index: 1, total: 5, label: '⌘ + pinch',           glyph: PinchGlyph,  minimal: 'on any paragraph' },
+  ask:         { index: 2, total: 5, label: 'Ask a question',      glyph: AskGlyph,    minimal: 'in the box below' },
+  drill:       { index: 3, total: 5, label: 'Select + pinch',      glyph: DrillGlyph,  minimal: 'a phrase to drill' },
+  swipe:       { index: 4, total: 5, label: 'Swipe to return',     glyph: SwipeGlyph,  minimal: 'two fingers, right →' },
+  marker:      { index: 5, total: 5, label: 'Your amber sticker',  glyph: MarkerGlyph, minimal: 'click it to re-open this lens later' },
+  celebrated:  { index: null, total: 5, label: "You're in",        glyph: DoneGlyph,   minimal: '⌘, for Preferences' },
 };
 
 // When step is 'ask' AND the focused lens is still streaming, swap the
@@ -144,6 +162,20 @@ export default function CoachHint() {
   });
 
   const [skipArmed, setSkipArmed] = useState(false);
+
+  // Auto-advance `marker` → `celebrated` after a beat. The marker
+  // step is a show-not-do — no user action required to finish it,
+  // just "here's the sticker; here's what it's for" — so leaving
+  // the tour parked on it forever isn't the right UX. Five seconds
+  // is enough for the user to read the one line and see the dot on
+  // the page behind the hint.
+  useEffect(() => {
+    if (step !== 'marker') return;
+    const t = setTimeout(() => {
+      useTourStore.getState().advance('celebrated');
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [step]);
 
   const visible = active && step !== 'idle';
   if (!visible) return null;
