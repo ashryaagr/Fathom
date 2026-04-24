@@ -527,7 +527,8 @@ function HelpOverlay({
           <Row k="⌘ + pinch in" v="Dive into the paragraph under the cursor" />
           <Row k="⌘ + pinch out" v={focused ? 'Go back one level' : 'No effect (no lens open)'} />
           <Row k="Select text + ⌘ + pinch in" v="Dive into the selected concept" />
-          <Row k="Esc" v="Close the focused lens" />
+          <Row k="Swipe right (two-finger)" v="Go back through lens history" />
+          <Row k="Top-left Back/Close button" v="Leave the current lens" />
           <Row k="⌘ + 0" v="Reset zoom to 100%" />
           <Row k="⌘ + = / ⌘ + −" v="Zoom in / out" />
           <Row k="?" v="Toggle this help" />

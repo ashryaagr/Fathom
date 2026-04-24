@@ -1,82 +1,113 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="680" height="460" viewBox="0 0 680 460">
-  <!-- Fathom brand palette: paper-warm cream, amber accent, ink dark -->
+  <!-- Fathom install guide — three panels, each one thing to do. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#faf4e8"/>
       <stop offset="100%" stop-color="#f3ead7"/>
     </linearGradient>
-
-    <!-- Dashed ring to show where icons should end up -->
-    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="1.5"/>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.08"/>
     </filter>
   </defs>
-
   <rect width="680" height="460" fill="url(#bg)"/>
 
-  <!-- Title -->
-  <text x="340" y="48" text-anchor="middle"
+  <!-- Title row -->
+  <text x="340" y="38" text-anchor="middle"
         font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif"
-        font-size="22" font-weight="600" fill="#1a1a1a" letter-spacing="-0.3">
-    Install Fathom
+        font-size="18" font-weight="600" fill="#1a1614" letter-spacing="-0.2">
+    Install Fathom in three steps
   </text>
+  <line x1="80" y1="60" x2="600" y2="60" stroke="#e0d3ac" stroke-width="1"/>
 
-  <!-- Step 1 zone: icon drag -->
-  <!-- Fathom.app placeholder — electron-builder overlays the real icon here at (180, 180) -->
+  <!-- =============== STEP 1: DRAG =============== -->
+  <!-- Fathom.app icon placeholder at (180, 180) — electron-builder overlays the real app -->
   <circle cx="180" cy="180" r="58" fill="none" stroke="#d4b87a" stroke-width="1.5"
           stroke-dasharray="4 4" opacity="0.55"/>
-
-  <!-- Applications placeholder at (500, 180) -->
+  <!-- Applications folder placeholder at (500, 180) -->
   <circle cx="500" cy="180" r="58" fill="none" stroke="#d4b87a" stroke-width="1.5"
           stroke-dasharray="4 4" opacity="0.55"/>
 
-  <!-- Arrow between them -->
+  <!-- Big drag arrow between them -->
   <g stroke="#c9832a" stroke-width="3" fill="none" stroke-linecap="round">
     <path d="M 250 180 L 425 180"/>
     <path d="M 410 168 L 430 180 L 410 192"/>
   </g>
 
-  <text x="340" y="244" text-anchor="middle"
+  <!-- Step-1 badge -->
+  <circle cx="96" cy="180" r="16" fill="#c9832a" filter="url(#sh)"/>
+  <text x="96" y="186" text-anchor="middle" font-weight="700" font-size="16" fill="#faf4e8"
+        font-family="-apple-system, sans-serif">1</text>
+  <text x="340" y="252" text-anchor="middle"
         font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
-        font-size="13" font-weight="500" fill="#c9832a">
+        font-size="13.5" font-weight="600" fill="#c9832a">
     Drag Fathom to Applications
   </text>
 
-  <!-- Separator line -->
-  <line x1="80" y1="282" x2="600" y2="282" stroke="#e0d3ac" stroke-width="1"/>
+  <!-- divider -->
+  <line x1="80" y1="276" x2="600" y2="276" stroke="#e0d3ac" stroke-width="1"/>
 
-  <!-- Step instructions beneath -->
+  <!-- =============== STEP 2 + 3 side-by-side panels =============== -->
   <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
-     font-size="13" fill="#2a2420" letter-spacing="-0.15">
+     fill="#2a2420">
 
-    <!-- Step 1 -->
-    <circle cx="84" cy="316" r="11" fill="#c9832a"/>
-    <text x="84" y="320" text-anchor="middle" font-size="12" font-weight="600" fill="#faf4e8">1</text>
-    <text x="104" y="320" fill="#2a2420">
-      Drag <tspan font-weight="600">Fathom.app</tspan> onto the Applications folder above.
-    </text>
-
-    <!-- Step 2 -->
-    <circle cx="84" cy="352" r="11" fill="#c9832a"/>
-    <text x="84" y="356" text-anchor="middle" font-size="12" font-weight="600" fill="#faf4e8">2</text>
-    <text x="104" y="356" fill="#2a2420">
-      Open <tspan font-weight="600">Applications</tspan>, then double-click <tspan font-weight="600">Fathom</tspan>.
+    <!-- STEP 2 — open Applications + double-click Fathom -->
+    <circle cx="96" cy="310" r="13" fill="#c9832a" filter="url(#sh)"/>
+    <text x="96" y="315" text-anchor="middle" font-weight="700" font-size="13" fill="#faf4e8">2</text>
+    <text x="120" y="315" font-size="13" font-weight="600" fill="#1a1614">Open Applications → double-click Fathom.</text>
+    <text x="120" y="332" font-size="11.5" fill="#2a2420" opacity="0.72">
+      In Finder, go to the Applications folder and launch Fathom.
     </text>
 
-    <!-- Step 3 -->
-    <circle cx="84" cy="388" r="11" fill="#c9832a"/>
-    <text x="84" y="392" text-anchor="middle" font-size="12" font-weight="600" fill="#faf4e8">3</text>
-    <text x="104" y="392" fill="#2a2420">
-      macOS will ask to approve Fathom. Click <tspan font-weight="600">Done</tspan>, then open
+    <!-- STEP 3 — approve in System Settings -->
+    <circle cx="96" cy="370" r="13" fill="#c9832a" filter="url(#sh)"/>
+    <text x="96" y="375" text-anchor="middle" font-weight="700" font-size="13" fill="#faf4e8">3</text>
+    <text x="120" y="375" font-size="13" font-weight="600" fill="#1a1614">macOS asks to approve Fathom.</text>
+    <text x="120" y="392" font-size="11.5" fill="#2a2420" opacity="0.72">
+      Click <tspan font-weight="600">Done</tspan>, open
+      <tspan font-weight="600">System Settings → Privacy &amp; Security</tspan>,
+      scroll down, then click
     </text>
-    <text x="104" y="408" fill="#2a2420">
-      <tspan font-weight="600">System Settings → Privacy &amp; Security → Open Anyway</tspan>.
+    <text x="120" y="408" font-size="11.5" fill="#2a2420" opacity="0.72">
+      <tspan font-weight="600">Open Anyway</tspan> next to Fathom.
+      You only do this once; future launches are normal.
     </text>
 
-    <!-- Step 4 (reassuring closer) -->
-    <text x="340" y="438" text-anchor="middle" font-style="italic" fill="#7a6a52" font-size="12">
-      You only do this once. Welcome to Fathom.
-    </text>
+    <!-- Right side — Privacy & Security mini-illustration -->
+    <g transform="translate(470, 290)">
+      <rect x="0" y="0" width="138" height="118" rx="8"
+            fill="#ffffff" stroke="#e0d3ac" stroke-width="1" filter="url(#sh)"/>
+      <text x="69" y="16" text-anchor="middle" font-size="9.5" font-weight="600"
+            fill="#1a1614">Privacy &amp; Security</text>
+      <line x1="8" y1="22" x2="130" y2="22" stroke="#e0d3ac" stroke-width="0.75"/>
+      <text x="8" y="38" font-size="8" fill="#1a1614" opacity="0.8">Security</text>
+
+      <!-- Blocked app row -->
+      <rect x="8" y="44" width="122" height="20" rx="3" fill="#faf4e8"/>
+      <text x="14" y="57" font-size="8" fill="#1a1614">"Fathom" was blocked…</text>
+
+      <!-- Open Anyway button -->
+      <rect x="8" y="72" width="60" height="18" rx="9"
+            fill="#c9832a" filter="url(#sh)"/>
+      <text x="38" y="84" text-anchor="middle" font-size="8" font-weight="700"
+            fill="#faf4e8">Open Anyway</text>
+
+      <!-- Arrow pointing at the button, from outside the card -->
+      <path d="M -18 80 L 3 82" stroke="#c9832a" stroke-width="1.6" fill="none"
+            stroke-linecap="round" marker-end="url(#arrowhead)"/>
+    </g>
+
+    <defs>
+      <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5"
+              markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#c9832a"/>
+      </marker>
+    </defs>
   </g>
+
+  <!-- Reassurance line -->
+  <text x="340" y="442" text-anchor="middle" font-style="italic" fill="#7a6a52" font-size="11"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif">
+    Once approved, Fathom opens like any other Mac app.
+  </text>
 </svg>

@@ -127,12 +127,9 @@ function FocusPane({
     };
 
     const keyupHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (backStackLen > 0) back();
-        else closeAll();
-        return;
-      }
+      // Esc intentionally does NOT close the lens — closing is a deliberate
+      // action: click the Back/Close button in the top-left, or swipe
+      // right with two fingers to go back through the stack.
       if (e.key !== 'Meta') return;
       console.log(
         `[LensGesture ${logId}] Cmd release — semanticEver=${semanticEver} dir=${lastSemanticDir ?? 'null'} capturedSel=${!!capturedSelection}`,
@@ -206,7 +203,7 @@ function FocusPane({
           className="px-2 text-[11px] tracking-wide text-black/35 uppercase"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          ⌘ pinch · esc
+          ⌘ pinch · swipe back
         </span>
       </header>
 
