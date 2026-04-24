@@ -9,11 +9,14 @@
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 
-A macOS reader where the explanation of any passage is one pinch away —
-streaming in place, grounded in the paper itself. Pinch a phrase inside a
-lens to dive deeper. Swipe back, the way you came. Every lens persists: close
-the PDF, open it next month, pinch the same paragraph — the thread you had
-is still there.
+Reading a PDF hasn't changed in forty years. We scroll, we copy, we paste
+somewhere else, we scroll back. Fathom is a new way to read research papers
+— one where zooming in on a passage zooms in on your understanding of it.
+Hold ⌘, pinch on what you're looking at, and the page gives way to a
+clearer view, grounded in the paper itself, streaming as you read. Pinch a
+phrase inside to go deeper. Swipe back to surface.
+
+It's a reading assistant shaped like the way you already read.
 
 ### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
 

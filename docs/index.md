@@ -3,18 +3,29 @@ layout: default
 title: Fathom
 ---
 
+## A new way to read a paper
+
+Reading a PDF hasn't changed in forty years. We scroll, we copy, we paste
+somewhere else, we scroll back. For most things that's fine. For research
+papers it's a tax you pay every few minutes — enough that half of what you
+thought you'd read, you'd really just skimmed and moved on from.
+
+Fathom is different. You hold ⌘. You pinch on the part you want to
+understand better. The page gives way, and a clearer view arrives right
+there — grounded in the paper itself, streaming as you read. You pinch a
+phrase inside to go deeper. You swipe back, like turning a page.
+
+It's not an AI assistant bolted onto a PDF viewer. It's a reading app
+shaped around the way you already read: zoom in when you want detail,
+zoom out when you want to keep going.
+
 ## Built out of necessity
 
-I'm [Ashrya](https://github.com/ashryaagr) — an AI scientist who reads a lot
-of research papers. Every one had the same moment: I'd hit a dense paragraph,
-copy it out, switch to another window, lose my place, come back, miss the
-point. The reading broke every few minutes, and half of what I thought I'd
-understood was just me skipping.
-
-So I built the reader I wanted. Fathom is a desktop app where the explanation
-of any passage is one pinch away, streaming in place, grounded in the paper
-itself. When it got polished enough for me to use daily, it felt like it
-might be useful to someone else too.
+I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of
+research papers, and I got tired of the same moment: hit a dense paragraph,
+copy it out, switch to another window, lose my place, miss the point. So I
+built the reader I wanted. When it was polished enough for me to use daily,
+it felt like it might be useful to someone else.
 
 There's nothing to sign up for, no subscription, no account. If you already
 pay for Claude, you have everything Fathom needs.
