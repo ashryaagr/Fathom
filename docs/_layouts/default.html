@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% if page.url == '/' %}Fathom — In every paper, there's a page that loses you.{% else %}{{ page.title | default: page.name | replace: '.md', '' }} · Fathom{% endif %}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <link rel="icon" href="{{ '/assets/icon.png' | relative_url }}" type="image/png">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+  <meta property="og:title" content="Fathom — In every paper, there's a page that loses you.">
+  <meta property="og:description" content="A macOS reader that brings you back. Free and open source.">
+  <meta property="og:image" content="{{ '/assets/icon.png' | absolute_url }}">
+  <meta name="theme-color" content="#faf4e8">
+</head>
+<body>
+
+<nav class="site-nav">
+  <a class="brand" href="{{ '/' | relative_url }}">
+    <img src="{{ '/assets/icon.png' | relative_url }}" alt="" width="26" height="26">
+    <span>Fathom</span>
+  </a>
+  <div class="nav-links">
+    <a href="{{ '/INSTALL' | relative_url }}">Install</a>
+    <a href="{{ '/PRINCIPLES' | relative_url }}">Principles</a>
+    <a class="github-link" href="https://github.com/ashryaagr/Fathom" target="_blank" rel="noopener">
+      GitHub
+      <svg width="11" height="11" viewBox="0 0 11 11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 8 L8 3 M8 3 L4 3 M8 3 L8 7" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+  </div>
+</nav>
+
+{% if page.url == '/' %}
+<header class="hero">
+  <h1 class="hero-title">Fathom</h1>
+  <p class="hero-hook">
+    In every paper, there's a page that loses you.<br>
+    <em>Fathom brings you back.</em>
+  </p>
+  <a class="btn-download" href="https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg">
+    Download for Mac
+  </a>
+  <p class="hero-meta">Apple Silicon · ~200 MB · Free &amp; open source</p>
+</header>
+{% else %}
+<header class="page-header">
+  <h1 class="page-title">{{ page.title | default: page.name | replace: '.md', '' }}</h1>
+</header>
+{% endif %}
+
+<main class="content">
+  {{ content }}
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="{{ '/assets/icon.png' | relative_url }}" alt="" width="22" height="22">
+      <span>Fathom</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/ashryaagr/Fathom">Source</a>
+      <a href="https://github.com/ashryaagr/Fathom/releases">Releases</a>
+      <a href="https://github.com/ashryaagr/Fathom/issues">Issues</a>
+      <a href="https://github.com/ashryaagr/Fathom/blob/main/LICENSE">MIT</a>
+    </div>
+    <p class="footer-note">
+      Fathom is a side project, not a company. No telemetry, no accounts, no analytics.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
