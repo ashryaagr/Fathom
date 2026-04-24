@@ -267,3 +267,61 @@ export const Explanations = {
       .all(paperHash) as ExplanationRow[];
   },
 };
+
+export interface LensTurnRow {
+  lens_id: string;
+  turn_index: number;
+  question: string | null;
+  body: string;
+  prompt: string | null;
+  session_id: string | null;
+  zoom_image_path: string | null;
+  created_at: number;
+}
+
+export const LensTurns = {
+  // ON CONFLICT replaces an existing turn at the same (lens_id, turn_index)
+  // — needed because the same turn can be re-streamed (regenerate, error
+  // retry) and we want the latest body to win without leaving stale rows.
+  upsert(t: {
+    lensId: string;
+    turnIndex: number;
+    question?: string | null;
+    body: string;
+    prompt?: string | null;
+    sessionId?: string | null;
+    zoomImagePath?: string | null;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT INTO lens_turns(lens_id, turn_index, question, body, prompt, session_id, zoom_image_path, created_at)
+         VALUES (@lens_id, @turn_index, @question, @body, @prompt, @session_id, @zoom_image_path, @created_at)
+         ON CONFLICT(lens_id, turn_index) DO UPDATE SET
+           question = excluded.question,
+           body = excluded.body,
+           prompt = excluded.prompt,
+           session_id = excluded.session_id,
+           zoom_image_path = excluded.zoom_image_path`,
+      )
+      .run({
+        lens_id: t.lensId,
+        turn_index: t.turnIndex,
+        question: t.question ?? null,
+        body: t.body,
+        prompt: t.prompt ?? null,
+        session_id: t.sessionId ?? null,
+        zoom_image_path: t.zoomImagePath ?? null,
+        created_at: Date.now(),
+      });
+  },
+  byPaper(paperHash: string): LensTurnRow[] {
+    return getDb()
+      .prepare(
+        `SELECT lt.* FROM lens_turns lt
+         JOIN lens_anchors la ON la.lens_id = lt.lens_id
+         WHERE la.paper_hash = ?
+         ORDER BY lt.lens_id, lt.turn_index`,
+      )
+      .all(paperHash) as LensTurnRow[];
+  },
+};

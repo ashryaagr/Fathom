@@ -142,6 +142,42 @@ export default function App() {
           for (const [regionId, turns] of turnsByRegion) {
             useLensStore.getState().setCachedTurns(regionId, turns);
           }
+          // lens_turns hydration — the universal path. Region-keyed
+          // explanations above only cover origin=region lenses;
+          // viewport- and drill-origin lenses (no regionId) are
+          // restored from this table. Lens id is the cache key the
+          // store uses for these origins, so we feed turns straight
+          // in by lens_id. Added in v1.0.14 to close the persistence
+          // gap the QA agent flagged (5071-char answer was streaming
+          // but never round-tripping). Both this and the legacy
+          // explanations write run on stream-complete; on hydrate,
+          // explanations populate by region id and lens_turns
+          // populate by lens id — they don't conflict because the
+          // cache map can hold both keys without collision.
+          if (state.lensTurns && state.lensTurns.length > 0) {
+            const turnsByLens = new Map<
+              string,
+              Array<{ question: string | null; body: string; progress: string; streaming: boolean }>
+            >();
+            for (const t of state.lensTurns) {
+              const arr = turnsByLens.get(t.lens_id) ?? [];
+              // turn_index is the slot — slot it back into the array.
+              arr[t.turn_index] = {
+                question: t.question,
+                body: t.body,
+                progress: '',
+                streaming: false,
+              };
+              turnsByLens.set(t.lens_id, arr);
+            }
+            for (const [lensId, turns] of turnsByLens) {
+              // Filter out empty slots from sparse turn_index sets.
+              const dense = turns.filter(Boolean);
+              if (dense.length > 0) {
+                useLensStore.getState().setCachedTurns(lensId, dense);
+              }
+            }
+          }
           // Restore lens anchors so every lens the user has ever
           // opened on this paper comes back with its zoom image
           // path and bbox — even if no question was asked. Drives

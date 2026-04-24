@@ -29,6 +29,16 @@ export interface ExplainRequest {
   /** If set, resumes the Agent SDK session of the same UUID — used to keep
    * every Ask inside one lens in a single ongoing conversation. */
   resumeSessionId?: string;
+  /** Stable lens id (focused.id in renderer). Required for the
+   * lensId-keyed persistence path that fixes the legacy
+   * regionId-only schema gap — every viewport-origin and
+   * drill-origin lens should set this. */
+  lensId?: string;
+  /** Index of the turn being streamed inside the lens
+   * (focused.turns.length - 1). Together with lensId forms the
+   * primary key in lens_turns so a re-stream replaces rather than
+   * duplicates. */
+  turnIndex?: number;
 }
 
 export interface ExplainHandle {
@@ -93,6 +103,16 @@ export interface PaperState {
     region_id: string | null;
     zoom_image_path: string | null;
     anchor_text: string | null;
+    created_at: number;
+  }>;
+  lensTurns: Array<{
+    lens_id: string;
+    turn_index: number;
+    question: string | null;
+    body: string;
+    prompt: string | null;
+    session_id: string | null;
+    zoom_image_path: string | null;
     created_at: number;
   }>;
 }

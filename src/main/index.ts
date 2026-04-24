@@ -15,6 +15,7 @@ import {
   Highlights,
   DrillEdges,
   LensAnchors,
+  LensTurns,
 } from './db/repo';
 import {
   initAutoUpdater,
@@ -264,6 +265,12 @@ interface ExplainRequest extends Omit<ExplainArgs, 'abortController' | 'onDelta'
   regionId?: string;
   pdfPath?: string;
   page?: number;
+  // Lens-keyed persistence fields — added in v1.0.14 to fix the
+  // schema gap where viewport-origin and drill-origin lenses (which
+  // have no regionId) had their answers silently dropped because the
+  // legacy `explanations` table requires region_id NOT NULL.
+  lensId?: string;
+  turnIndex?: number;
 }
 
 ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
@@ -339,21 +346,44 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
           sender.send(channel, { type: 'sessionId', sessionId });
         },
       });
+      const questionText = req.customInstruction ?? req.focusPhrase ?? null;
+      const zoomImagePath =
+        (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath ?? null;
+      // Region-keyed persistence (legacy path, kept for back-compat with
+      // already-saved data and for cached-region marker clicks that
+      // hydrate by region id). Only fires when the lens is anchored to
+      // a real PDF region.
       if (req.regionId) {
         try {
-          const questionText = req.customInstruction ?? req.focusPhrase ?? null;
           Explanations.insert({
             regionId: req.regionId,
             depth: req.depth,
             focusPhrase: questionText,
             body: fullText,
-            // Save the zoom image path so the exact viewport crop is restorable
-            // across sessions when the user clicks the region's cached marker.
-            zoomImagePath:
-              (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath ?? null,
+            zoomImagePath,
           });
         } catch (e) {
           console.warn('failed to persist explanation', e);
+        }
+      }
+      // Lens-keyed persistence — the universal path. Fires for every
+      // lens that has a stable lensId (always true for region-origin
+      // and the common viewport-origin path; the fallback Date.now()
+      // path in PdfViewer also writes here, harmlessly orphaned across
+      // sessions). The 5071-char drop the QA agent reported on v1.0.12
+      // was this branch missing entirely; lens_turns now closes that
+      // gap.
+      if (req.lensId && typeof req.turnIndex === 'number' && fullText.length > 0) {
+        try {
+          LensTurns.upsert({
+            lensId: req.lensId,
+            turnIndex: req.turnIndex,
+            question: questionText,
+            body: fullText,
+            zoomImagePath,
+          });
+        } catch (e) {
+          console.warn('failed to persist lens turn', e);
         }
       }
       if (!sender.isDestroyed()) sender.send(channel, { type: 'done', text: fullText });
@@ -387,9 +417,13 @@ ipcMain.handle('qa:capture', async (_e, destPath?: string): Promise<string> => {
   if (!mainWindow || mainWindow.isDestroyed()) return '';
   try {
     const image = await mainWindow.webContents.capturePage();
+    // /tmp (not os.tmpdir(), which on macOS resolves to a per-user
+    // /var/folders path) so the bash QA harness — which polls a
+    // predictable shared location — can find what we wrote without
+    // having to inherit the app's $TMPDIR.
     const out = destPath && destPath.startsWith('/')
       ? destPath
-      : join(tmpdir(), 'fathom-shots', `${Date.now()}.png`);
+      : join('/tmp', 'fathom-shots', `${Date.now()}.png`);
     const dir = dirname(out);
     await mkdir(dir, { recursive: true });
     await writeFile(out, image.toPNG());
@@ -515,6 +549,7 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     highlights: Highlights.byPaper(paperHash),
     drillEdges: DrillEdges.byPaper(paperHash),
     lensAnchors: LensAnchors.byPaper(paperHash),
+    lensTurns: LensTurns.byPaper(paperHash),
   };
 });
 
@@ -1055,7 +1090,8 @@ app.whenReady().then(async () => {
     });
     globalShortcut.register('CommandOrControl+Shift+F10', () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      const destPath = join(tmpdir(), 'fathom-shots', `${Date.now()}-qa.png`);
+      // /tmp, not tmpdir() — see qa:capture above for rationale.
+      const destPath = join('/tmp', 'fathom-shots', `${Date.now()}-qa.png`);
       void (async () => {
         try {
           const img = await mainWindow.webContents.capturePage();

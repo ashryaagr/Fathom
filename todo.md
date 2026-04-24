@@ -318,3 +318,49 @@ Fixes available without leaving the user's machine:
 Quick win: scrub all `activate` calls from `scripts/fathom-test.sh`.
 That alone should stop the focus-steal for the post-v1.0.7 test
 runs that use `capture` / `sample`. Schedule v1.0.13.
+
+## 29. lens_turns persistence — ✅ DONE in v1.0.14
+QA agent reported a 5071-char streamed answer that completed
+successfully in the renderer but never appeared in the
+`explanations` table. Root cause was structural: the schema
+enforces `region_id NOT NULL` with a regions FK, and
+`main/index.ts` gates persistence on `if (req.regionId)`. Every
+viewport-origin and drill-origin lens — both of which carry
+`regionId = null` — silently dropped its answer.
+
+Fix shipped in v1.0.14:
+- New `lens_turns` table keyed on `(lens_id, turn_index)` with
+  ON CONFLICT replace, joined to `lens_anchors` for paper-scope
+  lookup.
+- `LensTurns.upsert` / `byPaper` repo.
+- `ExplainRequest` extended with `lensId` + `turnIndex`; the
+  renderer's `streamExplanationForFocused` already had both as
+  locals so the wire-up is one line.
+- Main writes to BOTH tables on stream complete: the legacy
+  `explanations` row when `regionId` is set (back-compat for
+  existing region-keyed cache hydration and cached-region
+  marker clicks), AND a `lens_turns` row whenever `lensId` is
+  set (the universal path).
+- `App.tsx` hydrates the cache from `state.lensTurns` after
+  the existing region-keyed pass, so viewport- and drill-
+  origin lenses now round-trip across sessions.
+
+Note: the fallback paths in `PdfViewer.tsx:426,501` still use
+`Date.now()` in the lens id, so a "captured nothing"-fallback
+viewport lens will write a row that orphans on next session.
+The common path (`captureViewportContent` returning a real
+result) uses `djb2(captured.map(r=>r.id).join('|'))` which IS
+stable, so the typical user case round-trips. Stabilising the
+fallback id is a follow-up; tracked as a future cleanup.
+
+## 30. Harness capture path mismatch — ✅ DONE in v1.0.14
+`scripts/fathom-test.sh` polls `/tmp/fathom-shots/` but
+main/index.ts wrote to `os.tmpdir() + 'fathom-shots'`, which
+on macOS is `/var/folders/.../T/fathom-shots`. The harness
+silently never saw new captures.
+
+Both write sites in `main/index.ts` now hard-code `/tmp/
+fathom-shots/`. Rationale: these are debug screenshots only
+used by the QA harness; `/tmp` is a predictable shared path
+that the bash harness can poll without inheriting the app's
+environment. World-writable on macOS, no PII concern.

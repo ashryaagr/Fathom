@@ -116,6 +116,27 @@ function migrate(db: Database.Database): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_lens_anchors_paper ON lens_anchors(paper_hash);
+
+    -- Lens turns: chat history keyed by lens_id (not region_id) so
+    -- viewport-origin and drill-origin lenses — which have no
+    -- regionId — get their answers persisted too. The legacy
+    -- explanations table is region-keyed and silently dropped any
+    -- streamed answer when regionId was null; this table is the
+    -- replacement that always writes regardless of origin. (lens_id,
+    -- turn_index) is unique so a re-stream of the same turn replaces
+    -- rather than duplicating.
+    CREATE TABLE IF NOT EXISTS lens_turns (
+      lens_id TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      question TEXT,
+      body TEXT NOT NULL,
+      prompt TEXT,
+      session_id TEXT,
+      zoom_image_path TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (lens_id, turn_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lens_turns_lens ON lens_turns(lens_id);
   `);
 
   // Additive migration: the zoom image path was added after the initial schema shipped.

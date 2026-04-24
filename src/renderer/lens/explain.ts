@@ -126,6 +126,13 @@ export async function streamExplanationForFocused(
         regionBbox:
           focused.bbox.width > 0 && focused.bbox.height > 0 ? focused.bbox : undefined,
         resumeSessionId,
+        // Lens-keyed persistence: every lens has a stable lens id
+        // (focused.id) regardless of origin. Sending it here lets
+        // main write into `lens_turns`, which is the table that
+        // actually round-trips across sessions for viewport- and
+        // drill-origin lenses (see schema.ts and CLAUDE.md §9).
+        lensId: targetId,
+        turnIndex,
       },
       {
         onDelta: (delta) => {
