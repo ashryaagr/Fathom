@@ -229,3 +229,41 @@ Possible fixes:
   draws. Eliminates the "Rendering…" placeholder during scroll.
 
 Schedule: v1.0.12.
+
+## 27. Pluggable AI backend (Claude / Gemini / Codex CLI) — 🔄 PENDING
+User: "be able to configure the backend whether we are using Claude
+or we are using Gemini or codecs. The only requirement is that the
+CLI should be there."
+
+Design sketch:
+- Settings panel gains a `backend` choice: `claude` (default),
+  `gemini`, `codex`. Stored in `~/Library/Application
+  Support/Fathom/settings.json` alongside the existing
+  `extraDirectories` / `customInstructions`.
+- `src/main/ai/client.ts` becomes a switch on the configured
+  backend. Each backend has the same shape: a CLI on $PATH that
+  takes a prompt + tools + auth, streams text deltas, exposes a
+  session-id we can resume. Today this is hard-wired to the
+  Anthropic Agent SDK (`pathToClaudeCodeExecutable`); we'd add
+  parallel adapters for the Gemini CLI (`gemini`) and the OpenAI
+  Codex CLI (`codex`).
+- The "Claude Code installed?" startup check generalises to
+  "<configured-backend> CLI installed?" — if a user picks Gemini
+  in prefs but doesn't have `gemini` on PATH, surface the same
+  install-instruction dialog the Claude path uses today.
+- README / docs / `fathom-qa.md` get matrix-style coverage for
+  all three backends. The QA missing-deps scenarios (S1/S2/S3)
+  multiply per backend — one set per choice.
+
+Open questions for the author:
+- Tool-use parity. Claude's Agent SDK gives Read/Grep/Glob out
+  of the box. Gemini and Codex CLIs may not. If the chosen
+  backend can't ground via tools, do we degrade to "send the
+  whole content.md as a prompt prefix"? Acceptable?
+- Auth. Claude Code uses browser sign-in. Gemini CLI uses
+  Google API keys. Codex needs OpenAI credentials. We don't
+  store credentials in Fathom — we ride on whatever the CLI
+  itself has cached. Document this clearly.
+
+Schedule: v1.1.0 (it's a meaningful product surface change, not
+a point release).

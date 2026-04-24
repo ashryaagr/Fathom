@@ -84,6 +84,17 @@ export interface PaperState {
     selection: string;
     created_at: number;
   }>;
+  lensAnchors: Array<{
+    lens_id: string;
+    paper_hash: string;
+    origin: string;
+    page: number;
+    bbox_json: string | null;
+    region_id: string | null;
+    zoom_image_path: string | null;
+    anchor_text: string | null;
+    created_at: number;
+  }>;
 }
 
 const api = {
@@ -245,6 +256,18 @@ const api = {
 
   paperState: (paperHash: string): Promise<PaperState | null> =>
     ipcRenderer.invoke('paper:state', paperHash),
+
+  // ---- lens anchors (full lens-open registry) ----
+  saveLensAnchor: (a: {
+    lensId: string;
+    paperHash: string;
+    origin: string;
+    page: number;
+    bbox: { x: number; y: number; width: number; height: number } | null;
+    regionId: string | null;
+    zoomImagePath?: string | null;
+    anchorText?: string | null;
+  }): Promise<{ ok: true }> => ipcRenderer.invoke('lensAnchors:save', a),
 
   // ---- drill edges (in-lens markers) ----
   saveDrillEdge: (e: {

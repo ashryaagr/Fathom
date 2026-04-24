@@ -43,6 +43,51 @@ diff touches:
 - **⌘ + gesture** should augment, never contradict, the plain gesture
   — because users experiment by adding/removing ⌘ mid-motion.
 
+### 1a. Zustand selectors must return stable references
+
+Recurring class of bug: shipped a "Maximum update depth exceeded"
+React error #185 (and previously #300) because a Zustand selector
+returned a freshly-allocated value every render.
+
+```ts
+// ❌ WRONG — `?? []` allocates a new array each render
+const edges = useLensStore((s) => s.drillEdges.get(id) ?? []);
+// ❌ WRONG — `.filter(...)` returns a new array each render
+const cached = useRegionsStore((s) => s.byPage.get(key)?.filter(fn) ?? []);
+// ❌ WRONG — object literal each render
+const ui = useStore((s) => ({ open: s.open, focused: s.focused }));
+```
+
+Zustand's default equality is reference (`===`). A new array /
+object each render → re-subscribe → re-render → re-allocate →
+infinite loop → React #185.
+
+```ts
+// ✓ RIGHT — select the Map itself (stable ref), resolve in useMemo
+const drillEdgesMap = useLensStore((s) => s.drillEdges);
+const edges = useMemo(
+  () => drillEdgesMap.get(id) ?? [],
+  [drillEdgesMap, id],
+);
+// ✓ RIGHT — multiple primitive selectors, not one object selector
+const open = useStore((s) => s.open);
+const focused = useStore((s) => s.focused);
+// ✓ RIGHT — pass an equality fn if you really need a derived value
+const list = useStore((s) => s.byPage.get(k) ?? EMPTY_ARRAY, shallow);
+```
+
+Touchstone incidents:
+- v1.0.3 React #300 in `CachedLensMarkers` (PageView.tsx) —
+  initial mistake.
+- v1.0.11 React #185 in `DrillMarkers` (FocusView.tsx) — same
+  bug, same author, repeated despite the in-code warning sitting
+  ten lines below in the very file we copied the pattern from.
+
+This rule belongs in the agent harness, not the code review of
+the day. Future PRs should grep their diff for `?? []` /
+`?? new Map()` / `?? {}` inside any `useLensStore((s) => ...)` /
+`useRegionsStore(...)` / similar selectors and reject.
+
 ### 1b. Pinch vs swipe: pinch always wins the tie-break
 
 A pinch gesture on macOS emits a burst of `wheel` events that are

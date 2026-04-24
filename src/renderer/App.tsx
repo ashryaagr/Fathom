@@ -142,6 +142,35 @@ export default function App() {
           for (const [regionId, turns] of turnsByRegion) {
             useLensStore.getState().setCachedTurns(regionId, turns);
           }
+          // Restore lens anchors so every lens the user has ever
+          // opened on this paper comes back with its zoom image
+          // path and bbox — even if no question was asked. Drives
+          // the persistedZoomPaths map and the lensMarkers map,
+          // both of which previously only restored when an
+          // explanation row existed (which the new no-auto-prompt
+          // model often skips). See todo.md #21 for the audit.
+          if (state.lensAnchors && state.lensAnchors.length > 0) {
+            for (const a of state.lensAnchors) {
+              if (a.zoom_image_path && a.region_id) {
+                useLensStore.getState().setPersistedZoomPath(a.region_id, a.zoom_image_path);
+              }
+              if (a.origin !== 'drill') {
+                let bbox = { x: 0, y: 0, width: 0, height: 0 };
+                if (a.bbox_json) {
+                  try {
+                    bbox = JSON.parse(a.bbox_json) as typeof bbox;
+                  } catch {
+                    /* bad JSON in legacy row — keep zero bbox */
+                  }
+                }
+                useLensStore.getState().registerMarker(a.paper_hash, a.page, {
+                  lensId: a.lens_id,
+                  bbox,
+                  origin: a.origin === 'viewport' ? 'viewport' : 'region',
+                });
+              }
+            }
+          }
           // Restore drill edges so previously-drilled phrases inside
           // any lens come back as in-lens markers. Same recursive
           // visibility rule as PDF-page markers — see CLAUDE.md §2.1.
@@ -266,6 +295,21 @@ export default function App() {
         e.preventDefault();
         void createHighlightFromSelection(doc.contentHash);
         return;
+      }
+
+      // ⌘Z — undo the most recent highlight. Plain ⌘Z (no shift) is
+      // the conventional Mac undo binding; we only intercept it
+      // when focus isn't inside a text input (so ⌘Z still works
+      // normally inside the lens Ask box / Settings text fields).
+      if (e.metaKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        const undoneId = useHighlightsStore.getState().undoLast();
+        if (undoneId) {
+          e.preventDefault();
+          void window.lens.deleteHighlight(undoneId);
+          setFlash('Highlight removed.');
+          return;
+        }
+        // Nothing to undo — fall through, don't preventDefault.
       }
 
       // ⌘⇧T — open the bundled sample paper. Keyboard-accessible

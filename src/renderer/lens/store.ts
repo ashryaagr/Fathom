@@ -215,6 +215,22 @@ export const useLensStore = create<LensState>((set, get) => ({
         }
       }
       // Opening a fresh lens invalidates any forward history — just like a browser.
+      // Persist a lens-anchor row so the marker + zoom image survive
+      // close-and-reopen even if the user never asks Claude anything.
+      // Fire-and-forget: failures don't block the UI; the in-memory
+      // marker is still registered above.
+      void window.lens
+        ?.saveLensAnchor?.({
+          lensId: lens.id,
+          paperHash: lens.paperHash,
+          origin: lens.origin,
+          page: lens.page,
+          bbox: lens.bbox,
+          regionId: lens.regionId,
+          zoomImagePath: lens.zoomImagePath ?? null,
+          anchorText: lens.anchorText ?? null,
+        })
+        .catch((err) => console.warn('[Lens] saveLensAnchor failed', err));
       return {
         cache,
         focused: next,

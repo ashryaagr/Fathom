@@ -8,7 +8,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import { getDb } from './db/schema';
-import { Papers, Explanations, Regions, Highlights, DrillEdges } from './db/repo';
+import {
+  Papers,
+  Explanations,
+  Regions,
+  Highlights,
+  DrillEdges,
+  LensAnchors,
+} from './db/repo';
 import {
   initAutoUpdater,
   manualCheckForUpdates,
@@ -507,8 +514,35 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     explanations: Explanations.byPaper(paperHash),
     highlights: Highlights.byPaper(paperHash),
     drillEdges: DrillEdges.byPaper(paperHash),
+    lensAnchors: LensAnchors.byPaper(paperHash),
   };
 });
+
+// Persist a lens-anchor row on every lens open. Decoupled from
+// `explanations` (which only exists once the user asks Claude
+// something) so a "zoom + close without asking" lens still keeps
+// its zoom image path and bbox across sessions. Upserts on
+// `lens_id` so re-opening the same lens just refreshes the
+// timestamp and any newly-known fields.
+ipcMain.handle(
+  'lensAnchors:save',
+  async (
+    _event,
+    a: {
+      lensId: string;
+      paperHash: string;
+      origin: string;
+      page: number;
+      bbox: { x: number; y: number; width: number; height: number } | null;
+      regionId: string | null;
+      zoomImagePath?: string | null;
+      anchorText?: string | null;
+    },
+  ) => {
+    LensAnchors.upsert(a);
+    return { ok: true };
+  },
+);
 
 // Persist a single drill edge — written from the renderer the moment
 // the user pinches on a phrase inside a parent lens. The edge is what

@@ -147,6 +147,58 @@ export interface DrillEdgeRow {
   created_at: number;
 }
 
+export interface LensAnchorRow {
+  lens_id: string;
+  paper_hash: string;
+  origin: string;
+  page: number;
+  bbox_json: string | null;
+  region_id: string | null;
+  zoom_image_path: string | null;
+  anchor_text: string | null;
+  created_at: number;
+}
+
+export const LensAnchors = {
+  upsert(a: {
+    lensId: string;
+    paperHash: string;
+    origin: string;
+    page: number;
+    bbox: { x: number; y: number; width: number; height: number } | null;
+    regionId: string | null;
+    zoomImagePath?: string | null;
+    anchorText?: string | null;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT INTO lens_anchors(lens_id, paper_hash, origin, page, bbox_json, region_id, zoom_image_path, anchor_text, created_at)
+         VALUES (@lens_id, @paper_hash, @origin, @page, @bbox_json, @region_id, @zoom_image_path, @anchor_text, @created_at)
+         ON CONFLICT(lens_id) DO UPDATE SET
+           bbox_json       = COALESCE(excluded.bbox_json, lens_anchors.bbox_json),
+           region_id       = COALESCE(excluded.region_id, lens_anchors.region_id),
+           zoom_image_path = COALESCE(excluded.zoom_image_path, lens_anchors.zoom_image_path),
+           anchor_text     = COALESCE(excluded.anchor_text, lens_anchors.anchor_text)`,
+      )
+      .run({
+        lens_id: a.lensId,
+        paper_hash: a.paperHash,
+        origin: a.origin,
+        page: a.page,
+        bbox_json: a.bbox ? JSON.stringify(a.bbox) : null,
+        region_id: a.regionId,
+        zoom_image_path: a.zoomImagePath ?? null,
+        anchor_text: a.anchorText ?? null,
+        created_at: Date.now(),
+      });
+  },
+  byPaper(paperHash: string): LensAnchorRow[] {
+    return getDb()
+      .prepare('SELECT * FROM lens_anchors WHERE paper_hash = ? ORDER BY created_at')
+      .all(paperHash) as LensAnchorRow[];
+  },
+};
+
 export const DrillEdges = {
   insert(e: {
     paperHash: string;

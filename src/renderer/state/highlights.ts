@@ -29,6 +29,10 @@ interface HighlightsState {
   hydrate: (highlights: Highlight[]) => void;
   /** All highlights for a (paper, page). Returns [] if none. */
   forPage: (paperHash: string, page: number) => Highlight[];
+  /** Undo: pop the most recently added highlight (max createdAt) and
+   * return its id. Caller is responsible for the IPC delete + any
+   * UI feedback. Returns null if there's nothing to undo. */
+  undoLast: () => string | null;
 }
 
 export const useHighlightsStore = create<HighlightsState>((set, get) => ({
@@ -77,5 +81,18 @@ export const useHighlightsStore = create<HighlightsState>((set, get) => ({
     return ids
       .map((id) => s.byId.get(id))
       .filter((h): h is Highlight => h !== undefined);
+  },
+
+  undoLast: () => {
+    const s = get();
+    let mostRecent: Highlight | null = null;
+    for (const h of s.byId.values()) {
+      if (!mostRecent || h.createdAt > mostRecent.createdAt) {
+        mostRecent = h;
+      }
+    }
+    if (!mostRecent) return null;
+    get().remove(mostRecent.id);
+    return mostRecent.id;
   },
 }));

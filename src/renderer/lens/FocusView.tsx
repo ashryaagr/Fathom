@@ -469,13 +469,70 @@ function TurnBlock({ turn, index }: { turn: Turn; index: number }) {
           className="cursor-text text-[14px] leading-[1.65] text-black/85 select-text"
           style={{ fontFamily: 'var(--font-handwritten)' }}
         >
-          <MarkdownBody
-            body={turn.body || (turn.streaming ? '_thinking…_' : '')}
-            streaming={turn.streaming}
-          />
+          {turn.body ? (
+            <MarkdownBody body={turn.body} streaming={turn.streaming} />
+          ) : turn.streaming ? (
+            <ThinkingIndicator />
+          ) : null}
         </div>
       )}
     </motion.section>
+  );
+}
+
+/**
+ * Animated stand-in for the answer body while Claude is still thinking
+ * but hasn't emitted any text yet. Three jobs:
+ *   1. Make it visually obvious that something is happening — not just
+ *      a frozen "thinking…" string a user might mistake for stuck.
+ *   2. Cycle through phrasing so the eye sees motion. Words rotate
+ *      every ~2 seconds.
+ *   3. Pulse three dots so each frame is doing something visible.
+ *
+ * The cycling phrasing also doubles as a soft narrative — "reading
+ * the paper", "looking at figure 2", "checking the citation" — that
+ * mirrors what Claude is *actually* doing under the hood, even if
+ * we don't have the live tool-call stream in this exact frame.
+ */
+function ThinkingIndicator() {
+  const phrases = [
+    'reading the paper',
+    'looking at the figures',
+    'checking the citations',
+    'pulling the right context',
+    'thinking it through',
+  ];
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setI((n) => (n + 1) % phrases.length), 2200);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="flex items-center gap-2 text-[15px] italic text-black/55">
+      <span style={{ fontFamily: "'Excalifont', 'Caveat', cursive" }}>
+        {phrases[i]}
+      </span>
+      <span className="inline-flex gap-[3px]" aria-hidden="true">
+        <span className="dot-pulse" style={{ animationDelay: '0ms' }} />
+        <span className="dot-pulse" style={{ animationDelay: '180ms' }} />
+        <span className="dot-pulse" style={{ animationDelay: '360ms' }} />
+      </span>
+      <style>{`
+        .dot-pulse {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: var(--color-lens);
+          opacity: 0.35;
+          display: inline-block;
+          animation: fathom-dot-pulse 1.1s ease-in-out infinite;
+        }
+        @keyframes fathom-dot-pulse {
+          0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+          40% { opacity: 1; transform: scale(1.15); }
+        }
+      `}</style>
+    </div>
   );
 }
 
@@ -791,8 +848,21 @@ function rectToClip(rect: { x: number; y: number; width: number; height: number 
  * affordance.)
  */
 function DrillMarkers({ focused }: { focused: FocusedLens }) {
-  const edges = useLensStore((s) => s.drillEdges.get(focused.id) ?? []);
+  // CRITICAL: select the Map ITSELF, then resolve the entry inside
+  // useMemo. Returning `s.drillEdges.get(id) ?? []` directly from a
+  // selector allocates a fresh `[]` on every render — Zustand
+  // compares selector outputs by reference, so a new array each
+  // render triggers a re-subscribe → re-render → re-allocation →
+  // infinite loop → React #185 ("Maximum update depth exceeded").
+  // This is the exact same mistake CachedLensMarkers warned against
+  // in PageView.tsx; the lesson generalises: never return `?? []`
+  // from a Zustand selector.
+  const drillEdgesMap = useLensStore((s) => s.drillEdges);
   const cache = useLensStore((s) => s.cache);
+  const edges = useMemo(
+    () => drillEdgesMap.get(focused.id) ?? [],
+    [drillEdgesMap, focused.id],
+  );
 
   if (edges.length === 0) return null;
 

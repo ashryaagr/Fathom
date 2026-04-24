@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { pdfjsLib, type PDFDocumentProxy } from './pdfjs';
 import { extractRegions, type Region } from './extractRegions';
 import { useRegionsStore } from '../state/regions';
@@ -14,7 +14,10 @@ interface Props {
   baseSize: { width: number; height: number };
 }
 
-const RENDER_DPR_CAP = 2;
+// Higher DPR cap → sharper figure pixels on retina + XDR displays.
+// 3× covers Pro Display XDR (DPR=3); on standard retina (DPR=2)
+// the cap is a no-op since we use Math.min(devicePixelRatio, cap).
+const RENDER_DPR_CAP = 3;
 
 export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,6 +48,31 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
     observer.observe(el);
     return () => observer.disconnect();
   }, [pageNumber]);
+
+  // Zoom-lag fix: the moment `zoom` changes, the parent slot
+  // (`slotWidth = baseSize.width * zoom`) resizes synchronously, but
+  // the canvas inside it keeps its OLD CSS dimensions until the
+  // async pdf.js render completes. That gap produces the "page
+  // falls behind my pinch" feel — a few hundred ms where the
+  // canvas is sized for the old zoom while the slot is sized for
+  // the new one. Resizing the canvas's CSS dimensions immediately
+  // (synchronous DOM write, no pdf.js call needed) keeps it
+  // visually in lockstep with the slot. The pixel buffer is still
+  // at the previous DPR until the heavy re-render below finishes,
+  // so the transition is softly resampled by the browser for one
+  // frame — much better than a layout drift.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const textLayerContainer = textLayerRef.current;
+    if (!canvas || !textLayerContainer) return;
+    const cssWidth = baseSize.width * zoom;
+    const cssHeight = baseSize.height * zoom;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+    textLayerContainer.style.width = `${cssWidth}px`;
+    textLayerContainer.style.height = `${cssHeight}px`;
+    textLayerContainer.style.setProperty('--total-scale-factor', String(zoom));
+  }, [zoom, baseSize.width, baseSize.height]);
 
   // Canvas + text layer + region extraction. One effect so they stay in sync as zoom changes.
   useEffect(() => {

@@ -90,6 +90,32 @@ function migrate(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_drill_edges_parent ON drill_edges(parent_lens_id);
     CREATE INDEX IF NOT EXISTS idx_drill_edges_paper ON drill_edges(paper_hash);
+
+    -- Lens anchors: one row per lens the user has ever opened,
+    -- keyed by lens_id. Holds the zoom image path, the bbox the
+    -- marker pins to, and origin metadata. Decoupled from the
+    -- explanations table so a lens that was opened but never asked
+    -- still has a persisted record — zoom image survives the
+    -- close/reopen cycle, amber marker re-hydrates on paper open.
+    --
+    -- Tables work together:
+    --   regions       paragraph-extraction metadata
+    --   explanations  Q&A turns by region_id
+    --   highlights    amber marks on the PDF
+    --   drill_edges   parent to child drill relationships
+    --   lens_anchors  lens-open registry (THIS table)
+    CREATE TABLE IF NOT EXISTS lens_anchors (
+      lens_id TEXT PRIMARY KEY,
+      paper_hash TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      page INTEGER NOT NULL,
+      bbox_json TEXT,
+      region_id TEXT,
+      zoom_image_path TEXT,
+      anchor_text TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_lens_anchors_paper ON lens_anchors(paper_hash);
   `);
 
   // Additive migration: the zoom image path was added after the initial schema shipped.
