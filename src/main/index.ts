@@ -31,6 +31,12 @@ interface FathomSettings {
   lastOpenDir?: string;
   firstRunCompletedAt?: string;
   tourCompletedAt?: string;
+  /** Folders the user wants Claude to search during explain calls
+   * (in addition to the paper's own index). Examples: a sibling paper,
+   * a codebase the paper references. Passed through as additionalDirectories. */
+  extraDirectories?: string[];
+  /** Free-form instruction appended to every explain prompt. */
+  customInstructions?: string;
 }
 
 function settingsPath(): string {
@@ -226,6 +232,14 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
       const pdfPath = digestAvailable ? undefined : req.pdfPath;
       const indexPath = indexDirFor(req.paperHash);
 
+      // Pull user preferences fresh each call so edits take effect without
+      // restarting the app. Filter out invalid paths so a stale entry doesn't
+      // fail the whole request.
+      const settings = readSettings();
+      const extraDirectories = (settings.extraDirectories ?? []).filter(
+        (d) => typeof d === 'string' && existsSync(d),
+      );
+
       const fullText = await explain({
         regionText: req.regionText,
         focusPhrase: req.focusPhrase,
@@ -239,6 +253,8 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
         indexPath,
         zoomImagePath: (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath,
         regionBbox: (req as ExplainRequest & { regionBbox?: ExplainArgs['regionBbox'] }).regionBbox,
+        extraDirectories: extraDirectories.length > 0 ? extraDirectories : undefined,
+        customInstructions: settings.customInstructions,
         abortController,
         onDelta: (text) => {
           if (sender.isDestroyed()) return;
@@ -303,6 +319,35 @@ ipcMain.handle('log:reveal', async () => {
 ipcMain.handle('settings:get', async () => readSettings());
 ipcMain.handle('settings:markTourDone', async () => {
   writeSettings({ tourCompletedAt: new Date().toISOString() });
+});
+ipcMain.handle('settings:update', async (
+  _event,
+  patch: Partial<FathomSettings>,
+) => {
+  // Whitelist the keys the renderer is allowed to write, so a compromised
+  // renderer can't scribble into things like `firstRunCompletedAt`.
+  const allowed: Partial<FathomSettings> = {};
+  if ('extraDirectories' in patch && Array.isArray(patch.extraDirectories)) {
+    allowed.extraDirectories = patch.extraDirectories.filter(
+      (p): p is string => typeof p === 'string' && p.length > 0,
+    );
+  }
+  if ('customInstructions' in patch) {
+    allowed.customInstructions =
+      typeof patch.customInstructions === 'string'
+        ? patch.customInstructions
+        : undefined;
+  }
+  writeSettings(allowed);
+});
+ipcMain.handle('settings:pickDirectory', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a folder Fathom can search',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.handle('explain:abort', async (_event, requestId: string) => {
@@ -577,6 +622,12 @@ function buildAppMenu(): void {
     {
       role: 'help',
       submenu: [
+        {
+          label: 'Preferences…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => mainWindow?.webContents.send('settings:show'),
+        },
+        { type: 'separator' },
         {
           label: 'Show Welcome Tour',
           click: () => {

@@ -50,6 +50,10 @@ export interface ExplainArgs {
   zoomImagePath?: string;
   /** PDF user-space bbox of the zoom target (for precise localization). */
   regionBbox?: { x: number; y: number; width: number; height: number };
+  /** User-configured folders Claude may Read/Grep/Glob in addition to the paper. */
+  extraDirectories?: string[];
+  /** User's free-form standing instruction from Preferences, appended to the prompt. */
+  customInstructions?: string;
   abortController?: AbortController;
   onDelta: (text: string) => void;
   /** Optional status stream for tool calls and thinking, shown collapsed in the UI so the
@@ -144,14 +148,26 @@ export async function explain(args: ExplainArgs): Promise<string> {
 
   const cwd = safeCwd(args.indexPath ?? (args.pdfPath ? dirname(args.pdfPath) : undefined));
   const pathToClaudeCodeExecutable = resolveClaudeExecutablePath() ?? undefined;
-  console.log(`[Lens AI ${logId}] cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'}`);
+
+  // Fold user-configured extra directories into additionalDirectories so
+  // Claude can Read/Grep/Glob them during the explanation. Validated in the
+  // caller (see explain:start IPC handler).
+  if (args.extraDirectories && args.extraDirectories.length > 0) {
+    for (const d of args.extraDirectories) additionalDirectoriesSet.add(d);
+  }
+  const mergedDirs =
+    additionalDirectoriesSet.size > 0 ? Array.from(additionalDirectoriesSet) : undefined;
+
+  console.log(
+    `[Lens AI ${logId}] cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'} extraDirs=${args.extraDirectories?.length ?? 0}`,
+  );
 
   const q = query({
     prompt: userPrompt,
     options: {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: SYSTEM_PROMPT },
       allowedTools,
-      additionalDirectories,
+      additionalDirectories: mergedDirs,
       includePartialMessages: true,
       permissionMode: 'bypassPermissions',
       abortController: args.abortController,
@@ -300,6 +316,23 @@ Grep content.md to resolve citations (e.g. \`Grep "\\\\[76\\\\]" content.md\`), 
   } else {
     parts.push(
       `Zoom in on this passage. Explain the details — what's going on under the hood, what the key terms mean, and what the reader should walk away knowing.`,
+    );
+  }
+
+  // User's standing instruction from Preferences — apply on top of everything.
+  if (args.customInstructions && args.customInstructions.trim()) {
+    parts.push(
+      `Standing reader preference (applies to every explanation):\n${args.customInstructions.trim()}`,
+    );
+  }
+
+  // Surface the extra grounding directories in the prompt itself so Claude
+  // knows they exist — Agent SDK exposes them to the sandbox, but Claude
+  // won't discover them without being told.
+  if (args.extraDirectories && args.extraDirectories.length > 0) {
+    const dirList = args.extraDirectories.map((d) => `- "${d}"`).join('\n');
+    parts.push(
+      `The reader has configured extra folders Fathom can search during this explanation. When they'd help (e.g. to find the source that implements this paper, or a related paper), use Read / Grep / Glob on them:\n${dirList}`,
     );
   }
 

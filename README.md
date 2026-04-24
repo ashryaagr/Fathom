@@ -26,16 +26,23 @@ is all you need.
 
 ---
 
-## What Fathom does
+## Built out of necessity
 
-When you hit a dense passage, you have two bad options: stop reading and context-switch to another tool, or press on and accept you didn't really understand it. Both break the reading flow. Fathom replaces the context-switch with a gesture that happens *inside* the paper.
+I'm [Ashrya](https://github.com/ashryaagr), an AI scientist. I read a lot of research papers, and I got tired of the same moment: hit a dense paragraph, copy it out, switch to another window, lose my place, miss the point. So I built the reader I wanted. When it was polished enough for me to use daily, it felt like it might be useful to someone else.
 
-- **Pinch** with two fingers → cursor-anchored visual zoom (like Preview.app).
-- **⌘ + pinch** on a passage, then release ⌘ → a full-screen **lens** opens with a streaming Claude explanation, grounded in the paper via an on-disk file-system index (no RAG, no embeddings — Claude uses `Read`, `Grep`, `Glob`).
-- **Select a phrase** inside a lens and ⌘ + pinch on it → drill into that concept. Recursive. Back and forward via two-finger swipe, like a browser.
-- **Ask follow-ups** in the sticky footer. Each Q&A stacks into a running thread inside the lens. Typing a new question cancels the in-flight answer.
-- **Every lens is durable.** A small amber marker appears next to the paragraph you zoomed into. Close the PDF, reopen it next week, and your lens — the exact viewport crop, the full Q&A thread, the prompt — is all there.
-- **Diagrams when they help.** Claude emits inline SVG for architectures / pipelines / flows. Rendered live, never as ASCII.
+There's nothing to sign up for, no subscription, no account. If you already pay for Claude, you have everything Fathom needs.
+
+## What it feels like
+
+Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens, and the explanation starts streaming in. Pinch a phrase inside the lens to drill deeper — recursively, as far as the idea goes. Swipe back, the way you came. Every lens persists across sessions: close the PDF, open it next month, pinch the same paragraph, and the thread you had is still there, exactly where you left it.
+
+## What makes it different
+
+- **The zoom is the explanation.** No side panel, no context switch, no "AI assistant" icon. The gesture you'd already use to look closer is how you ask for help.
+- **Grounded in the paper itself.** Claude is given a file-system index of the paper — `content.md`, per-figure PNGs, a digest — and navigates it with `Read` / `Grep` / `Glob`. No RAG, no embeddings, no similarity search. The paper is a filesystem; the AI is a shell.
+- **Diagrams when they help.** Architectures, pipelines, and relationships render as hand-drawn inline SVG. Never ASCII, never Mermaid.
+- **Durable across sessions.** Every lens round-trips across app restarts: the viewport crop, the full thread, the exact prompt that was sent.
+- **Yours to shape.** Preferences (⌘,) let you point Fathom at extra folders — a codebase the paper implements, a sibling paper — and add a standing instruction for every explanation.
 
 ## Download
 

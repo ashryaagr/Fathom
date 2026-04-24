@@ -95,12 +95,24 @@ const api = {
     lastOpenDir?: string;
     firstRunCompletedAt?: string;
     tourCompletedAt?: string;
+    extraDirectories?: string[];
+    customInstructions?: string;
   }> => ipcRenderer.invoke('settings:get'),
+  updateSettings: (patch: {
+    extraDirectories?: string[];
+    customInstructions?: string;
+  }): Promise<void> => ipcRenderer.invoke('settings:update', patch),
+  pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('settings:pickDirectory'),
   markTourDone: (): Promise<void> => ipcRenderer.invoke('settings:markTourDone'),
   onShowTour: (handler: () => void): (() => void) => {
     const listener = () => handler();
     ipcRenderer.on('tour:show', listener);
     return () => ipcRenderer.removeListener('tour:show', listener);
+  },
+  onShowSettings: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('settings:show', listener);
+    return () => ipcRenderer.removeListener('settings:show', listener);
   },
 
   // ---- auto-updater (manual check from the menu) ----

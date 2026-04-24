@@ -89,18 +89,40 @@ function FocusPane({
   }, [focused.id]);
 
   // Selection-drill on Cmd+pinch inside the focus view.
+  //
+  // Reliability note: macOS trackpad pinch gestures clear the active text
+  // selection at gesture start, so by the time Cmd is released and we'd
+  // look at window.getSelection(), it's empty. That was the root cause of
+  // "sometimes I have to pinch multiple times" — on the first pinch the
+  // selection got wiped mid-gesture; later attempts happened to land in a
+  // window where the user had just re-selected.
+  //
+  // Fix: snapshot the selection at the *first* Cmd+wheel event (before the
+  // pinch has a chance to clear it) and carry the snapshot through to the
+  // Cmd release. We also listen on `window` instead of just the container
+  // so gestures that drift to a different target within the lens still
+  // trigger the handler.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
     let semanticEver = false;
     let lastSemanticDir: 'in' | 'out' | null = null;
+    let capturedSelection: { range: Range; text: string } | null = null;
+    const logId = Math.random().toString(36).slice(2, 6);
 
     const wheelHandler = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      if (e.metaKey) {
-        semanticEver = true;
-        if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
+      if (!e.metaKey) return;
+      semanticEver = true;
+      if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
+      // Snapshot selection on the first Cmd+wheel of this gesture — before
+      // the pinch has a chance to clear it.
+      if (!capturedSelection) {
+        const sel = window.getSelection();
+        const text = sel?.toString().trim() ?? '';
+        if (text && sel && sel.rangeCount > 0) {
+          capturedSelection = { range: sel.getRangeAt(0).cloneRange(), text };
+          console.log(`[LensGesture ${logId}] captured selection: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`);
+        }
       }
     };
 
@@ -112,33 +134,35 @@ function FocusPane({
         return;
       }
       if (e.key !== 'Meta') return;
-      if (!semanticEver) return;
+      console.log(
+        `[LensGesture ${logId}] Cmd release — semanticEver=${semanticEver} dir=${lastSemanticDir ?? 'null'} capturedSel=${!!capturedSelection}`,
+      );
+      if (!semanticEver) {
+        capturedSelection = null;
+        return;
+      }
       if (lastSemanticDir === 'out') {
         back();
+      } else if (capturedSelection) {
+        const rect = capturedSelection.range.getBoundingClientRect();
+        drillOn({
+          sourceRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          selection: capturedSelection.text,
+        });
+        window.getSelection()?.removeAllRanges();
       } else {
-        const selection = window.getSelection();
-        const text = selection?.toString().trim() ?? '';
-        if (!text || !selection || selection.rangeCount === 0) {
-          setHint({ x: window.innerWidth / 2, y: 90, text: 'Select a phrase to dive into it' });
-          setTimeout(() => setHint(null), 1500);
-        } else {
-          const range = selection.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          drillOn({
-            sourceRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
-            selection: text,
-          });
-          selection.removeAllRanges();
-        }
+        setHint({ x: window.innerWidth / 2, y: 90, text: 'Select a phrase to dive into it' });
+        setTimeout(() => setHint(null), 1500);
       }
       semanticEver = false;
       lastSemanticDir = null;
+      capturedSelection = null;
     };
 
-    el.addEventListener('wheel', wheelHandler, { passive: false });
+    window.addEventListener('wheel', wheelHandler, { passive: false });
     window.addEventListener('keyup', keyupHandler);
     return () => {
-      el.removeEventListener('wheel', wheelHandler);
+      window.removeEventListener('wheel', wheelHandler);
       window.removeEventListener('keyup', keyupHandler);
     };
   }, [back, closeAll, drillOn, backStackLen]);

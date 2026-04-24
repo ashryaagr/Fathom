@@ -8,6 +8,7 @@ import { buildPaperIndex } from './pdf/buildIndex';
 import PdfViewer from './pdf/PdfViewer';
 import FocusView from './lens/FocusView';
 import FirstRunTour from './lens/FirstRunTour';
+import SettingsPanel from './lens/SettingsPanel';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -22,6 +23,7 @@ export default function App() {
   const [indexMessage, setIndexMessage] = useState<string | null>(null);
   const [showIndexToast, setShowIndexToast] = useState(false);
   const [showTour, setShowTour] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to decomposition status events from the main process.
@@ -209,6 +211,9 @@ export default function App() {
   // Help → Show Welcome Tour, or ? button → show the tour again from step 1.
   useEffect(() => window.lens.onShowTour(() => setShowTour(true)), []);
 
+  // ⌘, or Help → Preferences… → open settings panel.
+  useEffect(() => window.lens.onShowSettings(() => setShowSettings(true)), []);
+
   // External "here's a PDF" — drag onto dock icon, Finder Open With,
   // Open Sample Paper menu item. Path comes from the main process.
   useEffect(
@@ -379,6 +384,11 @@ export default function App() {
           setShowTour(false);
           void window.lens.markTourDone();
         }}
+      />
+
+      <SettingsPanel
+        visible={showSettings}
+        onClose={() => setShowSettings(false)}
       />
 
       {/* Indexing toast — sticky bottom-right, non-intrusive */}
