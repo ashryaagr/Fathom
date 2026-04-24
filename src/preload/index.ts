@@ -26,6 +26,9 @@ export interface ExplainRequest {
   zoomImagePath?: string;
   /** PDF user-space bbox of the zoom target, for precise localization. */
   regionBbox?: { x: number; y: number; width: number; height: number };
+  /** If set, resumes the Agent SDK session of the same UUID — used to keep
+   * every Ask inside one lens in a single ongoing conversation. */
+  resumeSessionId?: string;
 }
 
 export interface ExplainHandle {
@@ -36,6 +39,9 @@ export interface ExplainCallbacks {
   onDelta: (text: string) => void;
   onProgress?: (text: string) => void;
   onPromptSent?: (prompt: string) => void;
+  /** Fires once with the Agent SDK session id. Save it on the lens so
+   * subsequent Asks can resume the same conversation. */
+  onSessionId?: (sessionId: string) => void;
   onDone: (full: string) => void;
   onError: (message: string) => void;
 }
@@ -135,12 +141,14 @@ const api = {
           | { type: 'delta'; text: string }
           | { type: 'progress'; text: string }
           | { type: 'prompt'; text: string }
+          | { type: 'sessionId'; sessionId: string }
           | { type: 'done'; text: string }
           | { type: 'error'; message: string },
       ) => {
         if (msg.type === 'delta') cb.onDelta(msg.text);
         else if (msg.type === 'progress') cb.onProgress?.(msg.text);
         else if (msg.type === 'prompt') cb.onPromptSent?.(msg.text);
+        else if (msg.type === 'sessionId') cb.onSessionId?.(msg.sessionId);
         else if (msg.type === 'done') {
           cb.onDone(msg.text);
           ipcRenderer.removeListener(channel, listener);

@@ -53,6 +53,10 @@ export interface FocusedLens {
   anchorImage?: { dataUrl: string; width: number; height: number };
   /** Absolute path to the zoom image saved on disk — sent to Claude as ground truth. */
   zoomImagePath?: string;
+  /** Claude Agent SDK session id for this lens. Set after the first explain
+   * turn reports it back. Subsequent Asks in the same lens pass it as
+   * `resumeSessionId` so Claude keeps one continuous conversation. */
+  sessionId?: string;
 }
 
 interface LensState {
@@ -92,6 +96,9 @@ interface LensState {
   appendProgress: (lensId: string, text: string) => void;
   /** Set the full prompt that was sent to Claude for the latest turn. */
   setTurnPrompt: (lensId: string, prompt: string) => void;
+  /** Remember the SDK session id for this lens so every subsequent Ask in
+   * the same lens resumes the same conversation. */
+  setSessionId: (lensId: string, sessionId: string) => void;
   endStream: (lensId: string) => void;
   setStreamError: (lensId: string, message: string) => void;
   /** Convenience: start a new turn from a user-typed question. */
@@ -270,6 +277,17 @@ export const useLensStore = create<LensState>((set, get) => ({
           ? { ...s.focused, turns: updated }
           : s.focused;
       return { cache, focused };
+    }),
+
+  setSessionId: (lensId: string, sessionId: string) =>
+    set((s) => {
+      // Only stamp the sessionId on a lens that's currently focused — once a
+      // lens is closed and lives in a stack, its session is settled and a
+      // late-arriving sessionId event shouldn't mutate it. Silently no-ops
+      // when the focused lens has drifted (user moved on before sid arrived).
+      if (!s.focused || s.focused.id !== lensId) return s;
+      if (s.focused.sessionId === sessionId) return s;
+      return { focused: { ...s.focused, sessionId } };
     }),
 
   appendProgress: (lensId: string, text: string) =>

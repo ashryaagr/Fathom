@@ -255,6 +255,7 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
         regionBbox: (req as ExplainRequest & { regionBbox?: ExplainArgs['regionBbox'] }).regionBbox,
         extraDirectories: extraDirectories.length > 0 ? extraDirectories : undefined,
         customInstructions: settings.customInstructions,
+        resumeSessionId: (req as ExplainRequest & { resumeSessionId?: string }).resumeSessionId,
         abortController,
         onDelta: (text) => {
           if (sender.isDestroyed()) return;
@@ -267,6 +268,10 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
         onPromptSent: (prompt) => {
           if (sender.isDestroyed()) return;
           sender.send(channel, { type: 'prompt', text: prompt });
+        },
+        onSessionId: (sessionId) => {
+          if (sender.isDestroyed()) return;
+          sender.send(channel, { type: 'sessionId', sessionId });
         },
       });
       if (req.regionId) {

@@ -54,6 +54,10 @@ export interface ExplainArgs {
   extraDirectories?: string[];
   /** User's free-form standing instruction from Preferences, appended to the prompt. */
   customInstructions?: string;
+  /** If set, resume this Agent SDK session instead of starting a fresh one.
+   * Used to keep every Ask inside the same lens in a single conversation
+   * so Claude has full history without re-sending it in each prompt. */
+  resumeSessionId?: string;
   abortController?: AbortController;
   onDelta: (text: string) => void;
   /** Optional status stream for tool calls and thinking, shown collapsed in the UI so the
@@ -62,6 +66,10 @@ export interface ExplainArgs {
   /** Fired once with the full user prompt right before streaming starts — useful for a
    * "▸ prompt sent to Claude" debug panel in the UI. */
   onPromptSent?: (prompt: string) => void;
+  /** Fired once with the Agent SDK session_id after it's available. The
+   * renderer saves this onto the FocusedLens so subsequent Asks in the
+   * same lens can resume the conversation. */
+  onSessionId?: (sessionId: string) => void;
 }
 
 const SYSTEM_PROMPT = `You are the AI scientist inside a PDF reader called Lens. A curious, technical reader has pinch-zoomed on a passage in a research paper (or selected a phrase inside a previous explanation of yours) because they want to *learn more*. Your job is to turn that zoom into real understanding.
@@ -173,6 +181,10 @@ export async function explain(args: ExplainArgs): Promise<string> {
       abortController: args.abortController,
       cwd,
       pathToClaudeCodeExecutable,
+      // If we're continuing a prior Ask in the same lens, resume the SDK
+      // session so Claude has full conversation history without us having
+      // to replay it in the prompt.
+      ...(args.resumeSessionId ? { resume: args.resumeSessionId } : {}),
       // Claude typically needs: (1) Read MANIFEST, (2-4) Grep/Read the index, (5) final
       // text output. Leave headroom for WebSearch and figure Reads.
       maxTurns: 24,
@@ -181,7 +193,19 @@ export async function explain(args: ExplainArgs): Promise<string> {
 
   let full = '';
   let toolUseCount = 0;
+  let sessionIdReported = false;
   for await (const msg of q) {
+    // Capture the SDK's session id from the first message that carries one.
+    // Both the 'system' bootstrap message and 'assistant' / 'result' messages
+    // include session_id; we take whichever comes first.
+    if (!sessionIdReported) {
+      const maybe = (msg as { session_id?: unknown }).session_id;
+      if (typeof maybe === 'string' && maybe.length > 0) {
+        sessionIdReported = true;
+        console.log(`[Lens AI ${logId}] session_id=${maybe}${args.resumeSessionId ? ' (resumed)' : ''}`);
+        args.onSessionId?.(maybe);
+      }
+    }
     if (msg.type === 'stream_event') {
       const event = msg.event;
       if (event.type === 'content_block_delta') {

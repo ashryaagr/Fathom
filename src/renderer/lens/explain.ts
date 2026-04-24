@@ -99,6 +99,16 @@ export async function streamExplanationForFocused(
     })),
   ];
 
+  // If this lens already has a session id from a prior turn, resume it so
+  // Claude treats the entire lens as one conversation. First turn has no
+  // sessionId yet; we pick one up from the onSessionId callback below.
+  const resumeSessionId = focused.sessionId;
+
+  // When we're resuming, the server already has the full prior turn
+  // history — don't resend `priorExplanations` (which would duplicate
+  // content in the prompt) and let the SDK's session store carry it.
+  const priorExplanationsForRequest = resumeSessionId ? undefined : priorExplanations;
+
   try {
     const handle = await window.lens.explain(
       {
@@ -107,7 +117,7 @@ export async function streamExplanationForFocused(
         regionText: userPrompt.regionText,
         focusPhrase: focused.focusPhrase ?? undefined,
         paperText: pdfPath ? undefined : userPrompt.paperText,
-        priorExplanations,
+        priorExplanations: priorExplanationsForRequest,
         depth: 1,
         customInstruction: question ?? undefined,
         pdfPath,
@@ -115,6 +125,7 @@ export async function streamExplanationForFocused(
         zoomImagePath: focused.zoomImagePath,
         regionBbox:
           focused.bbox.width > 0 && focused.bbox.height > 0 ? focused.bbox : undefined,
+        resumeSessionId,
       },
       {
         onDelta: (delta) => {
@@ -131,6 +142,10 @@ export async function streamExplanationForFocused(
         onPromptSent: (prompt) => {
           console.log('[Lens] prompt sent to Claude', targetId, '(chars:', prompt.length, ')');
           useLensStore.getState().setTurnPrompt(targetId, prompt);
+        },
+        onSessionId: (sessionId) => {
+          console.log('[Lens] session id for', targetId, '=', sessionId, resumeSessionId ? '(resumed)' : '(new)');
+          useLensStore.getState().setSessionId(targetId, sessionId);
         },
         onDone: () => {
           console.log('[Lens] stream done', targetId);
