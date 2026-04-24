@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { app } from 'electron';
 
 /**
  * Claude Code CLI plumbing.
@@ -41,6 +42,74 @@ export function findClaudeBinary(): string | null {
     if (existsSync(p)) return p;
   }
   return null;
+}
+
+/**
+ * Return the absolute path to the `claude` binary the Agent SDK should spawn.
+ *
+ * Without this override, the SDK computes the path from its own
+ * `import.meta.url`. When packaged, that resolves to a virtual location
+ * inside `app.asar`. We DO unpack the binary to `app.asar.unpacked/` via
+ * electron-builder, but the SDK doesn't know to look there — `spawn` tries
+ * the asar-path, Node hits `app.asar` (a file), and fails with `ENOTDIR`.
+ *
+ * Resolution priority:
+ *   1. The SDK's own bundled binary, rewritten to its unpacked location.
+ *      We prefer this because its version is guaranteed to match the SDK.
+ *   2. The user's installed Claude Code (from our findClaudeBinary walk).
+ *      Used when the bundled binary is missing for any reason (dev runs
+ *      without the native package installed, user deleted it, etc).
+ *   3. `null` — caller falls back to the SDK default (which will fail),
+ *      and the user gets the standard "Claude CLI needed" dialog.
+ */
+export function resolveClaudeExecutablePath(): string | null {
+  // The arm64 / x64 platform-native package sits next to claude-agent-sdk in
+  // node_modules. In the packaged app it's unpacked because of asarUnpack.
+  const platformPkg =
+    process.platform === 'darwin' && process.arch === 'arm64'
+      ? 'claude-agent-sdk-darwin-arm64'
+      : process.platform === 'darwin'
+        ? 'claude-agent-sdk-darwin-x64'
+        : null;
+
+  if (platformPkg) {
+    const candidates = app.isPackaged
+      ? [
+          join(
+            process.resourcesPath,
+            'app.asar.unpacked',
+            'node_modules',
+            '@anthropic-ai',
+            platformPkg,
+            'claude',
+          ),
+          // Fallback, in case someone mis-configures asarUnpack in the future.
+          join(
+            process.resourcesPath,
+            'app.asar',
+            'node_modules',
+            '@anthropic-ai',
+            platformPkg,
+            'claude',
+          ),
+        ]
+      : [
+          join(
+            app.getAppPath(),
+            'node_modules',
+            '@anthropic-ai',
+            platformPkg,
+            'claude',
+          ),
+        ];
+    for (const p of candidates) {
+      if (existsSync(p) && !p.includes('app.asar/')) {
+        return p;
+      }
+    }
+  }
+
+  return findClaudeBinary();
 }
 
 /**

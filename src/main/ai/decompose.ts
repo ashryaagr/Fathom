@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { homedir } from 'node:os';
 import { existsSync, statSync } from 'node:fs';
+import { resolveClaudeExecutablePath } from '../claudeCheck';
 
 /**
  * Build a structured digest of the paper from the on-disk index we've already
@@ -86,7 +87,10 @@ Then output a single JSON object — no preamble, no trailing prose:
 Be faithful — only include items that actually appear in the paper. If a section has no figures or equations, omit those arrays. Keep descriptions under 30 words each.`;
 
   const cwd = safeCwd(indexPath);
-  console.log(`[Lens Decompose] indexPath=${indexPath} cwd=${cwd}`);
+  const pathToClaudeCodeExecutable = resolveClaudeExecutablePath() ?? undefined;
+  console.log(
+    `[Lens Decompose] indexPath=${indexPath} cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'}`,
+  );
 
   const q = query({
     prompt,
@@ -98,6 +102,7 @@ Be faithful — only include items that actually appear in the paper. If a secti
       permissionMode: 'bypassPermissions',
       abortController,
       cwd,
+      pathToClaudeCodeExecutable,
       // One Read of content.md + ~a handful of figure PNGs + one JSON turn.
       // Large papers with many figures may need more; 16 is a comfortable ceiling.
       maxTurns: 16,

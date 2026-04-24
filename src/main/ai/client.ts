@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, statSync } from 'node:fs';
+import { resolveClaudeExecutablePath } from '../claudeCheck';
 
 /**
  * Pick a cwd that is guaranteed to be a real directory. Claude Agent SDK spawns
@@ -142,7 +143,8 @@ export async function explain(args: ExplainArgs): Promise<string> {
   args.onPromptSent?.(userPrompt);
 
   const cwd = safeCwd(args.indexPath ?? (args.pdfPath ? dirname(args.pdfPath) : undefined));
-  console.log(`[Lens AI ${logId}] cwd=${cwd}`);
+  const pathToClaudeCodeExecutable = resolveClaudeExecutablePath() ?? undefined;
+  console.log(`[Lens AI ${logId}] cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'}`);
 
   const q = query({
     prompt: userPrompt,
@@ -154,6 +156,7 @@ export async function explain(args: ExplainArgs): Promise<string> {
       permissionMode: 'bypassPermissions',
       abortController: args.abortController,
       cwd,
+      pathToClaudeCodeExecutable,
       // Claude typically needs: (1) Read MANIFEST, (2-4) Grep/Read the index, (5) final
       // text output. Leave headroom for WebSearch and figure Reads.
       maxTurns: 24,

@@ -60,11 +60,19 @@ export default function App() {
       }
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdf.bytes),
-        cMapUrl: '/pdfjs-cmaps/',
+        // Relative URLs (no leading slash) so these resolve correctly both in
+        // the Vite dev server (http://localhost/) and in the packaged app
+        // (file:///…/app.asar/out/renderer/index.html — a leading slash would
+        // resolve to filesystem root and fail). Electron serves files inside
+        // app.asar transparently for file:// requests, so renderer-relative
+        // paths hit the packaged pdfjs-cmaps / pdfjs-fonts / pdfjs-wasm dirs.
+        cMapUrl: 'pdfjs-cmaps/',
         cMapPacked: true,
-        standardFontDataUrl: '/pdfjs-fonts/',
-        // WASM decoders for JPEG2000 / JBIG2 — many research-paper figures use these.
-        wasmUrl: '/pdfjs-wasm/',
+        standardFontDataUrl: 'pdfjs-fonts/',
+        // WASM decoders for JPEG2000 / JBIG2. Without these (which is what
+        // happened when the URL had a leading /), large figure images using
+        // JP2 or JBIG2 compression silently fail to render.
+        wasmUrl: 'pdfjs-wasm/',
         // No cap on image size — research papers often embed very high-res figures.
         maxImageSize: -1,
         useSystemFonts: true,
