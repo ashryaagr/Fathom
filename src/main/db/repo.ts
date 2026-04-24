@@ -137,6 +137,50 @@ export const Highlights = {
   },
 };
 
+export interface DrillEdgeRow {
+  id: number;
+  paper_hash: string;
+  parent_lens_id: string;
+  child_lens_id: string;
+  turn_index: number;
+  selection: string;
+  created_at: number;
+}
+
+export const DrillEdges = {
+  insert(e: {
+    paperHash: string;
+    parentLensId: string;
+    childLensId: string;
+    turnIndex: number;
+    selection: string;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT INTO drill_edges(paper_hash, parent_lens_id, child_lens_id, turn_index, selection, created_at)
+         VALUES (@paper_hash, @parent_lens_id, @child_lens_id, @turn_index, @selection, @created_at)
+         ON CONFLICT(parent_lens_id, child_lens_id) DO UPDATE SET
+           turn_index = excluded.turn_index,
+           selection = excluded.selection`,
+      )
+      .run({
+        paper_hash: e.paperHash,
+        parent_lens_id: e.parentLensId,
+        child_lens_id: e.childLensId,
+        turn_index: e.turnIndex,
+        selection: e.selection,
+        created_at: Date.now(),
+      });
+  },
+  byPaper(paperHash: string): DrillEdgeRow[] {
+    return getDb()
+      .prepare(
+        'SELECT * FROM drill_edges WHERE paper_hash = ? ORDER BY parent_lens_id, created_at',
+      )
+      .all(paperHash) as DrillEdgeRow[];
+  },
+};
+
 export const Explanations = {
   insert(e: {
     regionId: string;

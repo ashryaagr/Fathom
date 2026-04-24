@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import { getDb } from './db/schema';
-import { Papers, Explanations, Regions, Highlights } from './db/repo';
+import { Papers, Explanations, Regions, Highlights, DrillEdges } from './db/repo';
 import {
   initAutoUpdater,
   manualCheckForUpdates,
@@ -506,8 +506,30 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     regions: Regions.byPaper(paperHash),
     explanations: Explanations.byPaper(paperHash),
     highlights: Highlights.byPaper(paperHash),
+    drillEdges: DrillEdges.byPaper(paperHash),
   };
 });
+
+// Persist a single drill edge — written from the renderer the moment
+// the user pinches on a phrase inside a parent lens. The edge is what
+// drives in-lens markers (the recursive equivalent of PDF-page
+// markers).
+ipcMain.handle(
+  'drillEdges:save',
+  async (
+    _event,
+    e: {
+      paperHash: string;
+      parentLensId: string;
+      childLensId: string;
+      turnIndex: number;
+      selection: string;
+    },
+  ) => {
+    DrillEdges.insert(e);
+    return { ok: true };
+  },
+);
 
 // ---- Highlights IPC ----
 ipcMain.handle(

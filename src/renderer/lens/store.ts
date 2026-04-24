@@ -68,6 +68,19 @@ export interface LensMarker {
   origin: 'region' | 'viewport';
 }
 
+/** A drill edge — the parent→child relationship recording that the
+ * user drilled on a phrase inside parent_lens_id, producing
+ * child_lens_id. These render as in-lens markers, which is the
+ * recursive equivalent of the page-level markers above: the same
+ * gesture (click an amber dot, see a lens) at every depth. */
+export interface DrillEdge {
+  parentLensId: string;
+  childLensId: string;
+  turnIndex: number;
+  selection: string;
+  createdAt: number;
+}
+
 interface LensState {
   /** Cache of completed turns (Q&A history) keyed by focus id. Persists across open/close. */
   cache: Map<string, Turn[]>;
@@ -81,6 +94,12 @@ interface LensState {
    * lenses used to be invisible because the marker-render path only
    * matched on `cache.has(region.id)`. Now they appear here. */
   lensMarkers: Map<string, LensMarker[]>;
+  /** Drill edges keyed by parentLensId. Each entry is the list of
+   * children that have ever been drilled from that parent. Rendered
+   * as in-lens markers (Phase 2), making the recursion visible
+   * without leaving the parent lens. Hydrated from SQLite on paper
+   * open; new edges added on every drill. */
+  drillEdges: Map<string, DrillEdge[]>;
   /** Currently focused lens (the one shown in FocusView). */
   focused: FocusedLens | null;
   /** Stack of previous focuses — Cmd+pinch-out / two-finger swipe right navigates back. */
@@ -128,12 +147,23 @@ interface LensState {
   ) => void;
   /** Read-only helper used by PageView to render amber dots. */
   markersForPage: (paperHash: string, page: number) => LensMarker[];
+  /** Register a drill edge. Persists to SQLite via IPC; safe to call
+   * repeatedly — duplicate (parent, child) pairs collapse server-side. */
+  registerDrillEdge: (
+    paperHash: string,
+    edge: DrillEdge,
+  ) => void;
+  /** Bulk-load edges hydrated from SQLite on paper open. Skips IPC. */
+  hydrateDrillEdges: (edges: DrillEdge[]) => void;
+  /** All drill edges where the given lens is the parent. */
+  edgesFromParent: (parentLensId: string) => DrillEdge[];
 }
 
 export const useLensStore = create<LensState>((set, get) => ({
   cache: new Map(),
   persistedZoomPaths: new Map(),
   lensMarkers: new Map(),
+  drillEdges: new Map(),
   focused: null,
   backStack: [],
   forwardStack: [],
@@ -250,6 +280,18 @@ export const useLensStore = create<LensState>((set, get) => ({
         forwardStack: [],
         transition: 'open',
       };
+    });
+    // Register the parent → child edge so the drilled phrase shows
+    // up as an in-lens marker the next time the user opens the
+    // parent. Persisted to SQLite via IPC; safe to fire-and-forget
+    // — duplicate (parent, child) pairs collapse server-side.
+    const turnIndex = Math.max(0, focused.turns.length - 1);
+    get().registerDrillEdge(focused.paperHash, {
+      parentLensId: focused.id,
+      childLensId: id,
+      turnIndex,
+      selection,
+      createdAt: Date.now(),
     });
     return newLens;
   },
@@ -431,6 +473,44 @@ export const useLensStore = create<LensState>((set, get) => ({
   markersForPage: (paperHash, page) => {
     const s = get();
     return s.lensMarkers.get(`${paperHash}:${page}`) ?? [];
+  },
+
+  registerDrillEdge: (paperHash, edge) => {
+    set((s) => {
+      const existing = s.drillEdges.get(edge.parentLensId) ?? [];
+      if (existing.some((e) => e.childLensId === edge.childLensId)) return s;
+      const drillEdges = new Map(s.drillEdges);
+      drillEdges.set(edge.parentLensId, [...existing, edge]);
+      return { drillEdges };
+    });
+    // Fire-and-forget persist. Failures aren't user-visible — the
+    // edge stays in memory for this session; on next paper-open
+    // hydrate it'd be missing. Worth a warn line so a chronic
+    // failure shows up in the log.
+    void window.lens
+      ?.saveDrillEdge?.({
+        paperHash,
+        parentLensId: edge.parentLensId,
+        childLensId: edge.childLensId,
+        turnIndex: edge.turnIndex,
+        selection: edge.selection,
+      })
+      .catch((err) => console.warn('[Lens] saveDrillEdge failed', err));
+  },
+
+  hydrateDrillEdges: (edges) => {
+    set(() => {
+      const drillEdges = new Map<string, DrillEdge[]>();
+      for (const e of edges) {
+        const existing = drillEdges.get(e.parentLensId) ?? [];
+        drillEdges.set(e.parentLensId, [...existing, e]);
+      }
+      return { drillEdges };
+    });
+  },
+
+  edgesFromParent: (parentLensId) => {
+    return get().drillEdges.get(parentLensId) ?? [];
   },
 }));
 

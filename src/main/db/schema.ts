@@ -70,6 +70,26 @@ function migrate(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_highlights_paper_page ON highlights(paper_hash, page);
+
+    -- Drill edges: a directed parent→child link recording that the
+    -- user drilled on a phrase inside parent_lens_id, producing
+    -- child_lens_id. Used to render in-lens markers for previously-
+    -- drilled phrases, so the recursion is visible *inside* a lens
+    -- the same way page-level markers are visible on the PDF. The
+    -- (parent, child) pair is unique because drilling on the same
+    -- phrase twice should land you on the same child lens.
+    CREATE TABLE IF NOT EXISTS drill_edges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      paper_hash TEXT NOT NULL,
+      parent_lens_id TEXT NOT NULL,
+      child_lens_id TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      selection TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(parent_lens_id, child_lens_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_drill_edges_parent ON drill_edges(parent_lens_id);
+    CREATE INDEX IF NOT EXISTS idx_drill_edges_paper ON drill_edges(paper_hash);
   `);
 
   // Additive migration: the zoom image path was added after the initial schema shipped.

@@ -75,6 +75,15 @@ export interface PaperState {
     color: string;
     created_at: number;
   }>;
+  drillEdges: Array<{
+    id: number;
+    paper_hash: string;
+    parent_lens_id: string;
+    child_lens_id: string;
+    turn_index: number;
+    selection: string;
+    created_at: number;
+  }>;
 }
 
 const api = {
@@ -236,6 +245,15 @@ const api = {
 
   paperState: (paperHash: string): Promise<PaperState | null> =>
     ipcRenderer.invoke('paper:state', paperHash),
+
+  // ---- drill edges (in-lens markers) ----
+  saveDrillEdge: (e: {
+    paperHash: string;
+    parentLensId: string;
+    childLensId: string;
+    turnIndex: number;
+    selection: string;
+  }): Promise<{ ok: true }> => ipcRenderer.invoke('drillEdges:save', e),
 
   // ---- highlights ----
   saveHighlight: (h: {

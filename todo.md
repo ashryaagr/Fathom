@@ -146,3 +146,37 @@ Expanded Excalifont from hero-only to the body + all headings on the
 docs site. Nav, tables, code, footer stay sans-serif for scan-ability
 (handwriting in those hurts more than it helps).
 
+
+## 21. Comprehensive data-model audit — 🔄 PENDING
+User reports anchor image disappears 1-2 min after closing a lens.
+Root cause: zoom_image_path is persisted only on the `explanations`
+table, and with the new no-auto-prompt model an opened-but-never-
+asked lens has no explanation row → no persistence path. Fix is a
+new `lens_anchors` table that records every lens open (lens_id,
+paper_hash, origin, page, bbox_json, region_id, parent_lens_id,
+zoom_image_path, selection, created_at). Markers + drill edges +
+zoom paths all derive from it. Replaces the current ad-hoc spread
+across regions / explanations / lensMarkers / drill_edges.
+Schedule: v1.0.12.
+
+## 22. Animated thinking indicator inside the lens — 🔄 PENDING
+"Working…" / "thinking" text in the lens body during stream is
+static. Should animate (pulsing dots, or a typewriter cursor on
+the in-progress sentence) so the user feels progress, not stuck.
+Schedule: v1.0.12 alongside the audit above.
+
+## 23. Phase 3 — inline drill markers — 🔄 PENDING
+The Phase 2 implementation (chip row at top of body) is the
+visible affordance. Phase 3 inlines them: wrap the drilled phrase
+in the parent body with an amber span + sticker dot in the right
+gutter, so the marker is RIGHT NEXT TO the phrase (matching the
+PDF-page-marker visual rule). Requires DOM range mapping over the
+react-markdown output. Schedule: v1.0.13.
+
+## 24. Phase 4 — highlights inside the lens body — 🔄 PENDING
+Highlighter currently only works on the PDF text layer (key:
+`[data-page]` ancestor). Extend `createHighlightFromSelection` to
+detect "selection inside a lens body" and tag the highlight with
+lens_id instead of page. Renderer renders highlights both on PDF
+pages AND in lens bodies through the same store. Same UI
+component, different selector. Schedule: v1.0.13.

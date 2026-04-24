@@ -142,6 +142,20 @@ export default function App() {
           for (const [regionId, turns] of turnsByRegion) {
             useLensStore.getState().setCachedTurns(regionId, turns);
           }
+          // Restore drill edges so previously-drilled phrases inside
+          // any lens come back as in-lens markers. Same recursive
+          // visibility rule as PDF-page markers — see CLAUDE.md §2.1.
+          if (state.drillEdges && state.drillEdges.length > 0) {
+            useLensStore.getState().hydrateDrillEdges(
+              state.drillEdges.map((e) => ({
+                parentLensId: e.parent_lens_id,
+                childLensId: e.child_lens_id,
+                turnIndex: e.turn_index,
+                selection: e.selection,
+                createdAt: e.created_at,
+              })),
+            );
+          }
           // Restore persisted amber highlights for this paper. Rects were
           // stored in PDF user-space so they survive zoom changes.
           if (state.highlights && state.highlights.length > 0) {

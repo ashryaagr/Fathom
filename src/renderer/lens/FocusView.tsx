@@ -367,6 +367,15 @@ function FocusPane({
             </details>
           )}
 
+          {/* In-lens drill markers — the recursive equivalent of
+              PDF-page markers. Phase 2 surfaces them as amber pills
+              at the top of the body, one per phrase the user has
+              previously drilled from this lens. Click → open the
+              child lens. Phase 3 will inline these next to the
+              actual phrase in the prose; for now the pills are the
+              visible affordance. CLAUDE.md §2.1. */}
+          <DrillMarkers focused={focused} />
+
           {/* Auto-scroll target — on mount we land just above the first turn so the
               streaming answer is the primary thing visible. Anchor stays above for context. */}
           <div ref={scrollTargetRef} aria-hidden />
@@ -761,4 +770,93 @@ function rectToClip(rect: { x: number; y: number; width: number; height: number 
   const right = Math.max(0, window.innerWidth - rect.x - rect.width);
   const bottom = Math.max(0, window.innerHeight - rect.y - rect.height);
   return `inset(${top}px ${right}px ${bottom}px ${left}px round 8px)`;
+}
+
+/**
+ * In-lens drill markers (Phase 2 of the recursion).
+ *
+ * Renders an amber pill row near the top of the lens body — one
+ * pill per phrase the user has previously drilled from this lens.
+ * Each pill carries the selection text (truncated) plus a small
+ * sticker dot, matching the PDF-page marker visual vocabulary.
+ *
+ * Clicking a pill calls `useLensStore.open(child)` against the
+ * already-cached child lens, opening it via the *exact same* code
+ * path as a PDF marker click. That's the recursion principle in
+ * code form: one open path, one render path, one persistence
+ * schema, no special casing per depth.
+ *
+ * (Phase 3 will inline these next to the actual phrase via DOM
+ * range mapping; for now the top-of-body pills are the visible
+ * affordance.)
+ */
+function DrillMarkers({ focused }: { focused: FocusedLens }) {
+  const edges = useLensStore((s) => s.drillEdges.get(focused.id) ?? []);
+  const cache = useLensStore((s) => s.cache);
+
+  if (edges.length === 0) return null;
+
+  const reopen = (childLensId: string, selection: string) => {
+    // Cached child lens turns survive across sessions — that's how
+    // a click on a drill marker rehydrates the conversation rather
+    // than spinning up a fresh one. If the cache is empty we fall
+    // back to opening a fresh drill on the same selection.
+    const cached = cache.get(childLensId);
+    if (cached && cached.length > 0) {
+      // Reconstruct enough of FocusedLens to call open(). The
+      // store's `open` will pull turns from cache via id match.
+      useLensStore.getState().open({
+        id: childLensId,
+        origin: 'drill',
+        paperHash: focused.paperHash,
+        page: focused.page,
+        bbox: focused.bbox,
+        sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
+        anchorText: selection,
+        focusPhrase: selection.slice(0, 64),
+        prevTexts: [],
+        nextTexts: [],
+        parentBody: null,
+        regionId: focused.regionId,
+        turns: cached.map((t) => ({ ...t, streaming: false })),
+      });
+      return;
+    }
+    // Fallback: hydrate-then-drill. Same gesture path the trackpad
+    // pinch goes through.
+    useLensStore.getState().drillOn({
+      sourceRect: { x: window.innerWidth / 2 - 80, y: 120, width: 160, height: 24 },
+      selection,
+    });
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-[color:var(--color-lens)]/20 bg-[color:var(--color-lens-soft)]/30 px-3 py-2">
+      <span className="mr-1 text-[10.5px] font-medium tracking-wider text-[color:var(--color-lens)]/85 uppercase">
+        Drilled here
+      </span>
+      {edges.map((e) => {
+        const label =
+          e.selection.length > 48
+            ? e.selection.slice(0, 45).trimEnd() + '…'
+            : e.selection;
+        return (
+          <button
+            key={e.childLensId}
+            onClick={() => reopen(e.childLensId, e.selection)}
+            className="group inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-lens)]/40 bg-white/70 px-2.5 py-0.5 text-[12px] text-black/75 transition hover:border-[color:var(--color-lens)] hover:bg-[color:var(--color-lens-soft)]/60 hover:text-black/90 active:scale-[0.97]"
+            title={`Re-open: "${e.selection}"`}
+          >
+            <span
+              className="inline-block h-2 w-2 rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_1.5px_rgba(255,255,255,0.85)]"
+              aria-hidden="true"
+            />
+            <span className="truncate" style={{ maxWidth: 240 }}>
+              {label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }

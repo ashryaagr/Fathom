@@ -484,12 +484,25 @@ function captureViewportContent(
     const primaryPage = findPrimaryVisiblePage(scroller, pages);
     if (!primaryPage) return null;
     const padding = 60;
+    // Anchor bbox sits in the upper-right area of the page, in PDF
+    // user-space, so the registered marker actually lands on the
+    // page when the user backs out (a 0,0,0,0 bbox would pin the
+    // dot to the top-left corner where it's clipped). 80% across,
+    // 90% up the page — close to where the user was probably
+    // looking when they hit Ask.
+    const baseSize = pageBaseSizes[primaryPage - 1] ?? { width: 600, height: 800 };
+    const markerBbox = {
+      x: baseSize.width * 0.8,
+      y: baseSize.height * 0.85,
+      width: baseSize.width * 0.1,
+      height: baseSize.height * 0.04,
+    };
     return {
       id: `page:${paperHash.slice(0, 8)}:${primaryPage}:${djb2(String(Date.now()))}`,
       origin: 'viewport',
       paperHash,
       page: primaryPage,
-      bbox: { x: 0, y: 0, width: 0, height: 0 },
+      bbox: markerBbox,
       sourceRect: {
         x: sRect.left + padding,
         y: sRect.top + padding,
@@ -548,7 +561,12 @@ function captureViewportContent(
     origin: 'viewport',
     paperHash,
     page: captured[0].page,
-    bbox: { x: 0, y: 0, width: 0, height: 0 },
+    // Use the first captured region's bbox as the marker anchor.
+    // Without a real bbox the marker would render at the top-left
+    // page corner (pageHeight - 0 - 0 = pageHeight) which is
+    // off-screen; the captured region's bbox is the closest signal
+    // to "where the user was actually looking".
+    bbox: { ...captured[0].region.bbox },
     sourceRect,
     anchorText: text,
     focusPhrase: null,
