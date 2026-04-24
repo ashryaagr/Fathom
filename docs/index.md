@@ -11,8 +11,8 @@ PDF.
 
 Fathom asks you not to leave. The explanation comes to the page, right
 where your eye already is. You pinch in when you want to understand; you
-swipe back when you want to keep going. You keep reading. You finish the
-paper.
+swipe back when you want to keep going. A new way of interacting with
+PDFs — one PDF is all you need.
 
 It's a reading app shaped around the way you already read — not an AI
 assistant bolted onto a PDF viewer.

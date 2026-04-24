@@ -13,7 +13,8 @@ Reading a research paper today means every few minutes you leave the page,
 copy-paste into Claude, scroll back, lose your place, or get lost in the PDF.
 
 Fathom asks you not to leave. The explanation comes to the page, right
-where your eye already is. You keep reading. You finish the paper.
+where your eye already is. A new way of interacting with PDFs — one PDF
+is all you need.
 
 ### [⬇ Download Fathom for Mac](https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.dmg)
 
