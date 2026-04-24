@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from './pdfjs';
 import { extractAllPagesText } from './extractAllPages';
-import { extractFigureBoxes, type FigureBox } from './extractFigures';
+import { extractAllFigureBoxes, type FigureBox } from './extractFigures';
 
 /** Pixels-per-PDF-point when rendering cropped figures. 2 ≈ Retina sharp. */
 const FIGURE_PIXEL_SCALE = 2;
@@ -16,6 +16,7 @@ interface ExtractedFigure {
   figureIndex: number; // 1-based within the page
   filename: string; // e.g. page-004-fig-2.png
   bbox: FigureBox; // PDF user space
+  source?: FigureBox['source']; // 'raster' (op-list) or 'caption' (text-derived)
 }
 
 export async function buildPaperIndex(
@@ -23,28 +24,58 @@ export async function buildPaperIndex(
   paperHash: string,
   onProgress?: (p: IndexBuildProgress) => void,
 ): Promise<void> {
+  const t0 = performance.now();
+  console.log(`[buildIndex] start numPages=${doc.numPages} paperHash=${paperHash.slice(0, 10)}…`);
+
   // Step 1: full text of every page.
   onProgress?.({ stage: 'text', done: 0, total: doc.numPages });
   const pagesText = await extractAllPagesText(doc);
+  console.log(
+    `[buildIndex] text extracted, totalChars=${pagesText.reduce((s, p) => s + p.length, 0)} t=${Math.round(performance.now() - t0)}ms`,
+  );
   onProgress?.({ stage: 'text', done: doc.numPages, total: doc.numPages });
 
-  // Step 2: figure extraction. For each page, parse the operator list to find image
-  // placements, then render just those rects to PNG and save them. No full-page PNGs —
-  // we already have the markdown text. Only actual figures land on disk.
+  // Step 2: figure extraction + cropping per page. Op-list walk finds raster
+  // images; caption-text walk finds vector figures that have no raster ops.
   onProgress?.({ stage: 'figures', done: 0, total: doc.numPages });
   const figuresPerPage = new Map<number, ExtractedFigure[]>();
+  let totalFigures = 0;
+  let rasterFigures = 0;
+  let captionFigures = 0;
   for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const figures = await renderPageFigures(page, p, paperHash);
-    if (figures.length > 0) figuresPerPage.set(p, figures);
+    const pageT0 = performance.now();
+    try {
+      const page = await doc.getPage(p);
+      const figures = await renderPageFigures(page, p, paperHash);
+      if (figures.length > 0) {
+        figuresPerPage.set(p, figures);
+        totalFigures += figures.length;
+        for (const f of figures) {
+          if (f.source === 'raster') rasterFigures++;
+          else if (f.source === 'caption') captionFigures++;
+        }
+      }
+      console.log(
+        `[buildIndex] page ${p}/${doc.numPages}: ${figures.length} figures (raster=${figures.filter((f) => f.source === 'raster').length} caption=${figures.filter((f) => f.source === 'caption').length}) t=${Math.round(performance.now() - pageT0)}ms`,
+      );
+    } catch (err) {
+      // One bad page shouldn't halt indexing. Log it; move on.
+      console.warn(`[buildIndex] page ${p} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     onProgress?.({ stage: 'figures', done: p, total: doc.numPages });
     await new Promise((r) => setTimeout(r, 0));
   }
+  console.log(
+    `[buildIndex] figures done: ${totalFigures} total (raster=${rasterFigures}, caption=${captionFigures}) across ${figuresPerPage.size} pages t=${Math.round(performance.now() - t0)}ms`,
+  );
 
   // Step 3: assemble content.md, inserting figure references at each page break.
   onProgress?.({ stage: 'writing', done: 0, total: 1 });
   const markdown = buildMarkdown(pagesText, figuresPerPage);
   await window.lens.savePaperMarkdown({ paperHash, markdown });
+  console.log(
+    `[buildIndex] content.md written, length=${markdown.length} chars, total t=${Math.round(performance.now() - t0)}ms`,
+  );
   onProgress?.({ stage: 'writing', done: 1, total: 1 });
 }
 
@@ -52,8 +83,8 @@ async function renderPageFigures(
   page: PDFPageProxy,
   pageNumber: number,
   paperHash: string,
-): Promise<ExtractedFigure[]> {
-  const bboxes = await extractFigureBoxes(page);
+): Promise<Array<ExtractedFigure & { source?: FigureBox['source'] }>> {
+  const bboxes = await extractAllFigureBoxes(page);
   if (bboxes.length === 0) return [];
 
   // Render the full page once at the chosen pixel density, then crop each figure
@@ -104,7 +135,7 @@ async function renderPageFigures(
       bytes,
     });
 
-    figures.push({ pageNumber, figureIndex: i + 1, filename, bbox });
+    figures.push({ pageNumber, figureIndex: i + 1, filename, bbox, source: bbox.source });
   }
   return figures;
 }

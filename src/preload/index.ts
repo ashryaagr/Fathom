@@ -87,6 +87,9 @@ const api = {
     return () => ipcRenderer.removeListener('pdf:openExternal', listener);
   },
 
+  /** Open Finder on the Fathom log file so a user can share it in one drag. */
+  revealLogFile: (): Promise<void> => ipcRenderer.invoke('log:reveal'),
+
   explain: (req: ExplainRequest, cb: ExplainCallbacks): Promise<ExplainHandle> =>
     (async () => {
       const { requestId, channel } = (await ipcRenderer.invoke('explain:start', req)) as {

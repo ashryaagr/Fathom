@@ -288,6 +288,14 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
   return { requestId, channel };
 });
 
+// Renderer-invoked "Show log" — used by the error toast so a user can share
+// the log file in one click without hunting through Help menus.
+ipcMain.handle('log:reveal', async () => {
+  const p = logFilePath();
+  if (existsSync(p)) shell.showItemInFolder(p);
+  else shell.openPath(dirname(p));
+});
+
 ipcMain.handle('explain:abort', async (_event, requestId: string) => {
   const ctrl = activeExplains.get(requestId);
   if (ctrl) {

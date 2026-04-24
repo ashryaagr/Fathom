@@ -361,7 +361,7 @@ function IndexingToast({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 16 }}
           transition={{ duration: 0.2 }}
-          className="fixed right-5 bottom-5 z-50 flex max-w-sm items-center gap-2 rounded-full px-4 py-2 text-[12px] font-medium shadow-lg backdrop-blur"
+          className={`fixed right-5 bottom-5 z-50 flex ${state === 'error' ? 'max-w-md flex-col items-end' : 'max-w-sm items-center'} gap-2 rounded-xl px-4 py-2 text-[12px] font-medium shadow-lg backdrop-blur`}
           style={{ background: undefined }}
         >
           <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 ${pill.color}`}>
@@ -380,7 +380,25 @@ function IndexingToast({
             )}
           </div>
           {state === 'error' && message && (
-            <span className="truncate text-[11px] text-black/55">{message}</span>
+            <div className="flex flex-col items-end gap-1 rounded-lg bg-white/95 px-3 py-2 text-[11px] leading-snug text-black/80 shadow-sm">
+              <pre className="max-h-48 max-w-[26rem] overflow-auto whitespace-pre-wrap text-left font-sans text-[11px] text-black/75">
+                {message}
+              </pre>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => navigator.clipboard.writeText(message)}
+                  className="rounded bg-black/5 px-2 py-0.5 text-[10.5px] text-black/70 hover:bg-black/10"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => void window.lens.revealLogFile()}
+                  className="rounded bg-black/5 px-2 py-0.5 text-[10.5px] text-black/70 hover:bg-black/10"
+                >
+                  Show log
+                </button>
+              </div>
+            </div>
           )}
         </motion.div>
       )}

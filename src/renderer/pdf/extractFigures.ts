@@ -6,6 +6,8 @@ export interface FigureBox {
   y: number;
   width: number;
   height: number;
+  /** For logging/diagnostics — where did we find this figure. */
+  source?: 'raster' | 'caption';
 }
 
 /**
@@ -84,7 +86,7 @@ export async function extractFigureBoxes(page: PDFPageProxy): Promise<FigureBox[
       const w = Math.max(maxX - minX, width);
       const h = Math.max(maxY - minY, height);
       if (w < 60 || h < 60 || w * h < 6000) continue;
-      boxes.push({ x: minX, y: minY, width: w, height: h });
+      boxes.push({ x: minX, y: minY, width: w, height: h, source: 'raster' });
     }
   }
 
@@ -103,4 +105,116 @@ export async function extractFigureBoxes(page: PDFPageProxy): Promise<FigureBox[
     }
     return true;
   });
+}
+
+/**
+ * Supplement op-list figure detection by finding "Figure N" / "Fig. N"
+ * captions in the text, and backing out the figure region above each caption.
+ * This catches vector-drawn figures (diagrams, pipelines, architecture
+ * charts) that never trigger a `paintImageXObject` op and would otherwise be
+ * invisible to the index — a common case in ML and systems papers.
+ *
+ * Approach: for each caption, scan upward in PDF y (i.e., geometrically
+ * above the caption line) within the same column until text resumes. The
+ * gap between is the figure region. Conservative fallback height used when
+ * no text is found above (figure extends up to the top margin).
+ */
+export async function extractCaptionBasedFigures(
+  page: PDFPageProxy,
+): Promise<FigureBox[]> {
+  const content = await page.getTextContent();
+  const viewport = page.getViewport({ scale: 1 });
+  const pageW = viewport.width;
+  const pageH = viewport.height;
+
+  type Item = { str: string; x: number; y: number; width: number };
+  const items: Item[] = (
+    content.items as Array<{ str: string; transform: number[]; width?: number }>
+  ).map((raw) => ({
+    str: raw.str ?? '',
+    x: raw.transform?.[4] ?? 0,
+    y: raw.transform?.[5] ?? 0,
+    width: raw.width ?? 0,
+  }));
+
+  // Detect two-column layout by counting items whose x is in the left vs
+  // right half and checking they're comparable in count.
+  const leftCount = items.filter((i) => i.x < pageW / 2).length;
+  const rightCount = items.filter((i) => i.x >= pageW / 2).length;
+  const total = leftCount + rightCount;
+  const isTwoColumn =
+    total > 50 &&
+    Math.min(leftCount, rightCount) > 0.3 * Math.max(leftCount, rightCount);
+
+  const CAPTION_RE = /^(Figure|Fig\.|FIG\.?|FIGURE)\s+\d/;
+
+  const boxes: FigureBox[] = [];
+  for (const item of items) {
+    if (!CAPTION_RE.test(item.str.trim())) continue;
+
+    // Which column does this caption live in?
+    const inLeftColumn = item.x < pageW / 2;
+    const columnStart = isTwoColumn ? (inLeftColumn ? 18 : pageW / 2 + 6) : 18;
+    const columnEnd = isTwoColumn ? (inLeftColumn ? pageW / 2 - 6 : pageW - 18) : pageW - 18;
+    const columnWidth = columnEnd - columnStart;
+
+    const captionY = item.y; // baseline of caption in PDF coords (bottom-up)
+
+    // Find the nearest text item ABOVE the caption (higher y) in the same column.
+    // "Above" = y > caption_y; "same column" = x in [columnStart, columnEnd].
+    let closestAboveY = pageH - 18; // default: top margin
+    for (const other of items) {
+      if (other === item) continue;
+      if (!other.str.trim()) continue;
+      if (other.x < columnStart - 2 || other.x > columnEnd + 2) continue;
+      if (other.y <= captionY + 4) continue; // same line or below caption
+      if (other.y < closestAboveY) closestAboveY = other.y;
+    }
+
+    // Figure occupies the vertical band (captionY + small pad) → (closestAboveY - small pad).
+    const figBottom = captionY + 10; // just above the caption top
+    const figTop = closestAboveY - 6;
+    const figHeight = figTop - figBottom;
+    // Skip degenerate or obviously-wrong detections (e.g. two captions stacked
+    // back-to-back leave no room for a figure between them).
+    if (figHeight < 60) continue;
+    if (columnWidth < 80) continue;
+
+    boxes.push({
+      x: columnStart,
+      y: figBottom,
+      width: columnWidth,
+      height: figHeight,
+      source: 'caption',
+    });
+  }
+
+  return boxes;
+}
+
+/** Overlap ratio (0-1) between two axis-aligned boxes. */
+function overlaps(a: FigureBox, b: FigureBox): boolean {
+  const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const intersect = ix * iy;
+  const smaller = Math.min(a.width * a.height, b.width * b.height);
+  return smaller > 0 && intersect / smaller > 0.5;
+}
+
+/**
+ * Run both detectors and merge. Raster figures win when there's significant
+ * overlap with a caption-derived region (a raster detection is more precise
+ * than our caption-based fallback).
+ */
+export async function extractAllFigureBoxes(page: PDFPageProxy): Promise<FigureBox[]> {
+  const [raster, caption] = await Promise.all([
+    extractFigureBoxes(page),
+    extractCaptionBasedFigures(page),
+  ]);
+  const merged: FigureBox[] = [...raster];
+  for (const c of caption) {
+    if (raster.some((r) => overlaps(c, r))) continue;
+    merged.push(c);
+  }
+  return merged;
 }
