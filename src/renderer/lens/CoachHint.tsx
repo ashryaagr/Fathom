@@ -134,7 +134,7 @@ const STEPS: Record<
   pinch:       { index: 1, total: 5, label: '⌘ + pinch',           glyph: PinchGlyph,  minimal: 'on any paragraph' },
   ask:         { index: 2, total: 5, label: 'Ask a question',      glyph: AskGlyph,    minimal: 'in the box below' },
   drill:       { index: 3, total: 5, label: 'Select + pinch',      glyph: DrillGlyph,  minimal: 'a phrase to drill' },
-  swipe:       { index: 4, total: 5, label: 'Swipe to return',     glyph: SwipeGlyph,  minimal: 'two fingers, right →' },
+  swipe:       { index: 4, total: 5, label: 'Step back',           glyph: SwipeGlyph,  minimal: '⌘[ or the back arrow up top' },
   marker:      { index: 5, total: 5, label: 'Your amber sticker',  glyph: MarkerGlyph, minimal: 'click it to re-open this lens later' },
   celebrated:  { index: null, total: 5, label: "You're in",        glyph: DoneGlyph,   minimal: '⌘, for Preferences' },
 };

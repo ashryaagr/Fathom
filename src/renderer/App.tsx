@@ -584,6 +584,24 @@ export default function App() {
   // `[Gesture] …` — so if a user reports "it swiped while I zoomed",
   // we can see exactly which event crossed the threshold.
   useEffect(() => {
+    // ── Two-finger swipe back/forward — DISABLED in v1.0.18 ──
+    //
+    // The user pulled this gesture into beta pending UX refinement
+    // ("not intuitive how you switch across screens"). Pinch (visual)
+    // and ⌘+pinch (semantic dive) are unaffected — those are the
+    // product. This handler used to classify horizontal wheel events
+    // and call `lens.back()` / `lens.forward()` plus animate a
+    // chevron via `fathom:swipe`. With it disabled, the same
+    // navigation is reachable via:
+    //   • ⌘[ / ⌘] keyboard shortcuts (still wired in App.tsx)
+    //   • the back button in the lens header (FocusView.tsx)
+    //   • clicking an amber marker on the PDF page
+    //   • clicking an inline drill marker inside a lens body
+    //
+    // The dead code below is preserved (not deleted) so the
+    // re-enable is a one-line flip when we revisit the UX.
+    const SWIPE_GESTURE_ENABLED = false;
+    if (!SWIPE_GESTURE_ENABLED) return;
     let accum = 0;
     let lastActive = 0;
     let committed = false;
@@ -1213,8 +1231,7 @@ function HelpOverlay({
           <Row k="⌘ + pinch in" v="Dive into the paragraph under the cursor" />
           <Row k="⌘ + pinch out" v={focused ? 'Go back one level' : 'No effect (no lens open)'} />
           <Row k="Select text + ⌘ + pinch in" v="Dive into the selected concept" />
-          <Row k="Swipe right (two-finger)" v="Go back through lens history" />
-          <Row k="Top-left Back/Close button" v="Leave the current lens" />
+          <Row k="Top-left Back/Close button" v="Leave the current lens (or click an amber marker / ⌘ [)" />
           <Row k="⌘ ⇧ D" v="Dive in (keyboard alternative to ⌘+pinch)" />
           <Row k="⌘ ⇧ A" v="Ask about the current viewport" />
           <Row k="⌘ H" v="Highlight the current text selection (amber)" />

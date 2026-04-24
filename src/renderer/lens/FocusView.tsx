@@ -296,14 +296,24 @@ function FocusPane({
           className="mr-2 hidden md:inline px-2 text-[11px] tracking-wide text-black/35 uppercase"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          ⌘ pinch · swipe back
+          ⌘ pinch · ⌘[ back
         </span>
         <button
-          onClick={backStackLen > 0 ? back : closeAll}
+          onClick={() => {
+            if (backStackLen > 0) back();
+            else closeAll();
+            // Tour: clicking the back arrow is the swipe-disabled
+            // equivalent of swipe-right. Advance the same step so
+            // first-run users complete the tour without depending on
+            // the disabled gesture.
+            if (useTourStore.getState().step === 'swipe') {
+              useTourStore.getState().advance('marker');
+            }
+          }}
           className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] font-medium text-black/70 hover:bg-black/5"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           aria-label={backStackLen > 0 ? 'Back' : 'Close lens'}
-          title={backStackLen > 0 ? 'Back (⌘[)' : 'Close lens (swipe right or ⌘[)'}
+          title={backStackLen > 0 ? 'Back (⌘[)' : 'Close lens (⌘[)'}
         >
           {backStackLen > 0 ? (
             // ← arrow

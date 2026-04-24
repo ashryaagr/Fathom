@@ -426,6 +426,43 @@ InstructionInput's input), `fathom:askCurrentViewport` otherwise
 (PdfViewer listens and dives into the viewport). Highlight and
 Preferences already worked at every depth after v1.0.15.
 
+## 37. Two-finger swipe back/forward — ⛔ DISABLED in v1.0.18 (beta)
+User pulled the gesture into beta pending UX refinement: *"these
+gestures need more work because it's not intuitive right now how
+you switch across screens by using the two-finger gestures."*
+
+The wheel handler in `App.tsx` is gated behind a single
+`SWIPE_GESTURE_ENABLED = false` flag at the top of its useEffect;
+the rest of the classifier is preserved unchanged so the re-enable
+is one line. Pinch (visual) and ⌘+pinch (semantic dive) are
+unaffected — those are the product.
+
+Replacement navigation paths (all already wired):
+- **⌘[ / ⌘]** — back / forward through lens history
+- **Back arrow** in the lens header (top-left)
+- **Click an amber marker** on the PDF page — re-opens the lens
+- **Click an inline drill marker** in a lens body — re-opens the
+  child lens
+- **Esc** — does NOT close (per CLAUDE.md); the lens header's
+  back button is the canonical close path
+
+User-visible copy updated:
+- Help (`?`) overlay no longer shows "Swipe right (two-finger)"
+- Lens header subtitle now reads "⌘ pinch · ⌘[ back" (was "⌘
+  pinch · swipe back")
+- Lens header back-button title now "Close lens (⌘[)" (was
+  "Close lens (swipe right or ⌘[)")
+- First-run tour copy updated: "Hit ⌘[ or click the back arrow"
+- Coach hint step 4 label changed from "Swipe to return" to
+  "Step back" with minimal hint "⌘[ or the back arrow up top"
+- Tour 'swipe' step now advances on ⌘[ keypress *or* back-button
+  click — both paths handled.
+
+When we revisit the gesture: design a single direction
+convention up front (per `fathom-ux-review.md` §13 — user mental
+model wins), build a discoverable affordance, run the canonical
+fathom-qa flow, then flip the flag.
+
 ## 36. Viewport-origin lenses didn't persist their figure — ✅ DONE in v1.0.17
 QA agent caught a real gap that v1.0.16 missed: the viewport-origin
 fresh ⌘+pinch path in `PdfViewer.tsx` opened the lens without

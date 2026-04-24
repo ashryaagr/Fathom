@@ -110,7 +110,9 @@ export default function FirstRunTour({
               </p>
               <p className="mb-7 text-[13px] leading-relaxed text-black/55">
                 Ask follow-ups in the sticky box at the bottom of the lens. Pinch on a
-                phrase inside to go deeper. Swipe back, like turning a page. Reopen this
+                phrase inside to go deeper. Hit{' '}
+                <kbd className="rounded bg-black/5 px-1.5 py-[1px] font-mono text-[11.5px]">⌘[</kbd>{' '}
+                or click the back arrow to step back. Reopen this
                 card any time from the <kbd className="rounded bg-black/5 px-1.5 py-[1px] font-mono text-[11.5px]">?</kbd> in the header or
                 from Help → Show Welcome.
               </p>
