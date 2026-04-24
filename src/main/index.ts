@@ -8,6 +8,12 @@ import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import { getDb } from './db/schema';
 import { Papers, Explanations, Regions } from './db/repo';
+import {
+  initAutoUpdater,
+  manualCheckForUpdates,
+  quitAndInstall,
+  getLastUpdateStatus,
+} from './updater';
 
 const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs');
 
@@ -78,6 +84,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show();
     if (process.env.ELECTRON_RENDERER_URL) mainWindow?.webContents.openDevTools({ mode: 'right' });
+    if (mainWindow) initAutoUpdater(mainWindow);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -235,6 +242,13 @@ ipcMain.handle('asset:dataUrl', async (_event, absPath: string) => {
     : 'image/png';
   return `data:${mime};base64,${bytes.toString('base64')}`;
 });
+
+// ---- auto-update IPC ----
+ipcMain.handle('update:check', async () => manualCheckForUpdates());
+ipcMain.handle('update:install', async () => {
+  quitAndInstall();
+});
+ipcMain.handle('update:status', async () => getLastUpdateStatus());
 
 ipcMain.handle('paper:state', async (_event, paperHash: string) => {
   const paper = Papers.get(paperHash);

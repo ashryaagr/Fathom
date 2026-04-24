@@ -59,4 +59,14 @@ module.exports = {
   },
   // Bundle native modules for the target Electron version.
   npmRebuild: true,
+  // Drives electron-updater — produces latest-mac.yml alongside the artifacts so the
+  // in-app auto-updater can discover new releases and swap the app bundle on restart.
+  publish: [
+    {
+      provider: 'github',
+      owner: 'ashryaagr',
+      repo: 'Fathom',
+      releaseType: 'release',
+    },
+  ],
 };
