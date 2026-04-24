@@ -107,12 +107,34 @@ function FocusPane({
     let semanticEver = false;
     let semanticAccumDeltaY = 0;
     let capturedSelection: { range: Range; text: string } | null = null;
+    let visualZoom = 1;
+    const VISUAL_MIN = 0.5;
+    const VISUAL_MAX = 3;
     const logId = Math.random().toString(36).slice(2, 6);
 
     const wheelHandler = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey) return; // non-pinch wheel is a normal scroll
       e.preventDefault();
-      if (!e.metaKey) return;
+
+      // Plain pinch (no ⌘) = visual zoom of the lens body. macOS trackpad
+      // emits deltaY < 0 for pinch-out (fingers apart → content should
+      // grow) and deltaY > 0 for pinch-in. `Math.exp(-deltaY/180)` gives
+      // a smooth multiplicative factor per wheel event so scaling feels
+      // continuous across the whole gesture.
+      if (!e.metaKey) {
+        const factor = Math.exp(-e.deltaY / 180);
+        visualZoom = Math.max(VISUAL_MIN, Math.min(VISUAL_MAX, visualZoom * factor));
+        const body = bodyRef.current;
+        if (body) {
+          // CSS `zoom` scales content + reflows scroll (unlike
+          // transform: scale, which visually scales but leaves layout
+          // metrics untouched and breaks scrollable content).
+          (body as HTMLElement & { style: CSSStyleDeclaration }).style.zoom = String(visualZoom);
+        }
+        return;
+      }
+
+      // ⌘+pinch: existing semantic-zoom / drill path.
       if (!semanticEver) {
         semanticEver = true;
         semanticAccumDeltaY = 0;
@@ -282,12 +304,39 @@ function FocusPane({
                 style={{ maxHeight: 360, objectFit: 'contain' }}
               />
             </figure>
+          ) : focused.origin === 'drill' && focused.anchorText ? (
+            // Drill origin: there's no raster capture (we drilled on a
+            // selection inside the parent lens, where the content is DOM
+            // text, not pixels). But the user explicitly selected a phrase
+            // — show THAT as the anchor so "what did I zoom into?" is
+            // immediately answered. Handwritten amber-highlighted chip,
+            // same visual vocabulary the rest of the lens uses.
+            <figure
+              className="flex items-center justify-center rounded-lg border border-[color:var(--color-lens)]/30 bg-[color:var(--color-lens-soft)]/40 px-6 py-10 shadow-[0_2px_8px_rgba(0,0,0,0.03)]"
+              aria-label="Phrase you dove into"
+            >
+              <span
+                className="text-[17px] leading-snug text-black/80"
+                style={{
+                  fontFamily:
+                    "'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive",
+                  backgroundImage:
+                    'linear-gradient(transparent 62%, rgba(201,131,42,0.28) 62%)',
+                  padding: '0 4px',
+                  maxWidth: '44ch',
+                  textAlign: 'center',
+                }}
+              >
+                {focused.anchorText.length > 220
+                  ? focused.anchorText.slice(0, 217).trimEnd() + '…'
+                  : focused.anchorText}
+              </span>
+            </figure>
           ) : (
-            // Visual placeholder — shown only when the viewport capture
-            // itself failed (rare; usually network/permissions race). A
-            // small amber-tinted rectangle stands in visually rather than
-            // echoing any text, preserving the "only the image, never the
-            // extracted words" principle.
+            // Viewport / region origin with a missing image (rare —
+            // capture failure). Generic magnifying-glass placeholder
+            // rather than OCR'd text, preserving the "anchor is the
+            // pixels the user saw, never the extracted words" principle.
             <div className="flex items-center justify-center rounded-lg border border-[color:var(--color-lens)]/30 bg-[color:var(--color-lens-soft)]/40 px-4 py-12 shadow-[0_2px_8px_rgba(0,0,0,0.03)]" aria-label="Zoomed viewport">
               <svg
                 viewBox="0 0 48 48"
@@ -518,32 +567,25 @@ function preprocessForStreaming(body: string, streaming: boolean): string {
  * We only fall back to the red "parse failed" box if the <img> itself
  * can't load — i.e. even the browser's lenient SVG renderer gave up.
  */
-function SvgFigure({ raw, streaming }: { raw: string; streaming?: boolean }) {
-  const [renderFailed, setRenderFailed] = useState(false);
-
-  // Detect incomplete SVG (mid-stream). Simplest check: no closing tag yet.
+function SvgFigure({ raw, streaming: _streaming }: { raw: string; streaming?: boolean }) {
+  // Mid-stream: Claude hasn't closed the <svg> tag yet, and trying to
+  // parse half-finished SVG produces noise. Show a soft placeholder
+  // instead of the red error box, and swap in the real render once
+  // </svg> arrives.
   const isComplete = /<\/svg\s*>/i.test(raw);
 
-  // Ensure a wrapping <svg> element + xmlns for the data URL.
+  // Normalise: ensure a wrapping <svg> + xmlns (some models emit just
+  // the inner markup). Escape bare ampersands that aren't part of an
+  // entity reference — a frequent Claude failure mode for
+  // strict parsers like DOMParser, though browsers tolerate them.
   let svg = /<svg\b/i.test(raw)
     ? raw
     : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">${raw}</svg>`;
   if (!/xmlns=/.test(svg)) {
     svg = svg.replace(/<svg\b/, '<svg xmlns="http://www.w3.org/2000/svg"');
   }
-
-  // Escape bare ampersands that aren't part of an existing entity. SVG
-  // attributes like `href="a&b"` are a common Claude failure mode for
-  // DOMParser strict-XML but the browser handles them fine once escaped.
   svg = svg.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
 
-  // Strip scripts / event handlers (trusted source but belt-and-braces).
-  svg = svg
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/javascript:/gi, '');
-
-  // Mid-stream: just a soft placeholder, not the red error box.
   if (!isComplete) {
     return (
       <figure className="my-3 flex min-h-[100px] items-center justify-center rounded-md border border-dashed border-[color:var(--color-lens)]/25 bg-[color:var(--color-lens-soft)]/25 px-3 py-3">
@@ -554,32 +596,28 @@ function SvgFigure({ raw, streaming }: { raw: string; streaming?: boolean }) {
     );
   }
 
-  if (renderFailed) {
-    return (
-      <figure className="my-3 rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
-        <div className="mb-1 text-[10px] font-semibold tracking-wider text-red-600 uppercase">
-          diagram couldn't render
-        </div>
-        <pre className="overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-black/70">
-          {raw}
-        </pre>
-      </figure>
-    );
-  }
+  // Inline DOM render via DOMPurify instead of the old
+  // `<img src="data:image/svg+xml,…">` approach. Reasons for the swap:
+  //   • `<img>` data-URL rendering silently failed for larger SVGs —
+  //     the img onError fired, the red "DIAGRAM COULDN'T RENDER" box
+  //     showed, and the user saw the raw source instead of a diagram.
+  //   • Inline SVG in the DOM gets the browser's normal renderer, which
+  //     is strictly more tolerant (matches what you'd see from a
+  //     hand-written <svg> in an HTML page).
+  //   • DOMPurify sanitises against injected <script>, on* handlers,
+  //     and javascript: URLs — Claude is trusted but we still don't
+  //     want any arbitrary-author SVG to reach DOM unsanitised.
+  const clean = DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    ADD_TAGS: ['foreignObject'], // rare but legitimate in handwritten-style diagrams
+  });
 
-  const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
   return (
-    <figure className="my-3 flex min-h-[100px] w-full justify-center rounded-md border border-black/5 bg-white/70 px-3 py-3">
-      <img
-        src={dataUrl}
-        alt="Diagram"
-        className="block h-auto max-w-full"
-        onError={() => {
-          console.error('[Lens] SVG <img> failed to load; raw:', raw.slice(0, 300));
-          setRenderFailed(true);
-        }}
-      />
-    </figure>
+    <figure
+      className="my-3 flex min-h-[100px] w-full justify-center rounded-md border border-black/5 bg-white/70 px-3 py-3 [&>svg]:h-auto [&>svg]:max-w-full"
+      dangerouslySetInnerHTML={{ __html: clean }}
+      aria-label="Diagram"
+    />
   );
 }
 
