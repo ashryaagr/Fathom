@@ -180,3 +180,52 @@ detect "selection inside a lens body" and tag the highlight with
 lens_id instead of page. Renderer renders highlights both on PDF
 pages AND in lens bodies through the same store. Same UI
 component, different selector. Schedule: v1.0.13.
+
+## 25. Zoom-out lag — pages "fall behind" the gesture — 🔄 PENDING
+User: "When I zoom out, the other pages take some time to zoom
+out. When I am scrolling, it almost feels like the page behind is
+large and then I am scrolling over it."
+
+Diagnosis path:
+- Renderer logs (every PageView's `[Lens] commitSemanticFocus`-
+  style entry — but for the page itself).
+- Likely cause: each PageView re-renders independently after a
+  zoom change; pages that aren't currently visible postpone the
+  re-render. Until they re-render, they keep their old canvas at
+  the OLD pixel scale, which CSS-scales transiently and looks
+  "still big".
+- Possible fix: apply an immediate CSS transform to all visible
+  pages on zoom (cheap, pixelated for a frame), THEN re-render
+  the canvas to the new scale (sharp). Two-pass: instant feedback
+  via transform, then the real raster lands.
+
+QA agent should reproduce by zooming via ⌘+⌥+0 / ⌘+= and watching
+PageView re-render lag in the log.
+
+Schedule: v1.0.12 alongside the rendering-perf rework below.
+
+## 26. Initial render + scroll-to-new-page slow — 🔄 PENDING
+Pages take a noticeable beat to render on first load and when
+scrolling to a not-yet-rendered page. We're already prefetching
+2000 px ahead (commit from #17) but it's not enough.
+
+Diagnosis path:
+- Use the renderer log to time each page's render-task duration.
+- Check if pdf.js is using a worker at all (it should — there's
+  `pdf.worker.min.mjs` in the bundle). If not, every render
+  blocks the main thread.
+- If it IS in a worker, only one render runs at a time (single
+  worker). Multiple cores aren't used.
+
+Possible fixes:
+- **Spawn N worker pools** for concurrent page renders. pdfjs-
+  dist exposes `GlobalWorkerOptions` and we can instantiate
+  multiple workers manually if needed. Even N=2 cuts initial
+  multi-page render time roughly in half on the dev machine.
+- Increase `rootMargin` further (4000–6000 px) — cheap, just
+  makes prefetch more aggressive.
+- **Reuse rendered canvases** across zoom changes: keep the
+  previous canvas as a CSS-scaled fallback while the new one
+  draws. Eliminates the "Rendering…" placeholder during scroll.
+
+Schedule: v1.0.12.
