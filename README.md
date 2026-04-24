@@ -93,6 +93,13 @@ Grep "self-attention" content.md  # locate where a concept is defined
 
 No retrieval layer, no vector store. The paper is a filesystem; the AI is a shell.
 
+## Methodology
+
+[docs/METHODOLOGY.md](./docs/METHODOLOGY.md) is the long-form engineering
+and scientific write-up of how Fathom works: the extraction pipeline, the
+filesystem-as-index grounding strategy, why Fathom explicitly rejects RAG,
+three-channel alignment, and the per-call explanation path.
+
 ## Design principles
 
 The product was built on a small set of principles. [docs/PRINCIPLES.md](./docs/PRINCIPLES.md) spells them out — read it before proposing changes.

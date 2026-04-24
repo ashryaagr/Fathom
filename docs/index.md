@@ -68,8 +68,11 @@ Fathom is MIT-licensed and built in the open.
 
 - [**Source →**](https://github.com/ashryaagr/Fathom)
 - [**Releases →**](https://github.com/ashryaagr/Fathom/releases)
-- [**Design principles →**]({{ '/PRINCIPLES' | relative_url }}) — the rules
-  Fathom was built on. Read before proposing changes.
+- [**Methodology →**]({{ '/METHODOLOGY' | relative_url }}) — how
+  Fathom actually works under the hood: extraction pipeline, grounding
+  strategy, why not RAG.
+- [**Design principles →**]({{ '/PRINCIPLES' | relative_url }}) — the
+  rules Fathom was built on. Read before proposing changes.
 - [**Report a bug →**](https://github.com/ashryaagr/Fathom/issues)
 
 There's no roadmap document because the roadmap is whatever the paper I'm
