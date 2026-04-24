@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import { getDb } from './db/schema';
-import { Papers, Explanations, Regions } from './db/repo';
+import { Papers, Explanations, Regions, Highlights } from './db/repo';
 import {
   initAutoUpdater,
   manualCheckForUpdates,
@@ -404,7 +404,7 @@ ipcMain.handle('asset:dataUrl', async (_event, absPath: string) => {
 // ---- auto-update IPC ----
 ipcMain.handle('update:check', async () => manualCheckForUpdates());
 ipcMain.handle('update:install', async () => {
-  quitAndInstall();
+  await quitAndInstall();
 });
 ipcMain.handle('update:status', async () => getLastUpdateStatus());
 
@@ -415,7 +415,32 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     paper,
     regions: Regions.byPaper(paperHash),
     explanations: Explanations.byPaper(paperHash),
+    highlights: Highlights.byPaper(paperHash),
   };
+});
+
+// ---- Highlights IPC ----
+ipcMain.handle(
+  'highlights:save',
+  async (
+    _event,
+    h: {
+      id: string;
+      paperHash: string;
+      page: number;
+      rects: Array<{ x: number; y: number; width: number; height: number }>;
+      text?: string;
+      color?: string;
+    },
+  ) => {
+    Highlights.insert(h);
+    return { ok: true };
+  },
+);
+
+ipcMain.handle('highlights:delete', async (_event, id: string) => {
+  Highlights.delete(id);
+  return { ok: true };
 });
 
 interface SerializedRegion {

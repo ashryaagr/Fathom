@@ -87,6 +87,56 @@ export const Regions = {
   },
 };
 
+export interface HighlightRow {
+  id: string;
+  paper_hash: string;
+  page: number;
+  rects_json: string;
+  text: string | null;
+  color: string;
+  created_at: number;
+}
+
+export const Highlights = {
+  insert(h: {
+    id: string;
+    paperHash: string;
+    page: number;
+    rects: Array<{ x: number; y: number; width: number; height: number }>;
+    text?: string;
+    color?: string;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT INTO highlights(id, paper_hash, page, rects_json, text, color, created_at)
+         VALUES (@id, @paper_hash, @page, @rects_json, @text, @color, @created_at)
+         ON CONFLICT(id) DO UPDATE SET
+           rects_json = excluded.rects_json,
+           color = excluded.color,
+           text = excluded.text`,
+      )
+      .run({
+        id: h.id,
+        paper_hash: h.paperHash,
+        page: h.page,
+        rects_json: JSON.stringify(h.rects),
+        text: h.text ?? null,
+        color: h.color ?? 'amber',
+        created_at: Date.now(),
+      });
+  },
+  byPaper(paperHash: string): HighlightRow[] {
+    return getDb()
+      .prepare(
+        'SELECT * FROM highlights WHERE paper_hash = ? ORDER BY page, created_at',
+      )
+      .all(paperHash) as HighlightRow[];
+  },
+  delete(id: string): void {
+    getDb().prepare('DELETE FROM highlights WHERE id = ?').run(id);
+  },
+};
+
 export const Explanations = {
   insert(e: {
     regionId: string;

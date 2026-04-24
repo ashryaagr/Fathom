@@ -4,6 +4,7 @@ import { pdfjsLib } from './pdf/pdfjs';
 import { useDocumentStore } from './state/document';
 import { useRegionsStore } from './state/regions';
 import { useLensStore } from './lens/store';
+import { useHighlightsStore } from './state/highlights';
 import { buildPaperIndex } from './pdf/buildIndex';
 import PdfViewer from './pdf/PdfViewer';
 import FocusView from './lens/FocusView';
@@ -13,6 +14,7 @@ import CoachHint from './lens/CoachHint';
 import GestureFeedback from './lens/GestureFeedback';
 import UpdateToast from './lens/UpdateToast';
 import { useTourStore } from './lens/tourStore';
+import { createHighlightFromSelection } from './pdf/highlightFromSelection';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -90,6 +92,7 @@ export default function App() {
       // Reset stale stores for the previous document.
       useRegionsStore.getState().clear();
       useLensStore.getState().closeAll();
+      useHighlightsStore.getState().hydrate([]);
       // Clear per-lens cache AND persisted zoom paths so nothing leaks across papers.
       useLensStore.setState({ cache: new Map(), persistedZoomPaths: new Map() });
 
@@ -130,6 +133,26 @@ export default function App() {
           }
           for (const [regionId, turns] of turnsByRegion) {
             useLensStore.getState().setCachedTurns(regionId, turns);
+          }
+          // Restore persisted amber highlights for this paper. Rects were
+          // stored in PDF user-space so they survive zoom changes.
+          if (state.highlights && state.highlights.length > 0) {
+            useHighlightsStore.getState().hydrate(
+              state.highlights.map((h) => ({
+                id: h.id,
+                paperHash: h.paper_hash,
+                page: h.page,
+                rects: JSON.parse(h.rects_json) as Array<{
+                  x: number;
+                  y: number;
+                  width: number;
+                  height: number;
+                }>,
+                text: h.text ?? undefined,
+                color: h.color,
+                createdAt: h.created_at,
+              })),
+            );
           }
         }
       } catch (err) {
@@ -208,6 +231,18 @@ export default function App() {
       if (e.metaKey && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'));
+        return;
+      }
+
+      // ⌘H — highlight the current text selection in amber. Matches the
+      // Apple Books / Preview convention. Preserved across sessions via
+      // the highlights SQLite table; rects stored in PDF user-space so
+      // they restore at any zoom level.
+      if (e.metaKey && !e.shiftKey && (e.key === 'h' || e.key === 'H')) {
+        const doc = useDocumentStore.getState().document;
+        if (!doc) return;
+        e.preventDefault();
+        void createHighlightFromSelection(doc.contentHash);
         return;
       }
 
@@ -310,16 +345,26 @@ export default function App() {
   }, [openPdf]);
 
   // Two-finger horizontal swipe → browser-style back / forward through lens
-  // history. Listens in the capture phase on the window so we beat the PDF
-  // scroller and any other child wheel-listener to the event — they were
-  // consuming horizontal wheel ticks as page-scroll and native
-  // back/forward navigation on macOS (Chromium's "swipe at window edge"
-  // feature). The `overscroll-behavior: none` in index.css plus capture-
-  // phase intercept here together lets a swipe anywhere on the window
-  // reach this handler regardless of cursor position.
+  // history. Two invariants protect against the user's "I was trying to
+  // pan/zoom the PDF and it navigated away" complaint:
+  //
+  //   1. We only engage if there's something to navigate to — a lens is
+  //      focused OR the back/forward stacks aren't empty. Otherwise the
+  //      horizontal motion is treated as a normal PDF scroll and we don't
+  //      preventDefault on it. This removes the whole class of "fake
+  //      swipe" animations from appearing over plain PDF browsing.
+  //
+  //   2. Pinch-zoom wheels carry ctrlKey=true — those are skipped up
+  //      front. We also require the gesture to be *strongly horizontal*
+  //      (|dx| > |dy| × 1.6 instead of ×1.4) so that diagonal smudges
+  //      during a pinch commit don't slip through the filter.
+  //
+  // Listens in the capture phase on the window so we beat the PDF
+  // scroller and Chromium's native window-edge back-gesture. The CSS
+  // `overscroll-behavior: none` in index.css handles the scroller side.
   useEffect(() => {
     let accum = 0;
-    let lastActive = 0; // last non-trivial wheel event
+    let lastActive = 0;
     let committed = false;
     const handler = (e: WheelEvent) => {
       if (e.ctrlKey) return; // pinch-zoom owns ctrlKey-wheels
@@ -332,15 +377,16 @@ export default function App() {
       ) {
         return;
       }
-      const now = Date.now();
 
-      // A swipe "ends" when the trackpad stops producing horizontal motion
-      // for ~180ms. Reset on that quiet gap so rapid back-to-back swipes
-      // each get a fresh threshold window. Previously we gated only on
-      // 350ms since the *last* wheel event of any kind — macOS keeps
-      // emitting tiny residual wheel ticks from inertia long after the
-      // user lifted their fingers, which kept `committed` stuck on and
-      // made every second swipe feel dead.
+      // Nav-target gate: if there's nowhere to go, horizontal wheels are
+      // the PDF's to handle. Don't preventDefault, don't accumulate,
+      // don't show a chevron. The user is just panning/scrolling.
+      const lens = useLensStore.getState();
+      const canGoBack = lens.focused !== null || lens.backStack.length > 0;
+      const canGoForward = lens.forwardStack.length > 0;
+      if (!canGoBack && !canGoForward) return;
+
+      const now = Date.now();
       const horiz = Math.abs(e.deltaX);
       if (horiz > 0.5) lastActive = now;
       if (now - lastActive > 180 || horiz < 0.5) {
@@ -350,29 +396,44 @@ export default function App() {
         }
       }
 
-      if (horiz < Math.abs(e.deltaY) * 1.4) return;
-      e.preventDefault();
+      // Stronger horizontal-dominance filter (×1.6). Pinch gestures that
+      // don't fire with ctrlKey=true (rare, but seen on some trackpad
+      // driver versions) often have ~equal |dx| and |dy| near the end of
+      // the gesture; this extra margin rejects those.
+      if (horiz < Math.abs(e.deltaY) * 1.6) return;
       accum += e.deltaX;
-      if (committed) return;
+      if (committed) {
+        e.preventDefault();
+        return;
+      }
       const threshold = 120;
-      if (accum <= -threshold) {
-        // Natural-scroll: fingers swipe RIGHT → deltaX negative → go BACK.
+      if (accum <= -threshold && canGoBack) {
+        // Natural-scroll: fingers swipe RIGHT → deltaX negative → BACK.
+        e.preventDefault();
         committed = true;
-        accum = 0; // fresh baseline for the next swipe
-        useLensStore.getState().back();
+        accum = 0;
+        lens.back();
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
           useTourStore.getState().advance('celebrated');
         }
-      } else if (accum >= threshold) {
+      } else if (accum >= threshold && canGoForward) {
+        e.preventDefault();
         committed = true;
         accum = 0;
-        useLensStore.getState().forward();
+        lens.forward();
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
+      } else if (Math.abs(accum) >= threshold) {
+        // Crossed the threshold in a direction with no target — reset
+        // silently without firing the chevron. The user's gesture just
+        // doesn't mean anything here.
+        accum = 0;
+      } else {
+        // Still accumulating — hold off on preventDefault until we
+        // actually commit, so a below-threshold drift doesn't block the
+        // scroller.
       }
     };
-    // Capture phase — fires before any child's bubble-phase listener. The
-    // PDF scroller's own wheel handler then can't consume the event.
     window.addEventListener('wheel', handler, { passive: false, capture: true });
     return () =>
       window.removeEventListener('wheel', handler, { capture: true } as EventListenerOptions);
@@ -401,6 +462,31 @@ export default function App() {
               title="Ask Claude about what's on screen (⌘+pinch)"
             >
               Ask
+            </button>
+          )}
+          {docState && (
+            <button
+              onClick={() => void createHighlightFromSelection(docState.contentHash)}
+              className="flex h-6 w-6 items-center justify-center rounded-full text-black/55 hover:bg-[color:var(--color-lens-soft)]"
+              aria-label="Highlight selection"
+              title="Highlight selected text (⌘H)"
+            >
+              {/* marker-pen icon, thin amber strokes */}
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 13 L3 11 L10.5 3.5 L12.5 5.5 L5 13 Z" />
+                <path d="M9.5 4.5 L11.5 6.5" />
+                <path d="M3 13 L2 14" />
+              </svg>
             </button>
           )}
           <button
@@ -715,6 +801,8 @@ function HelpOverlay({
           <Row k="Top-left Back/Close button" v="Leave the current lens" />
           <Row k="⌘ ⇧ D" v="Dive in (keyboard alternative to ⌘+pinch)" />
           <Row k="⌘ ⇧ A" v="Ask about the current viewport" />
+          <Row k="⌘ H" v="Highlight the current text selection (amber)" />
+          <Row k="Click highlight" v="Remove it" />
           <Row k="⌘ [ / ⌘ ]" v="Back / forward through lens history" />
           <Row k="⌘ + 0" v="Reset zoom to 100%" />
           <Row k="⌘ + = / ⌘ + −" v="Zoom in / out" />

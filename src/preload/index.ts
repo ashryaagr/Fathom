@@ -66,6 +66,15 @@ export interface PaperState {
     created_at: number;
     zoom_image_path: string | null;
   }>;
+  highlights: Array<{
+    id: string;
+    paper_hash: string;
+    page: number;
+    rects_json: string;
+    text: string | null;
+    color: string;
+    created_at: number;
+  }>;
 }
 
 const api = {
@@ -189,6 +198,19 @@ const api = {
 
   paperState: (paperHash: string): Promise<PaperState | null> =>
     ipcRenderer.invoke('paper:state', paperHash),
+
+  // ---- highlights ----
+  saveHighlight: (h: {
+    id: string;
+    paperHash: string;
+    page: number;
+    rects: Array<{ x: number; y: number; width: number; height: number }>;
+    text?: string;
+    color?: string;
+  }): Promise<{ ok: true }> => ipcRenderer.invoke('highlights:save', h),
+
+  deleteHighlight: (id: string): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('highlights:delete', id),
 
   saveRegions: (
     regions: Array<{

@@ -3,6 +3,7 @@ import { pdfjsLib, type PDFDocumentProxy } from './pdfjs';
 import { extractRegions, type Region } from './extractRegions';
 import { useRegionsStore } from '../state/regions';
 import { useLensStore, type FocusedLens } from '../lens/store';
+import HighlightLayer from './HighlightLayer';
 
 interface Props {
   doc: PDFDocumentProxy;
@@ -21,15 +22,25 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
   const textLayerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [renderedAt, setRenderedAt] = useState<number | null>(null);
+  /** The zoom the currently-painted canvas was rendered at. If the page
+   * scrolls out of view and back in at the same zoom, we skip the whole
+   * render pipeline and reuse the existing canvas pixels. Without this,
+   * every scroll oscillation tore the canvas back down to "Rendering…"
+   * and the UX felt much slower than native Preview. */
+  const renderedZoomRef = useRef<number | null>(null);
   const setRegions = useRegionsStore((s) => s.setPage);
 
-  // Visibility tracking — render only when near the viewport.
+  // Visibility tracking — render well before the page scrolls into view.
+  // 2000px rootMargin = ~3 viewport heights of prefetch, so by the time
+  // the user scrolls to a page its canvas is already painted. The cost
+  // is a few extra pages' worth of pdf.js work at idle; the benefit is
+  // that "Rendering…" placeholders almost never appear during scroll.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => setVisible(entry.isIntersecting),
-      { rootMargin: '600px 0px' },
+      { rootMargin: '2000px 0px' },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -38,6 +49,10 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
   // Canvas + text layer + region extraction. One effect so they stay in sync as zoom changes.
   useEffect(() => {
     if (!visible) return;
+    // If we already painted this page at this zoom, don't tear it down.
+    // Scrolling in/out of viewport shouldn't kick a re-render; zoom
+    // changes still do (renderedZoomRef !== zoom).
+    if (renderedZoomRef.current === zoom) return;
     const canvas = canvasRef.current;
     const textLayerContainer = textLayerRef.current;
     if (!canvas || !textLayerContainer) return;
@@ -87,6 +102,7 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
       }
       if (cancelled) return;
       setRenderedAt(Date.now());
+      renderedZoomRef.current = zoom;
 
       const textContent = await textContentPromise;
       if (cancelled) return;
@@ -161,6 +177,12 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
       data-page={pageNumber}
     >
       <canvas ref={canvasRef} className="absolute top-0 left-0 block" />
+      <HighlightLayer
+        paperHash={paperHash}
+        pageNumber={pageNumber}
+        pageHeight={baseSize.height}
+        zoom={zoom}
+      />
       <div ref={textLayerRef} className="textLayer absolute top-0 left-0" />
       <CachedLensMarkers
         paperHash={paperHash}

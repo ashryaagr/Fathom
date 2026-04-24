@@ -53,6 +53,23 @@ function migrate(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_explanations_region ON explanations(region_id, depth);
+
+    -- Highlights: amber (or palette-coloured) marks the user drops over
+    -- passages they want to keep visible. rects_json is a JSON array of
+    -- PDF user-space rectangles, one entry per line of the selection
+    -- (selections can span multiple lines with different widths).
+    CREATE TABLE IF NOT EXISTS highlights (
+      id TEXT PRIMARY KEY,
+      paper_hash TEXT NOT NULL,
+      page INTEGER NOT NULL,
+      rects_json TEXT NOT NULL,
+      text TEXT,
+      color TEXT NOT NULL DEFAULT 'amber',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (paper_hash) REFERENCES papers(content_hash) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_highlights_paper_page ON highlights(paper_hash, page);
   `);
 
   // Additive migration: the zoom image path was added after the initial schema shipped.

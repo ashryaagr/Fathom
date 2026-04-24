@@ -74,13 +74,75 @@ env-vars.
 
 ## Re-audit (from user re-asking what else I skipped)
 
-- [ ] **Highlighter tool** — genuinely not built. User asked at least twice.
-      Needs: new `highlights` table in SQLite (id, paper_hash, page,
-      rects_json, color, created_at), a toolbar toggle in the header next
-      to the gear icon, drag-over-text to create a highlight rect stack,
-      persistence + restore on re-open, small palette (default amber /
-      yellow). Separate commit, ~2-3h of focused work.
+- [x] **Highlighter tool** — ✅ DONE.
+      - Schema: additive `highlights` table (id, paper_hash, page,
+        rects_json, text, color, created_at) with paper-page index.
+      - Repo: `Highlights.insert / byPaper / delete`.
+      - IPC: `highlights:save`, `highlights:delete`; `paper:state` now
+        returns `highlights` alongside regions/explanations.
+      - Renderer: `useHighlightsStore` (id map + paper-page secondary
+        index) and `HighlightLayer.tsx` rendering amber rects under the
+        text layer via `mix-blend-mode: multiply`.
+      - Entry points: ⌘H keyboard shortcut OR marker icon in the header.
+        Both invoke `createHighlightFromSelection` which converts DOM
+        client rects to PDF user-space, buckets by page, writes through
+        to SQLite, and clears the selection as visual confirmation.
+      - Click a highlight → confirm → delete.
+      - Hydrated on PDF open; rects in PDF user-space so they survive
+        zoom changes and re-opens.
+      - v1 is amber-only; palette TBD in a follow-up.
 
 - [x] **Visible drop zone in the empty state** — ✅ DONE in the same commit
       as this todo edit. Dashed-border centered drop target, brightens on
       drag-over, plus "Or pick from a folder" button at the bottom.
+
+## 12. Auto-update rearchitected around install.sh — ✅ DONE
+Ad-hoc signing can't satisfy Squirrel.Mac's code-requirement matching.
+Rather than translate the error, we replaced Squirrel entirely: the
+same `install.sh` that powers the terminal first-install also powers
+in-app updates. One script, one code path, works indefinitely with
+ad-hoc signing, no Apple Developer fee. See `docs/DISTRIBUTION.md`.
+
+## 13. Agent harness (CLAUDE.md + skills) — ✅ DONE
+- `CLAUDE.md` committed to the repo (removed from `.gitignore`); section
+  §0 encodes the working rules (every instruction executed, deferred
+  ones to todo.md, end-to-end verify shipping paths, agent harness as
+  first-class artifact, UX-review on controls change).
+- `.claude/skills/` has three skills:
+  - `fathom-e2e-test.md` — keyboard-gesture-driven E2E test loop.
+  - `fathom-release.md` — build → sign → publish → verify 1→N+1 update.
+  - `fathom-ux-review.md` — design-pattern checklist for controls changes.
+- No coding-specific agents.
+
+## 14. UX design-pattern review agent — ✅ DONE
+Shipped as `fathom-ux-review.md` skill. Lists 10 checks covering gesture
+direction, no-op feedback suppression, platform conventions, affordance
+visibility, copy, agent-testability.
+
+## 15. Swipe-vs-pan distinction — ✅ DONE
+Swipe handler now early-returns when there's no lens focused and no
+history — horizontal wheels become normal PDF scrolls. Chevron only
+fires when action has effect. Horizontal-dominance filter bumped from
+×1.4 to ×1.6 to reject near-diagonal pinches that leaked through.
+
+## 16. Local CLAUDE.md discipline rule — ✅ DONE
+Added §0 to the project CLAUDE.md with the user-instruction-discipline
+rule plus end-to-end-verify, agent-harness, and UX-review rules.
+
+## 17. First-paint PDF render speed — ✅ DONE
+- `rootMargin` bumped 600px → 2000px (~3 viewports of prefetch).
+- Added `renderedZoomRef` guard so scrolling in/out of viewport at the
+  same zoom no longer tears the canvas back to "Rendering…"; only zoom
+  changes trigger re-render.
+
+## 18. Two-install-path distribution — ✅ DONE
+DMG + `curl | bash` both supported. Both produce the same `Fathom.app`.
+Updates funnel through the in-app updater that spawns install.sh
+internally. Documented in `README.md`, `docs/INSTALL.md`, and
+`docs/DISTRIBUTION.md`.
+
+## 19. Handwritten font across docs — ✅ DONE
+Expanded Excalifont from hero-only to the body + all headings on the
+docs site. Nav, tables, code, footer stay sans-serif for scan-ability
+(handwriting in those hurts more than it helps).
+
