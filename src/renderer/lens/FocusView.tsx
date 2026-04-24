@@ -105,7 +105,7 @@ function FocusPane({
   // trigger the handler.
   useEffect(() => {
     let semanticEver = false;
-    let lastSemanticDir: 'in' | 'out' | null = null;
+    let semanticAccumDeltaY = 0;
     let capturedSelection: { range: Range; text: string } | null = null;
     const logId = Math.random().toString(36).slice(2, 6);
 
@@ -113,8 +113,11 @@ function FocusPane({
       if (!e.ctrlKey) return;
       e.preventDefault();
       if (!e.metaKey) return;
-      semanticEver = true;
-      if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
+      if (!semanticEver) {
+        semanticEver = true;
+        semanticAccumDeltaY = 0;
+      }
+      semanticAccumDeltaY += e.deltaY;
       // Snapshot selection on the first Cmd+wheel of this gesture — before
       // the pinch has a chance to clear it.
       if (!capturedSelection) {
@@ -122,7 +125,9 @@ function FocusPane({
         const text = sel?.toString().trim() ?? '';
         if (text && sel && sel.rangeCount > 0) {
           capturedSelection = { range: sel.getRangeAt(0).cloneRange(), text };
-          console.log(`[LensGesture ${logId}] captured selection: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`);
+          console.log(
+            `[LensGesture ${logId}] captured selection: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`,
+          );
         }
       }
     };
@@ -133,13 +138,21 @@ function FocusPane({
       // right with two fingers to go back through the stack.
       if (e.key !== 'Meta') return;
       console.log(
-        `[LensGesture ${logId}] Cmd release — semanticEver=${semanticEver} dir=${lastSemanticDir ?? 'null'} capturedSel=${!!capturedSelection}`,
+        `[LensGesture ${logId}] Cmd release — semanticEver=${semanticEver} accumΔ=${semanticAccumDeltaY.toFixed(1)} capturedSel=${!!capturedSelection}`,
       );
       if (!semanticEver) {
         capturedSelection = null;
         return;
       }
-      if (lastSemanticDir === 'out') {
+      // Interpret direction from the *net* motion, not the last wheel
+      // event. A trackpad pinch typically emits ~1-10 deltaY per event;
+      // 30+ net positive is a firm zoom-out gesture ("take me back").
+      // Anything less is considered an ambiguous-or-zoom-in gesture and
+      // defaults to drill (if a phrase is selected).
+      const OUT_THRESHOLD = 30;
+      const isExplicitZoomOut = semanticAccumDeltaY > OUT_THRESHOLD;
+
+      if (isExplicitZoomOut) {
         back();
       } else if (capturedSelection) {
         const rect = capturedSelection.range.getBoundingClientRect();
@@ -148,7 +161,6 @@ function FocusPane({
           selection: capturedSelection.text,
         });
         window.getSelection()?.removeAllRanges();
-        // Interactive tour: a drill advances past 'drill'.
         if (useTourStore.getState().step === 'drill') {
           useTourStore.getState().advance('swipe');
         }
@@ -157,7 +169,7 @@ function FocusPane({
         setTimeout(() => setHint(null), 1500);
       }
       semanticEver = false;
-      lastSemanticDir = null;
+      semanticAccumDeltaY = 0;
       capturedSelection = null;
     };
 
@@ -225,15 +237,27 @@ function FocusPane({
               />
             </figure>
           ) : (
-            // No extracted-text fallback — per product rule the lens never
-            // shows the OCR'd/extracted text of what was zoomed into. If the
-            // viewport image failed to capture, show a minimal placeholder
-            // (not the passage as a blockquote).
-            <div className="rounded-md border border-dashed border-black/10 bg-white/40 px-4 py-3 text-[12px] italic text-black/45">
-              Zoomed on page {focused.page}
-              {focused.focusPhrase && (
-                <> · {focused.focusPhrase}</>
-              )}
+            // Visual placeholder — shown only when the viewport capture
+            // itself failed (rare; usually network/permissions race). A
+            // small amber-tinted rectangle stands in visually rather than
+            // echoing any text, preserving the "only the image, never the
+            // extracted words" principle.
+            <div className="flex items-center justify-center rounded-lg border border-[color:var(--color-lens)]/30 bg-[color:var(--color-lens-soft)]/40 px-4 py-12 shadow-[0_2px_8px_rgba(0,0,0,0.03)]" aria-label="Zoomed viewport">
+              <svg
+                viewBox="0 0 48 48"
+                width="44"
+                height="44"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-[color:var(--color-lens)]/75"
+              >
+                <rect x="8" y="10" width="32" height="28" rx="3"/>
+                <circle cx="24" cy="24" r="7"/>
+                <path d="M29 29 L34 34"/>
+              </svg>
             </div>
           )}
 

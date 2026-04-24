@@ -76,6 +76,7 @@ export default function PdfViewer() {
     if (!el || !docState || pageBaseSizes.length === 0) return;
 
     let semanticEver = false; // became true when any wheel event had metaKey=true
+    let semanticAccumDeltaY = 0; // net deltaY during the ⌘-held phase
     let lastSemanticDir: 'in' | 'out' | null = null;
     let lastCursor: { x: number; y: number } | null = null;
 
@@ -96,8 +97,10 @@ export default function PdfViewer() {
       if (e.metaKey) {
         if (!semanticEver) {
           semanticEver = true;
+          semanticAccumDeltaY = 0;
           setArmed(true);
         }
+        semanticAccumDeltaY += e.deltaY;
         if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
       }
 
@@ -117,34 +120,32 @@ export default function PdfViewer() {
       // If a focus is open, it owns the gesture — don't commit behind its back.
       if (useLensStore.getState().focused) {
         semanticEver = false;
+        semanticAccumDeltaY = 0;
         lastSemanticDir = null;
         setArmed(false);
         return;
       }
-      const dir = lastSemanticDir;
-      console.log(`[Lens] Cmd released with semantic intent: ${dir ?? 'in (no delta)'}`);
-      if (dir === 'in' || dir === null) {
-        commitSemanticFocus(
-          el,
-          docState.contentHash,
-          pageBaseSizes,
-          useDocumentStore.getState().zoom,
-          lastCursor,
-        );
-        // Interactive tour: advance past the 'pinch' step the moment the
-        // user successfully commits a semantic focus (we'll know a lens
-        // opened by watching useLensStore but this is fine too).
-        if (useTourStore.getState().step === 'pinch') {
-          useTourStore.getState().advance('ask');
-        }
-      } else {
-        const lens = useLensStore.getState();
-        if (lens.focused) {
-          if (lens.backStack.length > 0) lens.back();
-          else lens.closeAll();
-        }
+      // In the PDF view there's no lens to close, so any semantic gesture
+      // means "open a focus here". The prior code gated on `lastSemanticDir
+      // === 'in'`, which missed the common case where a user's pinch naturally
+      // reverses direction mid-gesture (fingers drift outward then inward) —
+      // the final wheel event was 'out', the code did nothing, the user saw
+      // a silently-failed pinch. Direction-agnostic commit fixes that.
+      console.log(
+        `[Lens] Cmd released with semantic intent: accumΔ=${semanticAccumDeltaY.toFixed(1)} last=${lastSemanticDir ?? 'none'}`,
+      );
+      commitSemanticFocus(
+        el,
+        docState.contentHash,
+        pageBaseSizes,
+        useDocumentStore.getState().zoom,
+        lastCursor,
+      );
+      if (useTourStore.getState().step === 'pinch') {
+        useTourStore.getState().advance('ask');
       }
       semanticEver = false;
+      semanticAccumDeltaY = 0;
       lastSemanticDir = null;
       setArmed(false);
     };
