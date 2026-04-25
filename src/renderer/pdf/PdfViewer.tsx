@@ -258,7 +258,16 @@ export default function PdfViewer() {
           release ⌘ to dive in · selection or viewport
         </div>
       )}
-      <div ref={scrollerRef} className="flex-1 overflow-auto px-8 py-4" data-pdf-scroller>
+      {/* `scrollbar-gutter: stable both-edges` reserves the same gutter
+          on BOTH sides whether or not the vertical scrollbar is
+          visible, so the `mx-auto`-centered page stays optically
+          centered regardless of the user's macOS "show scrollbars"
+          preference. Without this the scrollbar takes ~15 px on the
+          right when "Always" is set, mx-auto centers in the
+          (now-narrower) content box, and the page shifts left —
+          exactly the "less space on left, more on right" the user
+          reported in v1.0.18. */}
+      <div ref={scrollerRef} className="flex-1 overflow-auto px-8 py-4 [scrollbar-gutter:stable_both-edges]" data-pdf-scroller>
         {pages.map((p) => {
           // Use the most-recently-known size as a placeholder for un-measured pages so the
           // layout doesn't flash the wrong dimensions. Most research papers are uniform-sized.
