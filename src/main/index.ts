@@ -118,6 +118,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 const activeExplains = new Map<string, AbortController>();
 
+/**
+ * Send a message to the renderer only if the window AND its webContents
+ * are still alive. Electron destroys webContents when the window closes,
+ * and calling `send()` on a destroyed webContents throws
+ * "Object has been destroyed" — which bubbles up as an uncaught exception
+ * in main and can take the app down. All menu / timer / event-driven
+ * sends should use this helper instead of `mainWindow?.webContents.send`.
+ */
+function safeSend(channel: string, ...args: unknown[]): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const wc = mainWindow.webContents;
+  if (wc.isDestroyed()) return;
+  wc.send(channel, ...args);
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -628,7 +643,7 @@ async function openSamplePaper(): Promise<void> {
     });
     return;
   }
-  mainWindow.webContents.send('pdf:openExternal', destPath);
+  safeSend('pdf:openExternal', destPath);
 }
 
 function buildAppMenu(): void {
@@ -643,7 +658,7 @@ function buildAppMenu(): void {
         {
           label: 'Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click: () => mainWindow?.webContents.send('settings:show'),
+          click: () => safeSend('settings:show'),
         },
         { type: 'separator' },
         { role: 'services' },
@@ -662,7 +677,7 @@ function buildAppMenu(): void {
           label: 'Open PDF…',
           accelerator: 'CmdOrCtrl+O',
           click: () => {
-            mainWindow?.webContents.send('pdf:openRequest');
+            safeSend('pdf:openRequest');
           },
         },
         {
@@ -678,7 +693,7 @@ function buildAppMenu(): void {
         {
           label: 'Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click: () => mainWindow?.webContents.send('settings:show'),
+          click: () => safeSend('settings:show'),
         },
         { type: 'separator' },
         { role: 'close' },
@@ -693,14 +708,21 @@ function buildAppMenu(): void {
         {
           label: 'Show Welcome Tour',
           click: () => {
-            mainWindow?.webContents.send('tour:show');
+            safeSend('tour:show');
           },
         },
         {
           label: 'Check for Updates…',
           click: async () => {
-            if (!mainWindow) return;
+            if (!mainWindow || mainWindow.isDestroyed()) return;
             const status = await manualCheckForUpdates();
+            // Re-check after the await — the user could have closed the
+            // window while the check was in flight, and
+            // dialog.showMessageBox on a destroyed BrowserWindow throws
+            // "Object has been destroyed" which bubbles up as a fatal
+            // uncaught exception (this was the root cause of the
+            // "whole screen went white" crash the user reported).
+            if (!mainWindow || mainWindow.isDestroyed()) return;
             const { dialog } = require('electron') as typeof import('electron');
             // Turn the updater state into a one-sentence summary the user can
             // read and dismiss — no need for a toast system here.
@@ -798,7 +820,7 @@ const openFileQueue: string[] = [];
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
   if (mainWindow) {
-    mainWindow.webContents.send('pdf:openExternal', filePath);
+    safeSend('pdf:openExternal', filePath);
   } else {
     openFileQueue.push(filePath);
   }
@@ -854,7 +876,7 @@ app.whenReady().then(async () => {
     // the window was ready.
     while (openFileQueue.length > 0) {
       const p = openFileQueue.shift()!;
-      mainWindow.webContents.send('pdf:openExternal', p);
+      safeSend('pdf:openExternal', p);
     }
   }
   app.on('activate', async () => {

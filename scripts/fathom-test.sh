@@ -14,6 +14,15 @@
 #   scripts/fathom-test.sh log [N]        # tail last N (default 40) log lines
 #   scripts/fathom-test.sh click "Button Label"   # press a button in the frontmost dialog
 #   scripts/fathom-test.sh key <keycode>  # send a raw key press via System Events
+#
+#   # Gesture keyboard equivalents — usable by a computer-use agent that
+#   # can send keycodes but can't synthesize trackpad wheel events.
+#   scripts/fathom-test.sh dive           # ⌘⇧D — open lens on current viewport (pinch equivalent)
+#   scripts/fathom-test.sh ask            # ⌘⇧A — "Ask about viewport" (same effect)
+#   scripts/fathom-test.sh back           # ⌘[ — swipe back through lens history
+#   scripts/fathom-test.sh forward        # ⌘] — swipe forward
+#   scripts/fathom-test.sh prefs          # ⌘, — open Preferences panel
+#   scripts/fathom-test.sh open-pdf       # ⌘O — open PDF dialog
 
 set -euo pipefail
 
@@ -85,8 +94,40 @@ EOF
     osascript -e "tell application \"System Events\" to key code $keycode"
     ;;
 
+  # --- Gesture keyboard equivalents ---
+  dive|ask)
+    # ⌘⇧D / ⌘⇧A — semantic-zoom commit on current viewport.
+    osascript -e 'tell application "Fathom" to activate' \
+      -e 'delay 0.2' \
+      -e 'tell application "System Events" to keystroke "d" using {command down, shift down}'
+    ;;
+  back)
+    # ⌘[ — swipe back through lens history.
+    osascript -e 'tell application "Fathom" to activate' \
+      -e 'delay 0.2' \
+      -e 'tell application "System Events" to keystroke "[" using {command down}'
+    ;;
+  forward)
+    # ⌘] — swipe forward.
+    osascript -e 'tell application "Fathom" to activate' \
+      -e 'delay 0.2' \
+      -e 'tell application "System Events" to keystroke "]" using {command down}'
+    ;;
+  prefs)
+    # ⌘, — open Preferences.
+    osascript -e 'tell application "Fathom" to activate' \
+      -e 'delay 0.2' \
+      -e 'tell application "System Events" to keystroke "," using {command down}'
+    ;;
+  open-pdf)
+    # ⌘O — open the PDF picker.
+    osascript -e 'tell application "Fathom" to activate' \
+      -e 'delay 0.2' \
+      -e 'tell application "System Events" to keystroke "o" using {command down}'
+    ;;
+
   *)
-    echo "usage: $0 {reset|launch|shot [name]|log [n]|click <label>|key <keycode>}" >&2
+    echo "usage: $0 {reset|launch|shot [name]|log [n]|click <label>|key <keycode>|dive|ask|back|forward|prefs|open-pdf}" >&2
     exit 1
     ;;
 esac

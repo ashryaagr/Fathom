@@ -166,8 +166,18 @@ export default function App() {
     }
   }, [setDocument]);
 
-  // Global F1 / ⌘⇧? to toggle help. Suppress when an input/textarea/contenteditable
-  // is focused so the user can actually type "?" into the Ask box.
+  // Keyboard gesture alternatives. Makes the app fully operable without a
+  // trackpad — which matters both for accessibility (users without
+  // multi-touch hardware) and for automated testing by a computer-use
+  // agent that can fire key events but can't synthesize trackpad
+  // WheelEvents with ctrlKey/deltaX. Every trackpad gesture has a keyboard
+  // sibling:
+  //   ⌘⇧D  — Dive in (equivalent to ⌘+pinch release; opens lens at
+  //           the cursor or current viewport)
+  //   ⌘⇧A  — Ask about current viewport (same as the "Ask" header button)
+  //   ⌘[   — Back through lens history (same as two-finger swipe right)
+  //   ⌘]   — Forward through lens history
+  //   F1 / ⌘⇧?  — Toggle help overlay
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -177,9 +187,46 @@ export default function App() {
           target.tagName === 'TEXTAREA' ||
           target.isContentEditable);
       if (inInput) return;
+
       if (e.key === 'F1' || (e.key === '?' && e.metaKey && e.shiftKey)) {
         e.preventDefault();
         setShowHelp((v) => !v);
+        return;
+      }
+
+      // ⌘⇧D — dive in. Dispatches the same event the Ask header button
+      // does; PdfViewer runs commitSemanticFocus through the same path
+      // the trackpad gesture uses.
+      if (e.metaKey && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'));
+        return;
+      }
+
+      // ⌘⇧A — same as above but wired to the "Ask about viewport"
+      // semantics explicitly; both shortcuts available for memory.
+      if (e.metaKey && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('fathom:askCurrentViewport'));
+        return;
+      }
+
+      // ⌘[ — back through lens history (swipe right equivalent).
+      if (e.metaKey && !e.shiftKey && e.key === '[') {
+        e.preventDefault();
+        useLensStore.getState().back();
+        window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
+        if (useTourStore.getState().step === 'swipe') {
+          useTourStore.getState().advance('celebrated');
+        }
+        return;
+      }
+      // ⌘] — forward.
+      if (e.metaKey && !e.shiftKey && e.key === ']') {
+        e.preventDefault();
+        useLensStore.getState().forward();
+        window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
+        return;
       }
     };
     window.addEventListener('keydown', handler);
@@ -388,21 +435,7 @@ export default function App() {
         {docState ? (
           <PdfViewer />
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <button
-                onClick={() => void openPdf()}
-                disabled={loading}
-                className="rounded-md bg-black px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-black/85 active:scale-[0.98] disabled:opacity-50"
-              >
-                {loading ? 'Opening…' : 'Open PDF…'}
-              </button>
-              {error && <div className="text-xs text-red-600">{error}</div>}
-              <div className="text-xs text-black/40">
-                Pinch to zoom · ⌘ + pinch on a paragraph to dive in
-              </div>
-            </div>
-          </div>
+          <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p) => void openPdf(p)} />
         )}
       </main>
 
@@ -532,6 +565,108 @@ function IndexingToast({
   );
 }
 
+/**
+ * Fathom's empty state — the screen a user sees before any PDF is open.
+ *
+ * Two clearly-offered entry points: a big centered drop zone that accepts
+ * a dragged PDF, and an "Open PDF…" button underneath for users who'd
+ * rather click. The drop zone brightens when the user drags a PDF over it
+ * so the affordance is obvious mid-gesture. Drag-and-drop at the window
+ * level still works too — this is just the visible invitation.
+ */
+function EmptyState({
+  loading,
+  error,
+  onOpen,
+  onOpenPath,
+}: {
+  loading: boolean;
+  error: string | null;
+  onOpen: () => void;
+  onOpenPath: (path: string) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  return (
+    <div className="flex h-full items-center justify-center px-8">
+      <div
+        onDragOver={(e) => {
+          if (!e.dataTransfer?.types?.includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const file = Array.from(e.dataTransfer.files).find((f) =>
+            f.name.toLowerCase().endsWith('.pdf'),
+          );
+          if (!file) return;
+          const path = (file as File & { path?: string }).path;
+          if (path) onOpenPath(path);
+        }}
+        onClick={onOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') onOpen();
+        }}
+        className={`group flex w-[min(520px,90vw)] cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-8 py-14 transition-all ${
+          dragOver
+            ? 'border-[color:var(--color-lens)] bg-[color:var(--color-lens-soft)]/60 scale-[1.01]'
+            : 'border-black/15 bg-white/30 hover:border-black/30 hover:bg-white/50'
+        }`}
+      >
+        {/* Document + arrow icon */}
+        <svg
+          width="56"
+          height="56"
+          viewBox="0 0 56 56"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`transition-colors ${dragOver ? 'text-[color:var(--color-lens)]' : 'text-black/40'}`}
+          aria-hidden="true"
+        >
+          <path d="M14 8 L36 8 L44 16 L44 48 L14 48 Z" />
+          <path d="M36 8 L36 16 L44 16" />
+          {/* down-arrow into the doc */}
+          <path d="M28 22 L28 36" />
+          <path d="M22 30 L28 36 L34 30" />
+        </svg>
+
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="text-[15px] font-medium text-black/80">
+            {dragOver ? 'Drop it in' : 'Drop a PDF here'}
+          </div>
+          <div className="text-[12px] text-black/40">
+            or click to browse · also File → Open PDF… (⌘O)
+          </div>
+        </div>
+      </div>
+
+      <div className="pointer-events-none fixed bottom-8 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-[11.5px] text-black/35">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+          disabled={loading}
+          className="pointer-events-auto rounded-full bg-black/85 px-4 py-1.5 text-[12px] font-medium text-white/95 shadow-[0_4px_16px_rgba(0,0,0,0.1)] transition hover:bg-black disabled:opacity-50"
+        >
+          {loading ? 'Opening…' : 'Or pick from a folder'}
+        </button>
+        {error && <div className="text-xs text-red-600">{error}</div>}
+        <div>Pinch to zoom · ⌘ + pinch to dive into a passage</div>
+      </div>
+    </div>
+  );
+}
+
 function HelpOverlay({
   onClose,
   focused,
@@ -578,6 +713,9 @@ function HelpOverlay({
           <Row k="Select text + ⌘ + pinch in" v="Dive into the selected concept" />
           <Row k="Swipe right (two-finger)" v="Go back through lens history" />
           <Row k="Top-left Back/Close button" v="Leave the current lens" />
+          <Row k="⌘ ⇧ D" v="Dive in (keyboard alternative to ⌘+pinch)" />
+          <Row k="⌘ ⇧ A" v="Ask about the current viewport" />
+          <Row k="⌘ [ / ⌘ ]" v="Back / forward through lens history" />
           <Row k="⌘ + 0" v="Reset zoom to 100%" />
           <Row k="⌘ + = / ⌘ + −" v="Zoom in / out" />
           <Row k="?" v="Toggle this help" />

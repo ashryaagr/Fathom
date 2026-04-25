@@ -71,3 +71,16 @@ Not actionable until user enrolls in the Developer Program + provides
 Developer ID cert + app-specific password. When those land: flip
 `mac.identity`, enable `hardenedRuntime`, add notarize config, add CI
 env-vars.
+
+## Re-audit (from user re-asking what else I skipped)
+
+- [ ] **Highlighter tool** — genuinely not built. User asked at least twice.
+      Needs: new `highlights` table in SQLite (id, paper_hash, page,
+      rects_json, color, created_at), a toolbar toggle in the header next
+      to the gear icon, drag-over-text to create a highlight rect stack,
+      persistence + restore on re-open, small palette (default amber /
+      yellow). Separate commit, ~2-3h of focused work.
+
+- [x] **Visible drop zone in the empty state** — ✅ DONE in the same commit
+      as this todo edit. Dashed-border centered drop target, brightens on
+      drag-over, plus "Or pick from a folder" button at the bottom.
