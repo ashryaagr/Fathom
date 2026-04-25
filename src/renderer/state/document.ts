@@ -9,6 +9,9 @@ export interface OpenDocument {
   contentHash: string;
   doc: PDFDocumentProxy;
   numPages: number;
+  /** CSS-pixel scrollY from the last reading session. Consumed once
+   * by PdfViewer's scroll-restore effect. (todo #42) */
+  initialScrollY?: number;
 }
 
 interface DocumentState {

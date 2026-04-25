@@ -5,6 +5,8 @@ export interface PaperRow {
   title: string | null;
   last_opened: number;
   digest_json: string | null;
+  last_scroll_y: number | null;
+  last_path: string | null;
 }
 
 export interface RegionRow {
@@ -28,27 +30,51 @@ export interface ExplanationRow {
 }
 
 export const Papers = {
-  upsert(p: { contentHash: string; title?: string; digest?: unknown }): void {
+  upsert(p: { contentHash: string; title?: string; digest?: unknown; path?: string }): void {
     getDb()
       .prepare(
-        `INSERT INTO papers(content_hash, title, last_opened, digest_json)
-         VALUES (@hash, @title, @now, @digest)
+        `INSERT INTO papers(content_hash, title, last_opened, digest_json, last_path)
+         VALUES (@hash, @title, @now, @digest, @path)
          ON CONFLICT(content_hash) DO UPDATE SET
            title = COALESCE(excluded.title, papers.title),
            last_opened = excluded.last_opened,
-           digest_json = COALESCE(excluded.digest_json, papers.digest_json)`,
+           digest_json = COALESCE(excluded.digest_json, papers.digest_json),
+           last_path = COALESCE(excluded.last_path, papers.last_path)`,
       )
       .run({
         hash: p.contentHash,
         title: p.title ?? null,
         now: Date.now(),
         digest: p.digest ? JSON.stringify(p.digest) : null,
+        path: p.path ?? null,
       });
   },
   get(contentHash: string): PaperRow | null {
     return (getDb()
       .prepare('SELECT * FROM papers WHERE content_hash = ?')
       .get(contentHash) as PaperRow | undefined) ?? null;
+  },
+  /** Persist where the user was scrolled to in the PDF, so the next
+   * open lands at the same place. Throttled writes are the renderer's
+   * responsibility — this just clobbers the column. (todo #42) */
+  saveScroll(contentHash: string, scrollY: number): void {
+    getDb()
+      .prepare('UPDATE papers SET last_scroll_y = ? WHERE content_hash = ?')
+      .run(Math.max(0, Math.round(scrollY)), contentHash);
+  },
+  /** Most-recently-opened papers (drives the welcome screen's recent
+   * list, todo #43). Filters out rows without a known path because we
+   * can't reopen them without one — but they stay in the DB so other
+   * paper-keyed state (lens turns, highlights) is preserved. */
+  recent(limit: number): PaperRow[] {
+    return getDb()
+      .prepare(
+        `SELECT * FROM papers
+         WHERE last_path IS NOT NULL AND last_path != ''
+         ORDER BY last_opened DESC
+         LIMIT ?`,
+      )
+      .all(limit) as PaperRow[];
   },
 };
 

@@ -37,9 +37,59 @@ export default function PdfViewer() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [pageBaseSizes, setPageBaseSizes] = useState<Array<{ width: number; height: number }>>([]);
   const [armed, setArmed] = useState(false);
+  // We want to restore the saved scrollY exactly once per docState
+  // change, after enough pages have been measured for the scroller's
+  // scrollHeight to actually reach that Y. Re-running on every render
+  // would yank the user back to the start every time they scrolled.
+  const restoredScrollRef = useRef<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<
     { x: number; y: number; selection: string } | null
   >(null);
+
+  // Restore the saved scroll position after enough pages have been
+  // measured for the scroller's scrollHeight to actually reach that
+  // Y. (todo #42 — reopen a paper at the position you left it.)
+  // Triggers on docState change and on each page-size measurement
+  // until the target Y becomes reachable, then never re-runs for
+  // this document.
+  useEffect(() => {
+    if (!docState) return;
+    if (restoredScrollRef.current === docState.contentHash) return;
+    const targetY = docState.initialScrollY ?? 0;
+    if (targetY <= 0) {
+      restoredScrollRef.current = docState.contentHash;
+      return;
+    }
+    const el = scrollerRef.current;
+    if (!el) return;
+    // Wait until enough scrollable content exists to reach targetY.
+    if (el.scrollHeight <= targetY + el.clientHeight) return;
+    el.scrollTo({ top: targetY, behavior: 'auto' });
+    restoredScrollRef.current = docState.contentHash;
+  }, [docState, pageBaseSizes]);
+
+  // Save the user's scroll position throttled (~500 ms) so reopening
+  // the paper later lands them right where they were. The write IPC
+  // is fire-and-forget; if it fails we don't surface anything — the
+  // user just won't get position memory for that paper. (todo #42)
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || !docState) return;
+    const hash = docState.contentHash;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const y = el.scrollTop;
+        void window.lens.savePaperScroll?.({ paperHash: hash, scrollY: y }).catch(() => {});
+      }, 500);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [docState]);
 
   // Progressively fill in each page's base dimensions so the layout settles one page at a
   // time rather than showing a forest of 612×792 placeholders until the whole doc is measured.

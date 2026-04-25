@@ -305,14 +305,21 @@ async function prepareOpenedPdf(filePath: string) {
   writeSettings({ lastOpenDir: dirname(filePath) });
   const bytes = await readFile(filePath);
   const contentHash = createHash('sha256').update(bytes).digest('hex');
-  Papers.upsert({ contentHash, title: filePath.split('/').pop() });
+  // Persist the path here too — the welcome screen's recent-PDFs
+  // list (todo #43) needs it to reopen later, and the only spots
+  // that have the canonical absolute path are the open-flows.
+  Papers.upsert({ contentHash, title: filePath.split('/').pop(), path: filePath });
   const indexDir = await ensureIndexDir(filePath, contentHash);
+  // Pull the saved scroll position so the renderer can scroll there
+  // after pages mount (todo #42 — reopen at last reading position).
+  const row = Papers.get(contentHash);
   return {
     path: filePath,
     indexDir,
     name: filePath.split('/').pop() ?? 'document.pdf',
     contentHash,
     bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    lastScrollY: row?.last_scroll_y ?? 0,
   };
 }
 
@@ -695,6 +702,53 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
     lensHighlights: LensHighlights.byPaper(paperHash),
   };
 });
+
+// Persist scroll position. Renderer fires this throttled (~500 ms)
+// while the user scrolls, plus once on close. The actual write is
+// cheap — a single UPDATE of one INTEGER. (todo #42)
+ipcMain.handle(
+  'paper:saveScroll',
+  async (_event, req: { paperHash: string; scrollY: number }): Promise<{ ok: boolean }> => {
+    try {
+      Papers.saveScroll(req.paperHash, req.scrollY);
+      return { ok: true };
+    } catch (err) {
+      console.warn('[paper:saveScroll] failed', err);
+      return { ok: false };
+    }
+  },
+);
+
+// Most-recently-opened papers, for the welcome-screen recents list
+// (todo #43 — VS Code-style "open a recent project" affordance).
+// Filters server-side to rows that still have a known path AND
+// where the file actually still exists at that path — keeps the
+// list useful (no broken entries pointing to moved/deleted files).
+ipcMain.handle(
+  'paper:recent',
+  async (
+    _event,
+    limit?: number,
+  ): Promise<
+    Array<{
+      contentHash: string;
+      path: string;
+      title: string | null;
+      lastOpened: number;
+    }>
+  > => {
+    const cap = typeof limit === 'number' && limit > 0 && limit < 50 ? limit : 8;
+    const rows = Papers.recent(cap);
+    return rows
+      .filter((r) => r.last_path && existsSync(r.last_path))
+      .map((r) => ({
+        contentHash: r.content_hash,
+        path: r.last_path as string,
+        title: r.title,
+        lastOpened: r.last_opened,
+      }));
+  },
+);
 
 ipcMain.handle(
   'lensHighlights:save',

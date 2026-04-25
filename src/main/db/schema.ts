@@ -158,6 +158,19 @@ function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_lens_turns_lens ON lens_turns(lens_id);
   `);
 
+  // Additive migration: per-paper reading-position memory + path
+  // recall. Adds columns to the existing papers table without
+  // dropping it (which would lose all the digest_json work). Used
+  // by todo #42 (reopen at last position) and #43 (recent papers
+  // on the welcome screen).
+  const paperCols = db.pragma('table_info(papers)') as Array<{ name: string }>;
+  if (!paperCols.some((c) => c.name === 'last_scroll_y')) {
+    db.exec('ALTER TABLE papers ADD COLUMN last_scroll_y INTEGER DEFAULT 0');
+  }
+  if (!paperCols.some((c) => c.name === 'last_path')) {
+    db.exec('ALTER TABLE papers ADD COLUMN last_path TEXT');
+  }
+
   // Additive migration: the zoom image path was added after the initial schema shipped.
   // Check pragma and only ALTER if the column is missing.
   const cols = db.pragma('table_info(explanations)') as Array<{ name: string }>;

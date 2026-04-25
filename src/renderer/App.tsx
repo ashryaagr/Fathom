@@ -126,6 +126,7 @@ export default function App() {
         contentHash: pdf.contentHash,
         doc,
         numPages: doc.numPages,
+        initialScrollY: pdf.lastScrollY ?? 0,
       });
 
       // Skip restoring cached regions from disk — the extraction algorithm evolves (e.g.
@@ -1107,6 +1108,30 @@ function EmptyState({
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
+  // Recent papers — VS Code-style "open something you were reading"
+  // affordance (todo #43). Loaded once when the welcome card mounts;
+  // server-side filtered to entries whose paths still resolve, so the
+  // user doesn't see broken rows pointing at moved files.
+  const [recents, setRecents] = useState<Array<{
+    contentHash: string;
+    path: string;
+    title: string | null;
+    lastOpened: number;
+  }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await window.lens.recentPapers?.(8);
+        if (!cancelled && list) setRecents(list);
+      } catch {
+        /* recents unavailable — empty list is fine, the card still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openSample = useCallback(async () => {
     setSampleLoading(true);
@@ -1252,6 +1277,58 @@ function EmptyState({
           </button>
         </div>
 
+        {/* Recent papers (todo #43). Hidden when the user has nothing
+            recent, so first-launch sessions don't show an empty
+            section. Click a row to reopen at the saved scroll
+            position (todo #42 wires the position itself). */}
+        {recents.length > 0 && (
+          <div className="px-10 pb-5">
+            <div
+              aria-hidden="true"
+              className="mx-auto mb-3 h-px w-16"
+              style={{ background: 'rgba(224, 211, 172, 0.9)' }}
+            />
+            <div
+              className="mb-2 text-[10.5px] font-semibold tracking-wide uppercase"
+              style={{ color: '#9c8b6a' }}
+            >
+              Recently opened
+            </div>
+            <ul className="flex flex-col gap-1">
+              {recents.map((r) => (
+                <li key={r.contentHash}>
+                  <button
+                    onClick={() => onOpenPath(r.path)}
+                    disabled={loading}
+                    className="group flex w-full items-center justify-between gap-4 rounded-md px-2.5 py-2 text-left transition hover:bg-black/[0.04] disabled:cursor-progress disabled:opacity-60"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className="block truncate text-[13.5px] font-medium"
+                        style={{ color: '#1a1614' }}
+                      >
+                        {r.title ?? r.path.split('/').pop() ?? r.path}
+                      </span>
+                      <span
+                        className="mt-0.5 block truncate text-[11px]"
+                        style={{ color: '#9c8b6a' }}
+                      >
+                        {r.path}
+                      </span>
+                    </span>
+                    <span
+                      className="shrink-0 text-[11px] tabular-nums"
+                      style={{ color: '#9c8b6a' }}
+                    >
+                      {formatRelativeTime(r.lastOpened)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Drop hint — only surfaces while the user is dragging */}
         <div
           className="flex items-center justify-center gap-2 px-10 pt-1 pb-7 text-[12px]"
@@ -1279,6 +1356,27 @@ function EmptyState({
       </motion.div>
     </div>
   );
+}
+
+/** "5 minutes ago" / "yesterday" formatting for the recents list.
+ * Tiny enough that we don't need a date library; only a handful of
+ * buckets. Falls back to absolute date for anything older than a
+ * month so the user can tell at a glance whether a paper is recent
+ * enough to bother with. (todo #43) */
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diffMs = Math.max(0, now - timestamp);
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  const d = new Date(timestamp);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function HelpOverlay({

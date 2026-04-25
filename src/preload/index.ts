@@ -21,6 +21,16 @@ export interface OpenedPdf {
   name: string;
   contentHash: string;
   bytes: ArrayBuffer;
+  /** Saved scroll position from the last reading session (CSS px from
+   * the top of the page list). 0 on first open. (todo #42) */
+  lastScrollY?: number;
+}
+
+export interface RecentPaper {
+  contentHash: string;
+  path: string;
+  title: string | null;
+  lastOpened: number;
 }
 
 export interface ExplainRequest {
@@ -343,6 +353,18 @@ const api = {
 
   paperState: (paperHash: string): Promise<PaperState | null> =>
     ipcRenderer.invoke('paper:state', paperHash),
+
+  /** Persist the user's vertical scroll position so reopening lands
+   * back where they were reading. Called throttled by the renderer
+   * during scroll. (todo #42) */
+  savePaperScroll: (req: { paperHash: string; scrollY: number }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('paper:saveScroll', req),
+
+  /** Most-recently-opened papers, server-filtered to those whose
+   * paths still resolve on disk. Drives the welcome screen's
+   * recent-PDFs list. (todo #43) */
+  recentPapers: (limit?: number): Promise<RecentPaper[]> =>
+    ipcRenderer.invoke('paper:recent', limit),
 
   // ---- lens anchors (full lens-open registry) ----
   saveLensAnchor: (a: {
