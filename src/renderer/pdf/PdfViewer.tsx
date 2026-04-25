@@ -7,7 +7,7 @@ import { useTourStore } from '../lens/tourStore';
 import { useRegionsStore } from '../state/regions';
 import type { Region } from './extractRegions';
 import { captureScrollerViewport, captureCanvasRect } from './captureViewport';
-import PdfContextMenu from './PdfContextMenu';
+import InlineAskBubble from '../lens/InlineAskBubble';
 
 /** Synchronous (async IPC) zoom-image save — awaited by the commit path so the saved
  * path is guaranteed to be on the lens before any downstream explain call reads it. */
@@ -42,8 +42,18 @@ export default function PdfViewer() {
   // scrollHeight to actually reach that Y. Re-running on every render
   // would yank the user back to the start every time they scrolled.
   const restoredScrollRef = useRef<string | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<
-    { x: number; y: number; selection: string } | null
+  // Inline two-finger-tap "Dive into" composer. Holds the tap location
+  // + the region the user tapped on; when present, renders a small
+  // single-line input pinned to those coordinates.
+  const [inlineAsk, setInlineAsk] = useState<
+    | {
+        x: number;
+        y: number;
+        region: Region;
+        page: number;
+        pageElement: HTMLElement;
+      }
+    | null
   >(null);
 
   // Restore the saved scroll position after enough pages have been
@@ -55,14 +65,70 @@ export default function PdfViewer() {
   useEffect(() => {
     if (!docState) return;
     if (restoredScrollRef.current === docState.contentHash) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    // V2 path: page + offset + zoom. The user reported v1 (raw
+    // scrollY) landed on the wrong page because scrollY is
+    // zoom-dependent — this branch ignores raw scrollY and uses the
+    // saved page anchor instead. Apply zoom FIRST so subsequent
+    // page-element measurements reflect the size the user saved at.
+    const savedPage = docState.initialPage;
+    const savedOffset = docState.initialOffset;
+    const savedZoom = docState.initialZoom;
+    const haveV2 =
+      typeof savedPage === 'number' &&
+      typeof savedOffset === 'number' &&
+      Number.isFinite(savedPage) &&
+      Number.isFinite(savedOffset);
+
+    if (haveV2) {
+      // Apply zoom on the very first restore attempt; further effect
+      // runs (waiting for the page to mount) won't re-apply.
+      if (
+        typeof savedZoom === 'number' &&
+        Number.isFinite(savedZoom) &&
+        savedZoom > 0 &&
+        useDocumentStore.getState().zoom !== savedZoom
+      ) {
+        useDocumentStore.getState().setZoom(savedZoom);
+        // Wait for layout to absorb the zoom change before scrolling.
+        // Returning here re-runs the effect when pageBaseSizes settle.
+        return;
+      }
+      // Find the saved page; if it isn't mounted yet, defer (the
+      // pageBaseSizes-driven re-run will catch it).
+      const pageEl = el.querySelector<HTMLElement>(`[data-page="${savedPage}"]`);
+      if (!pageEl) return;
+      // Compute the page's position WITHIN the scroller via
+      // getBoundingClientRect, NOT pageEl.offsetTop. The scroller is
+      // `position: static`, but the App-level wrapper (PdfViewer's
+      // outer `<div className="relative …">` at line ~425) is
+      // `position: relative` — so pageEl.offsetTop is measured from
+      // the wrapper, which includes ZoomChrome above the scroller and
+      // the scroller's own padding-top. Scrolling el to that value
+      // overshoots by exactly that prefix and lands the user past
+      // their saved frame. getBoundingClientRect math is robust to
+      // the offsetParent chain.
+      const positionInScroller =
+        pageEl.getBoundingClientRect().top -
+        el.getBoundingClientRect().top +
+        el.scrollTop;
+      const h = pageEl.offsetHeight;
+      if (h <= 0) return;
+      const targetY = Math.max(0, positionInScroller + (savedOffset as number) * h);
+      el.scrollTo({ top: targetY, behavior: 'auto' });
+      restoredScrollRef.current = docState.contentHash;
+      return;
+    }
+
+    // Legacy v1 path — raw scrollY only. Still works for papers
+    // saved before v2 shipped.
     const targetY = docState.initialScrollY ?? 0;
     if (targetY <= 0) {
       restoredScrollRef.current = docState.contentHash;
       return;
     }
-    const el = scrollerRef.current;
-    if (!el) return;
-    // Wait until enough scrollable content exists to reach targetY.
     if (el.scrollHeight <= targetY + el.clientHeight) return;
     el.scrollTo({ top: targetY, behavior: 'auto' });
     restoredScrollRef.current = docState.contentHash;
@@ -78,18 +144,50 @@ export default function PdfViewer() {
     const hash = docState.contentHash;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const flush = () => {
-      // Synchronously dispatch the most-recent scroll position so the
-      // last 500 ms of scrolling before close/switch isn't lost. The
-      // bug this fixes: user reported reopening landed on the wrong
-      // page because the debounced timer was cleared on cleanup
-      // before its callback ran. Now cleanup flushes first, THEN
-      // clears.
+      // Persist the FULL position vector (page + offset-in-page +
+      // zoom) so reopen restores the same frame regardless of zoom.
+      // Raw scrollY by itself was producing the wrong-page-on-reopen
+      // bug — at a different zoom, the same scrollY lands on a
+      // different page because pages aren't uniformly sized.
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
       }
       const y = el.scrollTop;
-      void window.lens.savePaperScroll?.({ paperHash: hash, scrollY: y }).catch(() => {});
+      const currentZoom = useDocumentStore.getState().zoom;
+      // Find which page the top of the viewport is currently inside.
+      // Use getBoundingClientRect-based positions, NOT pageEl.offsetTop:
+      // pageEl's offsetParent is the App-wrapper above the scroller
+      // (position: relative on the outer div), so offsetTop != position-
+      // within-scroller. Earlier this comparison was `y vs pageEl.
+      // offsetTop` — different coordinate systems, the saved offset
+      // came out as garbage and reopen landed on the wrong page.
+      let page: number | undefined;
+      let offsetInPage: number | undefined;
+      const scrollerTopVp = el.getBoundingClientRect().top;
+      const pageEls = el.querySelectorAll<HTMLElement>('[data-page]');
+      for (const pageEl of pageEls) {
+        const top = pageEl.getBoundingClientRect().top - scrollerTopVp + y;
+        const h = pageEl.offsetHeight;
+        if (h <= 0) continue;
+        if (y >= top && y < top + h) {
+          const n = Number(pageEl.dataset.page);
+          if (Number.isFinite(n)) {
+            page = n;
+            offsetInPage = (y - top) / h;
+          }
+          break;
+        }
+      }
+      void window.lens
+        .savePaperScroll?.({
+          paperHash: hash,
+          scrollY: y,
+          page,
+          offsetInPage,
+          zoom: currentZoom,
+        })
+        .catch(() => {});
     };
     const onScroll = () => {
       if (timer !== null) clearTimeout(timer);
@@ -291,23 +389,47 @@ export default function PdfViewer() {
     return () => window.removeEventListener('fathom:askCurrentViewport', handler);
   }, [docState, pageBaseSizes]);
 
-  // Right-click menu: "Dive in here" (or "Dive into <selection>"). Same
-  // commitSemanticFocus path as the pinch gesture; exists so users who'd
-  // rather click than pinch have a first-class alternative.
+  // Two-finger-tap → in-page "Dive into" composer. macOS dispatches
+  // two-finger tap as a `contextmenu` event, so the same listener
+  // catches it. The bubble lets the user type a short question and
+  // dispatches an inline ask — the explain stream runs in the
+  // background while the user keeps reading. See
+  // `.claude/specs/inline-ask.md` and CLAUDE.md §2.1 / §2.3.
   useEffect(() => {
     const el = scrollerRef.current;
-    if (!el) return;
+    if (!el || !docState || pageBaseSizes.length === 0) return;
     const handler = (e: MouseEvent) => {
-      // Don't hijack right-click in inputs / textareas.
+      // Don't hijack right-click inside inputs / textareas.
       const target = e.target as HTMLElement | null;
       if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      // No bubble while a lens is open — the lens owns the gestures.
+      if (useLensStore.getState().focused) return;
       e.preventDefault();
-      const sel = window.getSelection()?.toString().trim() ?? '';
-      setCtxMenu({ x: e.clientX, y: e.clientY, selection: sel });
+      // Hit-test the paragraph under the cursor. If the user tapped
+      // empty margin / a figure with no text, do nothing — no empty
+      // bubble (matches the cursor-fallthrough rule for ⌘+pinch).
+      const hit = findRegionUnderCursor(
+        docState.contentHash,
+        e.clientX,
+        e.clientY,
+        useDocumentStore.getState().zoom,
+        pageBaseSizes,
+      );
+      if (!hit?.region) {
+        setInlineAsk(null);
+        return;
+      }
+      setInlineAsk({
+        x: e.clientX,
+        y: e.clientY,
+        region: hit.region,
+        page: hit.page,
+        pageElement: hit.pageElement,
+      });
     };
     el.addEventListener('contextmenu', handler);
     return () => el.removeEventListener('contextmenu', handler);
-  }, []);
+  }, [docState, pageBaseSizes]);
 
   const pages = useMemo(() => {
     if (!docState) return [] as number[];
@@ -367,34 +489,80 @@ export default function PdfViewer() {
           );
         })}
       </div>
-      {ctxMenu && (
-        <PdfContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          selection={ctxMenu.selection}
-          onDiveIn={() => {
-            const el = scrollerRef.current;
-            if (el && docState) {
-              void commitSemanticFocus(
-                el,
-                docState.contentHash,
-                pageBaseSizes,
-                useDocumentStore.getState().zoom,
-                { x: ctxMenu.x, y: ctxMenu.y },
-              );
-            }
-          }}
-          onClose={() => setCtxMenu(null)}
+      {inlineAsk && pageBaseSizes[inlineAsk.page - 1] && docState && (
+        <InlineAskBubble
+          x={inlineAsk.x}
+          y={inlineAsk.y}
+          region={inlineAsk.region}
+          page={inlineAsk.page}
+          paperHash={docState.contentHash}
+          pageElement={inlineAsk.pageElement}
+          baseSize={pageBaseSizes[inlineAsk.page - 1]}
+          zoom={zoom}
+          onClose={() => setInlineAsk(null)}
         />
       )}
     </div>
   );
 }
 
+interface SelectionSnapshot {
+  text: string;
+  /** First client rect of the range (the first visual line for a multi-line
+   * selection). Marker pins to this so the dot lands at the right edge of
+   * the line where the user started reading. */
+  firstRect: DOMRect | null;
+}
+
+/** Snapshot the active text selection — text + first-line client rect — so
+ * we can wipe the live selection without losing the bbox the marker needs.
+ * Returns null when there's no non-collapsed selection. The snapshot also
+ * tolerates DOMException on detached ranges. */
+function captureActiveSelection(): SelectionSnapshot | null {
+  if (typeof window === 'undefined') return null;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+  const text = sel.toString().trim();
+  if (!text) return null;
+  let firstRect: DOMRect | null = null;
+  try {
+    const range = sel.getRangeAt(0);
+    const rects = Array.from(range.getClientRects()).filter(
+      (r) => r.width > 1 && r.height > 1,
+    );
+    if (rects.length > 0) firstRect = rects[0];
+  } catch {
+    /* range invalidated mid-gesture — fall back to text-only snapshot */
+  }
+  return { text, firstRect };
+}
+
+/** Convert a viewport-space client rect (one selection line) to a PDF
+ * user-space bbox on the given page. Same math as
+ * highlightFromSelection.ts: subtract the page's screen origin, divide by
+ * zoom, then flip y because PDF coords are bottom-up. */
+function selectionRectToPdfBbox(
+  selRect: DOMRect,
+  pageRect: DOMRect,
+  pageBaseHeight: number,
+  zoom: number,
+): { x: number; y: number; width: number; height: number } {
+  const x = (selRect.left - pageRect.left) / zoom;
+  const cssY = (selRect.top - pageRect.top) / zoom;
+  const width = selRect.width / zoom;
+  const height = selRect.height / zoom;
+  const y = pageBaseHeight - cssY - height;
+  return { x, y, width, height };
+}
+
 /**
  * Build a FocusedLens describing whatever the user wants to dive into right now,
  * and open it in the lens store. Priority:
- *   1. If the user has a non-empty text selection — focus on that selection.
+ *   1. If the user has a non-empty text selection — pin the marker to that
+ *      selection's first-line right-edge (so the return-to-source dot lands
+ *      exactly where the user's eye expects). The lens content is still the
+ *      enclosing paragraph; only the marker + open animation use the
+ *      selection's bbox.
  *   2. Otherwise, use the cursor's last position to hit-test the region directly
  *      under the cursor. This is the "point at it, zoom, release Cmd → dive" flow —
  *      precise because the user is literally pointing at the thing.
@@ -416,25 +584,63 @@ async function commitSemanticFocus(
     paperHashPrefix: paperHash.slice(0, 8),
   });
 
-  // In the PDF viewer we deliberately ignore any accidental text selection made during
-  // the pinch — the user's intent is "zoom in on what's in my viewport". Selection-drill
-  // is a separate feature, scoped to inside the FocusView only.
+  // Snapshot any active text selection BEFORE we wipe it. If the user
+  // selected a phrase and asked to dive, the marker has to pin to the
+  // selection's location — pinning to the paragraph's right edge instead
+  // looks broken (the user's eye loses the return-to-source anchor).
+  // We still wipe the live selection because it's noisy under the lens
+  // animation; the captured snapshot drives the bbox + sourceRect
+  // overrides downstream. Multi-line selection: first client rect wins
+  // (matches reading direction; that's where the eye returns).
+  const selectionSnapshot = captureActiveSelection();
   window.getSelection()?.removeAllRanges();
 
   // 1. Cursor-anchored: find the paragraph under the cursor and use that.
-  if (cursor) {
-    const hit = findRegionUnderCursor(paperHash, cursor.x, cursor.y, zoom, pageBaseSizes);
+  // Selection-aware: if the user had text selected, prefer the selection
+  // centre over the cursor for region resolution — cursor may have drifted
+  // away from the selected paragraph between drag-end and gesture-commit.
+  const probe =
+    selectionSnapshot && selectionSnapshot.firstRect
+      ? {
+          x: selectionSnapshot.firstRect.left + selectionSnapshot.firstRect.width / 2,
+          y: selectionSnapshot.firstRect.top + selectionSnapshot.firstRect.height / 2,
+        }
+      : cursor;
+  if (probe) {
+    const hit = findRegionUnderCursor(paperHash, probe.x, probe.y, zoom, pageBaseSizes);
     if (hit?.region) {
       const region = hit.region;
       const pageRect = hit.pageElement.getBoundingClientRect();
       const baseSize = pageBaseSizes[hit.page - 1];
       if (baseSize) {
+        // If we have a selection inside this same page, derive a tight
+        // bbox + sourceRect from the selection's first-line rect; this is
+        // what the marker pins to and what the open animation zooms from.
+        // Without a selection, the paragraph's bbox stands in.
+        const selectionBbox =
+          selectionSnapshot && selectionSnapshot.firstRect
+            ? selectionRectToPdfBbox(
+                selectionSnapshot.firstRect,
+                pageRect,
+                baseSize.height,
+                zoom,
+              )
+            : null;
+        const markerBbox = selectionBbox ?? region.bbox;
         const sourceRect = {
-          x: pageRect.left + region.bbox.x * zoom,
-          y: pageRect.top + (baseSize.height - region.bbox.y - region.bbox.height) * zoom,
-          width: region.bbox.width * zoom,
-          height: region.bbox.height * zoom,
+          x: pageRect.left + markerBbox.x * zoom,
+          y: pageRect.top + (baseSize.height - markerBbox.y - markerBbox.height) * zoom,
+          width: markerBbox.width * zoom,
+          height: markerBbox.height * zoom,
         };
+        if (selectionBbox) {
+          console.log('[Lens] selection dive marker bbox', {
+            regionId: region.id,
+            paragraphBbox: region.bbox,
+            selectionBbox,
+            selectedText: selectionSnapshot.text.slice(0, 60),
+          });
+        }
         const allRegions = useRegionsStore.getState().getPage(paperHash, hit.page);
         const idx = allRegions.findIndex((r) => r.id === region.id);
         const prevTexts: string[] = [];
@@ -476,7 +682,12 @@ async function commitSemanticFocus(
           origin: 'region',
           paperHash,
           page: hit.page,
-          bbox: region.bbox,
+          // markerBbox: selection bbox when present (so the amber dot
+          // pins to the selection's right edge), paragraph bbox
+          // otherwise. The lens content (anchorText, regionId,
+          // prev/nextTexts) stays the paragraph regardless — the
+          // selection only changes WHERE the marker lives.
+          bbox: markerBbox,
           sourceRect,
           anchorText: region.text,
           focusPhrase: null,

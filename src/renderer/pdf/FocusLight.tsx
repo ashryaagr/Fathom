@@ -3,14 +3,56 @@ import { createPortal } from 'react-dom';
 import { useRegionsStore } from '../state/regions';
 import type { Region } from './extractRegions';
 
+/** One word in the focus pacer's word list. We carry the span +
+ * character range instead of just the span because pdf.js often
+ * emits multi-word spans, and treating each span as a word made
+ * the pacer light up the whole sentence at once (the bug that
+ * the user kept catching). At render time we materialise a Range
+ * over (charStart, charEnd) and read its bounding rect — that's
+ * one word's worth of pixels, no more. */
+type Word = {
+  span: HTMLElement;
+  charStart: number;
+  charEnd: number;
+  /** Cached centre for reading-order sort at extraction time.
+   * Recomputed-on-demand if zoom changes after the anchor exists. */
+  cx: number;
+  cy: number;
+};
+
+/** Materialise a Range over the word's character span and return its
+ * bounding rect. Used at every render so the highlight follows the
+ * page through scroll + zoom + textLayer rebuilds without any
+ * caching of stale screen coordinates. Returns null if the underlying
+ * text node has been replaced (textLayer rebuilt due to zoom) — the
+ * caller treats that as "skip this band for one render." */
+function wordRect(w: Word): DOMRect | null {
+  const node = w.span.firstChild;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+  const text = (node as Text).data ?? '';
+  if (w.charStart < 0 || w.charEnd > text.length) return null;
+  const range = document.createRange();
+  try {
+    range.setStart(node, w.charStart);
+    range.setEnd(node, w.charEnd);
+    const r = range.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? r : null;
+  } catch {
+    return null;
+  } finally {
+    range.detach?.();
+  }
+}
+
 /**
  * Focus Light — a moving 3-word reading pacer.
  *
- * The user clicks a word. A yellow band lights up that word and the
- * next two. After (60000 / wpm) ms it slides forward by one word.
- * Repeats until the band reaches the end of the column, or the user
- * clicks somewhere else, or turns the band off. Speed is set in
- * Preferences as words-per-minute.
+ * The user clicks a word. A dark-yellow band lights up that word
+ * with very-light-yellow neighbours immediately before and after (a
+ * 3-word window centered on the pointer). After (60000 / wpm) ms it
+ * slides forward by one word. Repeats until the band reaches the end
+ * of the region, or the user clicks somewhere else, or turns the
+ * band off. Speed is set in Preferences as words-per-minute.
  *
  * Why a moving band of 3 words instead of a static line:
  * - The user explicitly asked for it (todo #41 v2). Their reasoning:
@@ -47,22 +89,19 @@ export default function FocusLight({
 }) {
   const byPage = useRegionsStore((s) => s.byPage);
 
-  // Anchor: the active reading session. Holds the resolved word list
-  // for the column the user clicked, plus the index of the MIDDLE word
-  // in the 3-word window (the bright "pointer"). The window spans
-  // [middleIndex-1, middleIndex, middleIndex+1] — the middle is what
-  // the user is reading right now, the sides are the just-read tail
-  // and the about-to-read lead-in.
+  // Anchor: the active reading session. `words` is a list of WORD-
+  // level entries (not span-level — pdf.js text-layer spans often
+  // contain multiple words per span; treating spans as words made
+  // the pacer "highlight everything" instead of 5 words). Each Word
+  // is a (span, charStart, charEnd) triple; the rect is recomputed
+  // from a Range at render time so it stays correct under scroll
+  // and zoom.
   const [anchor, setAnchor] = useState<{
     page: number;
     region: Region;
-    spans: HTMLElement[];
+    words: Word[];
     middleIndex: number;
   } | null>(null);
-
-  // Force a re-render every animation tick so getBoundingClientRect
-  // sees the current scroll position. Cheap — only when active.
-  const [, setTick] = useState(0);
 
   // Pause state — explicit, toggled by SPACEBAR. Used in addition
   // to (not instead of) the mousemove-activity gate below.
@@ -74,27 +113,20 @@ export default function FocusLight({
   const lastWheelRef = useRef(0);
   const WHEEL_LOCKOUT_MS = 250;
 
-  // Mousemove-activity gate — best-effort approximation for "is the
-  // user's finger active on the trackpad?" macOS does NOT expose
-  // touch-without-movement events; when a finger rests perfectly
-  // still on the trackpad, no event fires and the OS state is
-  // indistinguishable from "no finger." This is an upstream limit.
-  // Best we can do: while the cursor is moving (even tiny micro-
-  // drifts), assume the user is engaged; after FINGER_IDLE_MS of
-  // zero motion, assume the finger is off and pause.
-  //
-  // Threshold history:
-  //   • 150 ms (v1)  — too aggressive, killed the pacer between
-  //                    natural micro-pauses.
-  //   • removed (v2) — pacer ran forever, user reported "moves
-  //                    even when finger off trackpad."
-  //   • 400 ms (v3)  — current. Lenient enough to bridge natural
-  //                    pauses, tight enough to feel like the pacer
-  //                    "follows the finger."
-  // Spacebar remains the explicit pause for the genuinely-still
-  // case (finger resting deliberately).
+  // Mousemove-activity gate — REMOVED in v1.0.21. The mousemove
+  // proxy was silently skipping ticks whenever the user was reading
+  // without moving the cursor, which made the pacer feel much slower
+  // than the configured WPM. macOS won't surface finger-resting
+  // events, so the proxy can't tell "finger off trackpad" from
+  // "finger on trackpad, eyes tracking with text." The user's
+  // current pacing complaint takes precedence over the older
+  // finger-detection request: pacer now ticks at the configured
+  // WPM continuously; SPACEBAR is the explicit pause control. The
+  // ref is retained because other touch-points still set it; future
+  // implementations of finger-detection (e.g. a trackpad-touch
+  // private API or a hold-to-pace key) can re-enable the gate
+  // without restructuring callers.
   const lastMouseMoveRef = useRef(Date.now());
-  const FINGER_IDLE_MS = 400;
 
   // Find which region (paragraph) is under a screen point, and the
   // page element + page number that owns it. Reused by the click
@@ -137,57 +169,88 @@ export default function FocusLight({
     return { page: pageNum, region: best, pageEl };
   };
 
-  // Pull the text-layer spans whose centre falls inside a region's
-  // bbox, sorted in reading order (top-to-bottom, then left-to-right).
-  // pdf.js produces one span per word for typeset papers, so this list
-  // ≈ the words of that paragraph.
-  const extractWordSpans = (
-    pageEl: HTMLElement,
-    region: Region,
-  ): HTMLElement[] => {
+  // Extract WORD-level entries from the text layer, scoped to a
+  // region's bbox. For each text-layer span, split its textContent
+  // by whitespace and create a (span, charStart, charEnd) triple
+  // per word. This is the fix for "the pacer is highlighting all
+  // the words" — pdf.js often packs multiple words into one span,
+  // so per-span granularity wasn't actually per-word.
+  const extractWords = (pageEl: HTMLElement, region: Region): Word[] => {
     const textLayer = pageEl.querySelector<HTMLElement>('.textLayer');
     if (!textLayer) return [];
     const pageRect = pageEl.getBoundingClientRect();
     const baseHeight = pageRect.height / zoom;
-    const result: Array<{ el: HTMLElement; cx: number; cy: number }> = [];
+    const result: Word[] = [];
     for (const span of textLayer.querySelectorAll<HTMLElement>('span')) {
       const text = span.textContent ?? '';
       if (!text.trim()) continue;
       const sRect = span.getBoundingClientRect();
       if (sRect.width <= 0 || sRect.height <= 0) continue;
-      // Span centre in CSS coords relative to the page.
-      const cssCx = (sRect.left + sRect.width / 2 - pageRect.left) / zoom;
-      const cssCy = (sRect.top + sRect.height / 2 - pageRect.top) / zoom;
-      const pdfY = baseHeight - cssCy;
-      const inX = cssCx >= region.bbox.x && cssCx <= region.bbox.x + region.bbox.width;
-      const inY = pdfY >= region.bbox.y && pdfY <= region.bbox.y + region.bbox.height;
-      if (inX && inY) {
-        result.push({ el: span, cx: cssCx, cy: cssCy });
+      // Quick bbox-cull: skip spans entirely outside the region.
+      const sCxPage = (sRect.left + sRect.width / 2 - pageRect.left) / zoom;
+      const sCyPage = (sRect.top + sRect.height / 2 - pageRect.top) / zoom;
+      const sPdfY = baseHeight - sCyPage;
+      const inRegionRoughly =
+        sCxPage >= region.bbox.x - 4 &&
+        sCxPage <= region.bbox.x + region.bbox.width + 4 &&
+        sPdfY >= region.bbox.y - 4 &&
+        sPdfY <= region.bbox.y + region.bbox.height + 4;
+      if (!inRegionRoughly) continue;
+      // Walk word boundaries inside the span's text. \S+ matches a
+      // run of non-whitespace = one word.
+      const node = span.firstChild;
+      if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+      const re = /\S+/g;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(text)) !== null) {
+        const charStart = match.index;
+        const charEnd = match.index + match[0].length;
+        // Get this word's screen rect via Range to confirm it's
+        // inside the region's bbox (per-word check, not per-span).
+        const range = document.createRange();
+        try {
+          range.setStart(node, charStart);
+          range.setEnd(node, charEnd);
+          const wRect = range.getBoundingClientRect();
+          if (wRect.width <= 0 || wRect.height <= 0) continue;
+          const cx = (wRect.left + wRect.width / 2 - pageRect.left) / zoom;
+          const cy = (wRect.top + wRect.height / 2 - pageRect.top) / zoom;
+          const pdfY = baseHeight - cy;
+          const inX = cx >= region.bbox.x && cx <= region.bbox.x + region.bbox.width;
+          const inY = pdfY >= region.bbox.y && pdfY <= region.bbox.y + region.bbox.height;
+          if (inX && inY) {
+            result.push({ span, charStart, charEnd, cx, cy });
+          }
+        } catch {
+          /* range error → skip word */
+        } finally {
+          range.detach?.();
+        }
       }
     }
-    // Reading order: sort by Y first (line). Spans within ~0.5 line
-    // height of each other are considered the same line; tie-break
-    // by X. The 6 px line-tolerance was eyeballed against the sample
-    // paper (NIPS 2017 template at 100% zoom).
+    // Reading order: top-to-bottom, then left-to-right. Same line
+    // tolerance as before (~0.5 line height at the source's zoom).
     const lineTol = 6 / zoom;
     result.sort((a, b) => {
       if (Math.abs(a.cy - b.cy) > lineTol) return a.cy - b.cy;
       return a.cx - b.cx;
     });
-    return result.map((r) => r.el);
+    return result;
   };
 
-  // Pick the span closest to a click within a span list — this is the
-  // word the user clicked, used as the starting wordIndex.
-  const pickClickedSpanIndex = (
-    spans: HTMLElement[],
+  // Pick the word in the list closest to the click — used as the
+  // starting middleIndex. Uses each word's live rect so the choice
+  // reflects what the user actually saw, not stale cached coords.
+  const pickClickedWordIndex = (
+    words: Word[],
     clientX: number,
     clientY: number,
   ): number => {
     let bestIdx = 0;
     let bestDist = Infinity;
-    for (let i = 0; i < spans.length; i++) {
-      const r = spans[i].getBoundingClientRect();
+    for (let i = 0; i < words.length; i++) {
+      const r = wordRect(words[i]);
+      if (!r) continue;
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
       const d = (cx - clientX) ** 2 + (cy - clientY) ** 2;
@@ -219,21 +282,22 @@ export default function FocusLight({
         setAnchor(null);
         return;
       }
-      const spans = extractWordSpans(hit.pageEl, hit.region);
-      if (spans.length === 0) {
+      const words = extractWords(hit.pageEl, hit.region);
+      if (words.length === 0) {
         setAnchor(null);
         return;
       }
-      const middleIndex = pickClickedSpanIndex(spans, ev.clientX, ev.clientY);
-      setAnchor({ page: hit.page, region: hit.region, spans, middleIndex });
+      const middleIndex = pickClickedWordIndex(words, ev.clientX, ev.clientY);
+      setAnchor({ page: hit.page, region: hit.region, words, middleIndex });
     };
     window.addEventListener('mousedown', onMouseDown);
     return () => window.removeEventListener('mousedown', onMouseDown);
   }, [enabled, byPage, paperHash, zoom]);
 
-  // Track every mousemove so the auto-advance can gate on "did the
-  // user move the cursor recently?" — best-effort proxy for "one
-  // finger on the trackpad, engaged."
+  // mousemove tracker retained as a no-op stub: the auto-advance
+  // gate that consumed `lastMouseMoveRef` was removed in v1.0.21
+  // (see the ref's declaration for rationale). Future re-additions
+  // of finger-detection can wire it back in without restructuring.
   useEffect(() => {
     if (!enabled) return;
     const onMove = () => {
@@ -289,15 +353,13 @@ export default function FocusLight({
       const now = Date.now();
       // Two-finger gesture in progress?
       if (now - lastWheelRef.current < WHEEL_LOCKOUT_MS) return;
-      // Finger off the trackpad? (no recent cursor movement)
-      if (now - lastMouseMoveRef.current > FINGER_IDLE_MS) return;
       // Selecting text? Working WITH a selection — pacing forward
       // would yank focus from the selection.
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
       setAnchor((current) => {
         if (!current) return current;
-        if (current.middleIndex >= current.spans.length - 1) return current;
+        if (current.middleIndex >= current.words.length - 1) return current;
         return { ...current, middleIndex: current.middleIndex + 1 };
       });
     }, intervalMs);
@@ -318,10 +380,6 @@ export default function FocusLight({
   // Re-renders only happen when the pacer state actually changes
   // (anchor / middleIndex / paused / wpm) — which is the only time
   // band geometry needs recalculation anyway.
-  void setTick; // reference kept so the existing import survives;
-                // can drop the state declaration below if no other
-                // code path needs it.
-
   // Wheel events suppress mouse-tracked anchoring briefly so two-finger
   // pinches/scrolls aren't mistaken for clicks (event ordering on
   // macOS trackpads is sometimes ambiguous).
@@ -343,60 +401,86 @@ export default function FocusLight({
   if (!pageEl) return null;
   const pageRect = pageEl.getBoundingClientRect();
 
-  // FIVE-word window with a SHALLOW Gaussian. All five must be
-  // clearly lit — the user explicitly rejected the previous outer-
-  // 0.20 opacity as "tiny bit of focus light around" the central
-  // words; they want the 5-word window to BE the focus light, not a
-  // central core with faint surrounding hints. So all five sit at
-  // ≥ 0.55, gradient is gentle:
-  //   m-2 : outer left   0.60
-  //   m-1 : inner left   0.75
-  //   m   : middle       0.90  (no glow — glow halo bleeds outside
-  //                              the 5 words and reads as
-  //                              "surrounding focus light", which the
-  //                              user explicitly rejected)
-  //   m+1 : inner right  0.75
-  //   m+2 : outer right  0.60
-  // Edge cases: at start/end of region, missing slots are simply
-  // skipped — the user gets a smaller window for the first/last few
-  // words. Acceptable per "less is okay, but not more."
+  // 3-word window per user request 2026-04-25 (revised from the
+  // earlier 5-word draft):
+  //   m-1 : side    light  yellow  rgba(255,235,140, 0.30)
+  //   m   : middle  dark   yellow  rgba(245,180,20,  0.85)
+  //   m+1 : side    light  yellow  rgba(255,235,140, 0.30)
+  // The strong contrast between dark-middle and very-light-sides
+  // pulls the eye onto the focal word at a glance; the sides give
+  // just enough peripheral context for the eye to anticipate the next
+  // saccade target. Edge cases: at the start/end of a region missing
+  // slots are simply skipped — the user gets a smaller window for the
+  // first/last few words. Acceptable per "less is okay, but not more."
   const m = anchor.middleIndex;
-  type Slot = { span: HTMLElement; role: 'outer' | 'inner' | 'middle'; offset: -2 | -1 | 0 | 1 | 2 };
+  type Slot = { word: Word; role: 'side' | 'middle'; offset: -1 | 0 | 1 };
   const slots: Slot[] = [];
-  for (const off of [-2, -1, 0, 1, 2] as const) {
+  for (const off of [-1, 0, 1] as const) {
     const idx = m + off;
-    if (idx < 0 || idx >= anchor.spans.length) continue;
-    const span = anchor.spans[idx];
-    if (!span) continue;
-    if (off === 0) slots.push({ span, role: 'middle', offset: off });
-    else if (off === -1 || off === 1) slots.push({ span, role: 'inner', offset: off });
-    else slots.push({ span, role: 'outer', offset: off });
+    if (idx < 0 || idx >= anchor.words.length) continue;
+    const word = anchor.words[idx];
+    if (!word) continue;
+    slots.push({ word, role: off === 0 ? 'middle' : 'side', offset: off });
   }
   if (slots.length === 0) return null;
 
   const padX = 2;
   const padY = 2;
-  // Continuous motion: transition duration = the FULL tick interval,
-  // so as soon as one slide completes the next begins — no perceived
-  // gap, the band is always in motion. Capped at 1.5 s for the
-  // very-slow end (10 wpm = 6000 ms) so a single advance doesn't
-  // visibly drift forever; faster than that the user sees the
-  // transition complete before the next tick anyway and the band
-  // pauses briefly. Acceptable tradeoff at the slow end.
-  const tickMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
-  const transitionMs = Math.max(80, Math.min(tickMs, 1500));
+  // SUB-SACCADE SLIDE between word advances. The earlier pure-snap
+  // build (cog-audit-focus-pacer.md §5 Option A) was rejected by the
+  // user as abrupt → cognitively fatiguing — which trumps the
+  // saccade-rhythm theory the snap was protecting. Reconciliation:
+  // make the slide complete WITHIN one saccade window (~225 ms per
+  // Rayner 1998). A slide that finishes faster than a single
+  // fixation cannot compete with the saccade rhythm because the eye
+  // hasn't yet decided where to land next. So the slide reads as
+  // continuous motion (no abrupt jump) without setting up the
+  // smooth-pursuit competition the cog reviewer was worried about.
+  //
+  // Also scale-with-tempo: at low WPM the per-word interval is long
+  // (1000 ms at 60 wpm), so a 220 ms slide plus 780 ms rest reads as
+  // "the band glides into place, then waits." At high WPM (≤ 400 ms
+  // intervals) we cap the slide at 35% of the interval so the next
+  // tick doesn't fire mid-slide. Easing is `cubic-bezier(0.4, 0,
+  // 0.2, 1)` (Material "decelerate") — quick start, gentle landing,
+  // matches how the eye actually decelerates onto a fixation point.
+  const intervalMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
+  const transitionMs = Math.min(220, Math.max(120, Math.round(intervalMs * 0.35)));
+  const transitionEase = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
   return createPortal(
     <>
       {slots.map((slot) => {
-        const r = slot.span.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) return null;
+        const r = wordRect(slot.word);
+        if (!r) return null;
         const left = r.left - pageRect.left - padX;
         const top = r.top - pageRect.top - padY;
         const width = r.width + padX * 2;
         const height = r.height + padY * 2;
-        const opacity =
-          slot.role === 'middle' ? 0.90 : slot.role === 'inner' ? 0.75 : 0.60;
+        // Two channels for "scope" and "anchor" instead of stacking
+        // both on color-saturation. v1 used dark-yellow middle vs
+        // very-light-yellow sides — the high inter-word contrast
+        // created an attention spike on every fixation (Itti & Koch
+        // 2001 visual saliency: high-saturation patches against
+        // neutral backgrounds trigger involuntary orienting that the
+        // brain must actively suppress = cognitive load). Pattern
+        // borrowed from iA Writer / Hemingway / MS Immersive Reader:
+        // they all *dim outside* rather than *brighten inside*. We
+        // split the difference here — keep a faint scope wash so the
+        // user can see the 3-word window, but drop the inner
+        // contrast entirely.
+        //
+        //   • Scope (all 3 words): identical very-faint amber wash,
+        //     no multiply blend (multiply was compounding saturation
+        //     against the white paper).
+        //   • Anchor (middle only): thin 2px amber underline
+        //     beneath the middle word. Underline is a low-load
+        //     "you are here" signal readers already know from links.
+        //
+        // The two channels use different visual mechanisms (color
+        // wash vs. line shape) so the brain doesn't have to disambig-
+        // uate two different intensities of the same color cue.
+        const isMiddle = slot.role === 'middle';
         return (
           <div
             // Stable key per offset (NOT per middleIndex) so React
@@ -411,20 +495,19 @@ export default function FocusLight({
               top,
               width,
               height,
-              background: `rgba(255, 215, 60, ${opacity})`,
-              mixBlendMode: 'multiply',
+              background: 'rgba(255, 215, 60, 0.16)',
               pointerEvents: 'none',
-              borderRadius: 4,
-              // No box-shadow / glow on the middle. Even a soft glow
-              // halo bleeds 8+ px outside the band, lighting the
-              // text immediately around the 5 words — the user calls
-              // this "surrounding focus light" and explicitly
-              // rejected it. The opacity contrast alone (0.90 vs
-              // 0.75 vs 0.60) does the "this is the middle word"
-              // signalling without any out-of-band visual.
+              borderRadius: 3,
+              // Anchor underline ONLY on the middle word. Sits at
+              // the bottom of the slot, 2px tall, semi-transparent
+              // amber. Visible enough to mark the focal word, faint
+              // enough not to add saliency.
+              borderBottom: isMiddle
+                ? '2px solid rgba(220, 160, 30, 0.55)'
+                : 'none',
               boxShadow: 'none',
               zIndex: 6,
-              transition: `left ${transitionMs}ms linear, top ${transitionMs}ms linear, width ${transitionMs}ms linear`,
+              transition: `left ${transitionMs}ms ${transitionEase}, top ${transitionMs}ms ${transitionEase}, width ${transitionMs}ms ${transitionEase}`,
             }}
           />
         );

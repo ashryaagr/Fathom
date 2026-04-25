@@ -480,10 +480,28 @@ function TurnBlock({ turn, index, focused }: { turn: Turn; index: number; focuse
       className="flex flex-col gap-3"
     >
       {turn.question && (
-        <div className="flex items-center gap-2 text-[12px] text-black/55">
-          <span className="rounded-full bg-[color:var(--color-lens)]/15 px-2.5 py-1 text-[11px] text-[color:var(--color-lens)]">
-            you asked: {turn.question}
-          </span>
+        // The user's question, rendered as their own voice rather than
+        // a chat-bubble. Per CLAUDE.md §2.4 (handwritten = voice, sans
+        // = information) the question is in Excalifont — same family
+        // as the AI's answer body, so the page reads as a single
+        // continuous conversation rather than a chat-app split. The
+        // "you asked:" prefix that the v1 pill had is removed per user
+        // 2026-04-25; the soft amber left border + indent does the
+        // structural marking that the prefix used to do, with much
+        // less visual noise. Size 15 px lifts the question above the
+        // 12 px chrome row beneath it so the eye finds it first when
+        // scrolling back through a long thread.
+        <div className="border-l-[3px] border-[color:var(--color-lens)]/45 pl-3.5 py-0.5">
+          <p
+            className="m-0 leading-snug text-black/80"
+            style={{
+              fontFamily: 'var(--font-handwritten)',
+              fontSize: '15px',
+              letterSpacing: '0.005em',
+            }}
+          >
+            {turn.question}
+          </p>
         </div>
       )}
       <div className="flex items-center gap-2 text-[10px] tracking-wide text-[color:var(--color-lens)] uppercase select-none">

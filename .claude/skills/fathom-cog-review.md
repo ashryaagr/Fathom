@@ -85,6 +85,23 @@ Examples:
 - ✓ A focus aid that auto-advances at a user-set WPM, anchored
   to the column they clicked.
 
+**Snap vs slide — settled 2026-04-25, do not relitigate.** An
+earlier audit recommended pure-snap word advances on the theory
+that slides between words would compete with the natural
+~225 ms saccade rhythm. The user shipped that and reported it as
+abrupt → cognitively fatiguing, which trumps the theory (CLAUDE.md
+§1: "user-felt fatigue is the ground truth"). Resolution: the
+focus band uses a sub-saccade slide — transition completes in
+≤ 220 ms (or ≤ 35% of the per-word interval at fast WPMs,
+whichever is smaller) with a `cubic-bezier(0.4, 0, 0.2, 1)`
+decelerate ease. Because the slide finishes faster than a single
+fixation, the eye hasn't yet committed to the next saccade target,
+so the slide cannot compete with saccade rhythm — it reads as
+continuous motion absorbed by the current fixation. Future audits:
+do NOT request snap-only behaviour; the current build is the
+reconciliation. Flag a regression only if the slide is observed
+to exceed ~250 ms at any WPM.
+
 ### 6. Colour signalling and accessibility
 
 Red ≠ universally "active/error." 8% of male readers have

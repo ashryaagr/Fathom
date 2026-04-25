@@ -361,6 +361,18 @@ function CachedLensMarkers({
     }
     return result;
   }, [byPage, paperHash, pageNumber, cache]);
+  // Per-region marker metadata pulled from the lens-markers map. The
+  // inline-ask flow stores `displayMode='inline'` + `streaming=true`
+  // on its anchor row, both of which are needed to colour the dot
+  // red while the background stream is in flight. Region-origin
+  // lenses without an inline-ask anchor land here too with
+  // displayMode='lens' (the default registerMarker path).
+  const markerByLensId = useMemo(() => {
+    const list = lensMarkersMap.get(`${paperHash}:${pageNumber}`) ?? [];
+    const map = new Map<string, (typeof list)[number]>();
+    for (const m of list) map.set(m.lensId, m);
+    return map;
+  }, [lensMarkersMap, paperHash, pageNumber]);
   // Viewport-origin markers — users who pinched without a region
   // directly under the cursor. These aren't in `regions` at all; they
   // live only in the store's lensMarkers map. Filter out any that
@@ -371,13 +383,33 @@ function CachedLensMarkers({
     return list.filter((m) => m.origin === 'viewport' && !regionIds.has(m.lensId));
   }, [lensMarkersMap, paperHash, pageNumber, cachedRegions]);
 
+  // Inline-ask markers whose lens row exists but whose cache hasn't
+  // been populated yet (e.g. paper just loaded after a stream-during-
+  // app-quit). These wouldn't appear via cachedRegions because that
+  // path keys on `cache.has(r.id)`. Render them straight from the
+  // markers map so the user sees the red dot they can click to
+  // re-engage. Region-mode lenses with cached turns continue to flow
+  // through cachedRegions (which carries the bbox).
+  const orphanInlineMarkers = useMemo(() => {
+    const list = lensMarkersMap.get(`${paperHash}:${pageNumber}`) ?? [];
+    const cachedIds = new Set(cachedRegions.map((r) => r.id));
+    return list.filter(
+      (m) => m.displayMode === 'inline' && m.origin === 'region' && !cachedIds.has(m.lensId),
+    );
+  }, [lensMarkersMap, paperHash, pageNumber, cachedRegions]);
+
   // Hide markers while the lens is focused. Two problems they caused
   // otherwise: (a) at z-[100] they could bleed through the lens overlay
   // and appear on top of the anchor image; (b) they were still
   // clickable through the lens, letting the user recursively re-open
   // the same lens in a loop.
   if (lensFocused) return null;
-  if (cachedRegions.length === 0 && viewportMarkers.length === 0) return null;
+  if (
+    cachedRegions.length === 0 &&
+    viewportMarkers.length === 0 &&
+    orphanInlineMarkers.length === 0
+  )
+    return null;
 
   const openCachedViewport = async (m: { lensId: string; bbox: { x: number; y: number; width: number; height: number }; origin: string }) => {
     const pageRect = getPageRect();
@@ -499,22 +531,77 @@ function CachedLensMarkers({
   return (
     <>
       {cachedRegions.map((r) => {
-        const topCss = (pageHeight - r.bbox.y - r.bbox.height) * zoom;
-        const rightEdge = (r.bbox.x + r.bbox.width) * zoom;
-        // Place the marker INSIDE the top-right corner of the region, not
-        // outside it. For text regions the outside-the-column position was
-        // fine, but for full-width figure regions the marker ended up
-        // beyond the page edge and was clipped / hidden. Inside + a white
-        // ring + a generous z-index keeps it visible on top of any figure
-        // pixel color, always.
+        // Inline-ask in-flight: the bubble registered the marker with
+        // displayMode='inline' + streaming=true. Render red until
+        // endStream flips streaming false → marker transitions to
+        // amber via the same CSS background-color transition.
+        const marker = markerByLensId.get(r.id);
+        // Selection-origin dives store a tighter bbox on the marker
+        // (the selection's first-line rect, in PDF user space) so the
+        // amber dot lands at the right edge of what the user actually
+        // selected — not the right edge of the enclosing paragraph.
+        // Plain region dives have marker.bbox === r.bbox, so the
+        // fallback is identity. Guard against zero-width legacy rows
+        // by falling back to the region bbox when the marker bbox
+        // collapsed to a point (defensive — shouldn't happen for
+        // region-origin lenses but a malformed hydrate shouldn't drop
+        // the dot off-screen).
+        const markerBbox =
+          marker && marker.bbox.width > 0 && marker.bbox.height > 0
+            ? marker.bbox
+            : r.bbox;
+        const topCss = (pageHeight - markerBbox.y - markerBbox.height) * zoom;
+        const rightEdge = (markerBbox.x + markerBbox.width) * zoom;
+        const isStreaming = marker?.displayMode === 'inline' && !!marker.streaming;
         return (
           <button
             key={r.id}
             onClick={() => openCached(r)}
-            className="absolute z-[100] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] transition-transform hover:scale-125 focus:outline-none"
-            style={{ left: rightEdge - 14, top: topCss + 4 }}
-            title="Re-open lens"
-            aria-label="Re-open lens"
+            className={
+              'absolute z-[100] flex h-3.5 w-3.5 items-center justify-center rounded-full shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] hover:scale-125 focus:outline-none ' +
+              (isStreaming
+                ? 'bg-[#d4413a] fathom-marker-streaming'
+                : 'bg-[color:var(--color-lens)]')
+            }
+            // Cog reviewer (task #12): cross-fade red→amber over 600 ms
+            // ease-in so the change is reliably noticed in peripheral
+            // vision (change-blindness mitigation, Simons & Levin 1997).
+            // The 200 ms transition we used before was too fast to
+            // catch unless the user was already staring at the dot.
+            style={{
+              left: rightEdge - 14,
+              top: topCss + 4,
+              transition: 'background-color 600ms ease-in, transform 200ms',
+            }}
+            title={isStreaming ? 'Answering…' : 'Re-open lens'}
+            aria-label={isStreaming ? 'Answer streaming — click to view' : 'Re-open lens'}
+          />
+        );
+      })}
+      {orphanInlineMarkers.map((m) => {
+        // Stream killed before any body landed in lens_turns (app
+        // quit mid-flight). Render red so the user knows the answer
+        // never finished; click reopens the lens UI where they can
+        // re-ask. Same coordinate math as cachedRegions; the bbox
+        // came in via the marker payload.
+        const topCss = Math.max(0, (pageHeight - m.bbox.y - m.bbox.height) * zoom);
+        const rightEdge = (m.bbox.x + m.bbox.width) * zoom;
+        return (
+          <button
+            key={m.lensId}
+            onClick={() => {
+              const list = useRegionsStore.getState().getPage(paperHash, pageNumber);
+              const r = list.find((rg) => rg.id === m.lensId);
+              if (r) void openCached(r);
+            }}
+            className="fathom-marker-streaming absolute z-[100] h-3.5 w-3.5 cursor-pointer rounded-full bg-[#d4413a] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] hover:scale-125"
+            style={{
+              left: rightEdge - 14,
+              top: topCss + 4,
+              transition: 'background-color 600ms ease-in, transform 200ms',
+            }}
+            title="Answer interrupted — click to view / re-ask"
+            aria-label="Answer interrupted — click to view"
           />
         );
       })}

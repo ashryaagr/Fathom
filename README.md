@@ -42,6 +42,9 @@ Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens,
 - **Diagrams when they help.** Architectures, pipelines, and relationships render as hand-drawn inline SVG. Never ASCII, never Mermaid.
 - **Durable across sessions.** Every lens round-trips across app restarts: the viewport crop, the full thread, the exact prompt that was sent.
 - **Yours to shape.** Preferences (⌘,) let you point Fathom at extra folders — a codebase the paper implements, a sibling paper — and add a standing instruction for every explanation.
+- **Ground on a GitHub repo.** Paste a public GitHub URL into Preferences ("Extra grounding GitHub repos") and Fathom clones it into a managed sidecar; from then on every explanation can `Read` and `Grep` the repo as part of grounding. Useful when the paper references its own implementation. Cloned repos auto-evict after 30 days of disuse (toggleable).
+- **Inline two-finger ask.** Two-finger tap on a paragraph opens a tiny "Dive into" composer. Type a short question, press Enter — a marker drops, turns red while Claude streams in the background, and cross-fades amber when the answer is ready. Click the marker to read the answer in the lens. Lets you queue several questions in flight while you keep reading.
+- **Focus Light, optional.** A 3-word reading pacer that slides at your set WPM. Press **F** to toggle when the beta is enabled in Preferences, **Space** to pause. Speed dial is a slider 10–300 wpm + a numeric input for anything higher.
 
 ## Install
 

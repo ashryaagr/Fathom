@@ -12,9 +12,20 @@ export interface OpenDocument {
    * the latter across N pdf.js workers for parallel page renders. */
   doc: PdfDocFacade;
   numPages: number;
-  /** CSS-pixel scrollY from the last reading session. Consumed once
-   * by PdfViewer's scroll-restore effect. (todo #42) */
+  /** Reading-position memory v2 (todo #42). All consumed once by
+   * PdfViewer's restore effect when the paper opens.
+   *   • initialScrollY  — legacy raw scrollY, fallback if v2 fields
+   *                       are null
+   *   • initialPage     — page number (1-indexed) the user was on
+   *   • initialOffset   — fractional offset inside that page (0..1)
+   *   • initialZoom     — saved zoom factor; if present, zoom is
+   *                       restored BEFORE scroll so the position
+   *                       lands on the right page at the right size
+   */
   initialScrollY?: number;
+  initialPage?: number | null;
+  initialOffset?: number | null;
+  initialZoom?: number | null;
 }
 
 interface DocumentState {

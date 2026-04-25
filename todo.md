@@ -324,6 +324,90 @@ indicators (spinners, pulses, glyphs) over short status text
 text adds visual weight and reading load that the eye doesn't
 need for a state that resolves in milliseconds.
 
+## 53. SSH-based remote grounding + experiment execution — 🔄 PENDING (LOW PRIORITY)
+User 2026-04-25 (in same conversation as `.claude/specs/github-repo-grounding.md`): *"ideally I would also want to be able to use SSH so that I can configure this to work with my desktop. It can run grep and all those commands simply by SSH, so whatever code, etc., it needs, it can connect there and maybe even run experiments while I'm inside the paper. It can answer my questions, run experiments, and everything... But for now, I feel like running experiments is just secondary; I can put that in a future plan somewhere in any document, low priority for me."*
+
+Two scope expansions deferred from the GitHub-repo-grounding v1 spec:
+
+1. **SSH-based remote grounding.** Instead of cloning a repo locally, configure Fathom to SSH into a desktop / dev machine and run Read / Grep / Glob there over an SSH tunnel. Useful when the user's actual code + data lives on a workstation they never want to copy to the laptop they're reading on. Implementation sketch: new IPC + `ssh` shell-out with key-based auth; the Claude Code tool calls (`Bash`, `Read`, `Grep`) get a "remote-prefix" mode that wraps each call in `ssh user@host -- <cmd>`. Risks: latency on every grep, key management, partial-failure UX (what if SSH drops mid-explain?).
+2. **Run experiments / execute commands in the cloned repo.** Currently the grounding directory is read-only (Claude Read/Grep/Glob it). Allowing `Bash` execution against a cloned repo turns Fathom into a research notebook: "run the training script with these hyperparameters and tell me the result while I keep reading." Risks: arbitrary code execution, sandboxing, credential leakage, long-running processes. Needs a careful permission model — explicit per-repo opt-in, sandbox boundary, output-truncation, kill-switch.
+
+Pick this up after the v1 GitHub-repo-grounding spec ships and we have data on whether the user actually uses local clones often enough to justify the SSH/exec complexity.
+
+## 51. Harness coverage for the inline two-finger ask — 🔄 PENDING
+The inline-ask flow is the only user-facing feature whose
+release-time validation is currently MANUAL (see
+`.claude/skills/fathom-e2e-test.md` "Inline two-finger ask"
+section). To make it fully agent-driven we need three new
+`scripts/fathom-test.sh` subcommands:
+
+- `inline-ask <question>` — synthesize a `contextmenu` event at
+  the centre of the current viewport (or coords passed as 2nd
+  arg), wait for the bubble, type the question, press Enter.
+  Likely path: register a global ⌘⇧Fn shortcut in the main
+  process that opens the bubble at the viewport centre — same
+  pattern as the existing `dive` / `ask` aliases.
+- `click-marker [n]` — click the n-th rendered lens marker on
+  the visible page. Same pattern as `click <label>` but targets
+  by data-attribute instead of accessibility label.
+- `quit` — clean ⌘Q on Fathom (we currently rely on `pkill -x
+  Fathom` in `launch`, which is destructive enough to mask save-
+  on-quit bugs).
+
+Per CLAUDE.md §0 ("Agent harness is a first-class artefact"),
+this is a release-readiness gap, not a nice-to-have. Until it
+lands, the QA flow falls back to manual validation of the inline
+red→amber transition and the persistence round-trip.
+
+## 52. Easy WPM calibration for the focus pacer — 🔄 PENDING
+User 2026-04-25: *"We also need to think about that we might not
+always get the right speed for the user. There is going to be
+experimentation involved, and the experimentation or determination
+of users' reading speed should be easy. Not that it is something
+you have to do for now, but maybe in the future."*
+
+Today the user has to drag a 10–150 WPM slider in Preferences and
+re-test by reading. Friction is high enough that they probably
+never tune it after first install — and a wrong WPM is the single
+biggest reason the pacer feels broken (too slow → user thinks the
+gate is stuck; too fast → user falls behind and disables it).
+
+Approaches worth prototyping when this comes up:
+
+1. **Inline calibration mode.** A one-shot "calibrate" button in
+   the Focus Light preferences that opens a known-length passage
+   (or uses the current visible passage), starts a timer, asks the
+   user to read at their natural pace, and computes WPM = words
+   / elapsed-seconds × 60. Two-tap setup, no slider math.
+
+2. **Adaptive WPM from observed behaviour.** While the pacer is
+   running, watch for user override signals — manual click-ahead
+   of the band ("too slow, I'm faster than this") or click-back
+   ("too fast, I missed that"). Each override nudges WPM by ±5–10
+   with a short cool-down so the pacer settles toward the user's
+   real speed without thrashing.
+
+3. **Header-bar +/− nudge buttons.** Two tiny "felt too slow /
+   too fast" controls next to the Focus toggle. Each click bumps
+   WPM by ±10. No need to open Preferences.
+
+4. **Per-paper WPM memory.** Reading speed varies by density (a
+   methods section is slower than a related-work section). Store
+   per-paper WPM on top of the global default; user nudges only
+   change the per-paper value.
+
+Pick #1 + #3 together as the v1: explicit calibration ONCE per
+install, plus quick header nudges for in-the-moment tuning. #2 is
+the elegant ML-flavoured answer but risks feeling like the pacer
+is "fighting" the user; defer until #1 and #3 ship and we have
+data on whether they're enough. #4 is mostly free if #2 ships.
+
+Cross-references: `.claude/skills/fathom-cog-review.md` §1
+(working memory — calibration shouldn't ask the user to remember
+their own reading rate), §3 (Doherty's threshold — calibration
+must complete in <400 ms perceived latency once the user signals
+"done").
+
 ## 41. Focus Light + research-backed reading aids — ✅ DONE (Focus Light, opt-in beta) / 🔄 the rest tracked here
 
 User asked for the Focus Light feature *and* a wider brainstorm
@@ -737,3 +821,77 @@ fathom-shots/`. Rationale: these are debug screenshots only
 used by the QA harness; `/tmp` is a predictable shared path
 that the bash harness can poll without inheriting the app's
 environment. World-writable on macOS, no PII concern.
+
+## 54. Whiteboard Diagrams — side chat / patch loop — 🔄 DEFERRED FROM v1
+The v1 build (slice "b" — Level 1 + Level 2 only) intentionally
+omits the right-rail side chat. Spec
+(`.claude/specs/whiteboard-diagrams.md` §"Side chat (unchanged
+from v1 design)") describes it: 320 px collapsible right rail,
+4 controls (Hick's Law), patch-mode by default with typed ops
+(`add_node`, `relabel`, `split_node`, `merge_nodes`,
+`add_edge`, `change_kind`), regenerate-mode escape when the
+user explicitly asks for "from scratch" or the change touches
+>40% of nodes. Per-frame scoping (Level 1 of paper vs Level 2
+of Encoder = separate threads).
+
+Current "regenerate" path: user clicks "Try again" on a failed
+run → `whiteboardGenerate` re-runs Pass 1 + Pass 2 from scratch
+and replaces the saved understanding doc + scene. Per-node
+patches are not yet wired.
+
+Pick this up after dogfooding the diagram pipeline on real
+papers. Open question: does the side chat materially change
+the user's mental model of "the whiteboard is generated, now I
+read it" vs "the whiteboard is editable, now I'm in a tool"?
+Cog-review when we get there.
+
+## 55. Whiteboard Diagrams — Level 3 (algorithm napkin cards) — 🔄 DEFERRED FROM v1
+Spec (`whiteboard-diagrams-research-visual-abstraction.md` §3)
+calls for Level 3 = annotated pseudocode card / flowchart /
+state diagram per algorithm shape, with a hand-drawn rectangle
++ 5–8 lines of monospaced-but-Excalifont-styled text + one
+inline mini-diagram on the right. Three templates picked by
+what the algorithm IS (sequential / branching / state).
+
+Deferred because the v1 slice is Level 1 + Level 2 to validate
+the recursion grammar before adding the third surface. Level
+3's UI mode is meaningfully different (napkin card, not
+hierarchical zoom) so it's better isolated.
+
+Pick this up after the v1 whiteboard is shipping reliably and
+we have signal on whether users want to drill from Level 2
+into algorithm interiors at all. Today their fallback is
+⌘+pinch on the underlying PDF passage to open a Fathom lens
+on the algorithm — which already does most of what Level 3
+would.
+
+## 56. Whiteboard Diagrams — Sonnet-Lite cost-tier toggle — 🔄 DEFERRED FROM v1
+Spec §"Cost-tier option (cog reviewer non-blocking note)" calls
+for a one-tap "Lite (~$0.50, Sonnet only)" alternative next to
+the Generate button if dogfood acceptance drops below ~60% on
+the default $1.50 Opus-priced version (Johnson & Goldstein
+2003 — defaults stick).
+
+Implementer reserved the schema (`whiteboardSonnetLite` in
+settings) so the toggle lands additively when we wire it.
+Actual Sonnet-only Pass 1 path is not implemented; today
+flipping the boolean is a no-op.
+
+Pick this up after observing first-paper acceptance rates in
+dogfood. Per the spec: "instrument first, build later" — don't
+pre-build the Lite path when the cost story may not need it.
+
+## 57. Whiteboard Diagrams — chunked Pass 1 for >80k token papers — 🔄 DEFERRED FROM v1
+Spec §"Pass 1" notes: "for longer papers/surveys: chunk by
+section using `digest.json`, run Pass 1 per super-section,
+merge in a thin synthesis step." V1 ships the single-call path
+because most research papers fit comfortably in Opus 4.7's 1M
+context. Survey papers (>80k tokens) and book chapters are
+known long-tail; today they may produce a degraded
+understanding doc as Opus's long-context attention degrades
+past the RULER benchmark's 80k threshold.
+
+Pick this up the first time a user reports a degraded
+understanding doc on a long paper. The chunking surface is
+the digest.json's section index — same plumbing the lens
+uses for figure references, no new index work needed.

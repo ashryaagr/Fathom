@@ -7,6 +7,17 @@ import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
+import {
+  runPass1 as runWhiteboardPass1,
+  runPass2 as runWhiteboardPass2,
+  runVerifier as runWhiteboardVerifier,
+  WB_SCENE_FILE,
+  WB_UNDERSTANDING_FILE,
+  WB_ISSUES_FILE,
+  type Pass1Result,
+  type Pass2Result,
+  type VerifierResult,
+} from './ai/whiteboard';
 import { getDb } from './db/schema';
 import {
   Papers,
@@ -17,7 +28,15 @@ import {
   LensAnchors,
   LensTurns,
   LensHighlights,
+  GroundingRepos,
+  Whiteboards,
 } from './db/repo';
+import {
+  addRepo as addGroundingRepo,
+  updateRepoInBackground as updateGroundingRepo,
+  removeRepo as removeGroundingRepo,
+  evictStaleRepos,
+} from './repos/cloneManager';
 import {
   initAutoUpdater,
   manualCheckForUpdates,
@@ -54,6 +73,34 @@ interface FathomSettings {
    * (average adult reading speed). Range clamped to [80, 800] in
    * the renderer to keep the slider usable. */
   focusLightWpm?: number;
+  /** GitHub-repo grounding (.claude/specs/github-repo-grounding.md).
+   * On by default. When true, the eviction job at app start removes
+   * any cloned repo whose `last_used_at` is older than the TTL below.
+   * Surfaced as a toggle in Preferences because eviction DELETES
+   * user data — must be opt-out, not hidden. */
+  groundingRepoEvictionEnabled?: boolean;
+  /** TTL in days for the eviction job. Default 30. Editable in
+   * Preferences. Lower bound 1 day; no upper bound (a user who
+   * never wants eviction should toggle the boolean above off). */
+  groundingRepoEvictionDays?: number;
+  /** Tracks whether we've shown the one-time "Claude Code will
+   * Read/Grep this repo" privacy notice in Preferences. Set to
+   * the ISO timestamp of acknowledgement; absent means "show on
+   * first add". */
+  groundingRepoPrivacyNoticeAt?: string;
+  /** Whiteboard Diagrams (spec: .claude/specs/whiteboard-diagrams.md).
+   * When true, the Whiteboard pipeline kicks off automatically once
+   * the paper finishes indexing — no consent prompt. Default false
+   * because the call costs ~$1.50/paper from the user's own Claude
+   * CLI auth (financial-consent rule from the cog reviewer §8).
+   * Editable from Preferences. */
+  whiteboardAutoGenerateOnIndex?: boolean;
+  /** Reserved for the v1 follow-up "Lite (~$0.50, Sonnet only)"
+   * cost-tier toggle that the cog reviewer non-blocking note proposed.
+   * Wired into settings now so the schema lands with v1; the actual
+   * Sonnet-only Pass 1 path is deferred until we observe acceptance
+   * rates on the default Opus-priced version. (todo.md item 56) */
+  whiteboardSonnetLite?: boolean;
 }
 
 function settingsPath(): string {
@@ -217,6 +264,11 @@ async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
     minWidth: 760,
     minHeight: 520,
     show: false,
+    // macOS native fullscreen on open. Per user 2026-04-25: "whenever we
+    // open a paper, it should always open in full screen." Each window
+    // (paper or welcome) gets its own Space — fits the read-deeply
+    // intent. The user can leave fullscreen via ⌃⌘F or the green button.
+    fullscreen: true,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#fafaf7',
     vibrancy: 'under-window',
@@ -310,8 +362,9 @@ async function prepareOpenedPdf(filePath: string) {
   // that have the canonical absolute path are the open-flows.
   Papers.upsert({ contentHash, title: filePath.split('/').pop(), path: filePath });
   const indexDir = await ensureIndexDir(filePath, contentHash);
-  // Pull the saved scroll position so the renderer can scroll there
-  // after pages mount (todo #42 — reopen at last reading position).
+  // Pull the saved position vector so the renderer can restore it
+  // after pages mount (todo #42 v2 — page + offset-in-page + zoom,
+  // not just raw scrollY which is zoom-dependent).
   const row = Papers.get(contentHash);
   return {
     path: filePath,
@@ -320,6 +373,9 @@ async function prepareOpenedPdf(filePath: string) {
     contentHash,
     bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
     lastScrollY: row?.last_scroll_y ?? 0,
+    lastPage: row?.last_page ?? null,
+    lastOffsetInPage: row?.last_offset_in_page ?? null,
+    lastZoom: row?.last_zoom ?? null,
   };
 }
 
@@ -435,6 +491,25 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
       const extraDirectories = (settings.extraDirectories ?? []).filter(
         (d) => typeof d === 'string' && existsSync(d),
       );
+      // GitHub-repo grounding: append every successfully-cloned repo's
+      // local path to the same list. Each ready repo gets its
+      // `last_used_at` bumped so the eviction job knows the user is
+      // still actively grounding against it (per spec §6 lifecycle).
+      // Filtered the same way as user-supplied extra dirs — a row whose
+      // local path was deleted out from under us shouldn't poison the
+      // call.
+      const readyRepos = GroundingRepos.ready();
+      for (const repo of readyRepos) {
+        if (typeof repo.local_path === 'string' && existsSync(repo.local_path)) {
+          extraDirectories.push(repo.local_path);
+          try {
+            GroundingRepos.markUsed(repo.id);
+          } catch (e) {
+            // markUsed is best-effort; never fail an explain because of it.
+            console.warn('[repos] markUsed failed', e);
+          }
+        }
+      }
 
       const fullText = await explain({
         regionText: req.regionText,
@@ -637,16 +712,78 @@ ipcMain.handle('settings:update', async (
   }
   if ('focusLightWpm' in patch) {
     const n = patch.focusLightWpm;
-    // Range tuned for research-paper reading. 10 wpm = the deliberate
-    // crawl for parsing a single equation; 150 wpm is the upper bound
-    // for keeping comprehension on dense prose. Default 80 ("study
-    // pace") is set in the renderer. The user noted these will be
-    // re-calibrated as they accumulate data on what speeds actually
-    // feel useful for different paper types.
+    // Lower bound 10 wpm = deliberate crawl for parsing a single
+    // equation. NO upper bound — the user explicitly asked for the
+    // numeric input to accept any value above the slider's typical
+    // range (10–300). Speed-reading or RSVP-style values (≥ 1000)
+    // are deliberately allowed; any value above ~1500 hits the
+    // pacer's internal interval floor and behaves the same as
+    // "as fast as the renderer can advance," which is fine.
     allowed.focusLightWpm =
-      typeof n === 'number' && Number.isFinite(n) ? Math.max(10, Math.min(150, Math.round(n))) : undefined;
+      typeof n === 'number' && Number.isFinite(n) ? Math.max(10, Math.round(n)) : undefined;
+  }
+  if ('groundingRepoEvictionEnabled' in patch) {
+    allowed.groundingRepoEvictionEnabled =
+      typeof patch.groundingRepoEvictionEnabled === 'boolean'
+        ? patch.groundingRepoEvictionEnabled
+        : undefined;
+  }
+  if ('groundingRepoEvictionDays' in patch) {
+    const n = patch.groundingRepoEvictionDays;
+    // Lower bound 1 day — eviction is cheap, but evicting at zero days
+    // would delete repos as fast as the user added them. The boolean
+    // toggle above is the right knob for "never evict".
+    allowed.groundingRepoEvictionDays =
+      typeof n === 'number' && Number.isFinite(n) ? Math.max(1, Math.round(n)) : undefined;
+  }
+  if ('groundingRepoPrivacyNoticeAt' in patch) {
+    allowed.groundingRepoPrivacyNoticeAt =
+      typeof patch.groundingRepoPrivacyNoticeAt === 'string'
+        ? patch.groundingRepoPrivacyNoticeAt
+        : undefined;
+  }
+  if ('whiteboardAutoGenerateOnIndex' in patch) {
+    allowed.whiteboardAutoGenerateOnIndex =
+      typeof patch.whiteboardAutoGenerateOnIndex === 'boolean'
+        ? patch.whiteboardAutoGenerateOnIndex
+        : undefined;
+  }
+  if ('whiteboardSonnetLite' in patch) {
+    allowed.whiteboardSonnetLite =
+      typeof patch.whiteboardSonnetLite === 'boolean'
+        ? patch.whiteboardSonnetLite
+        : undefined;
   }
   writeSettings(allowed);
+});
+
+// ── GitHub-repo grounding IPC ─────────────────────────────────────
+// Listed here near `settings:update` because the Preferences panel is
+// the only renderer-side caller. The clone itself is async + can take
+// minutes; the renderer adds a row, gets back `pending`, and polls
+// `settings:listGroundingRepos` to watch the status flip to `ready`.
+ipcMain.handle('settings:listGroundingRepos', async () => {
+  return GroundingRepos.list();
+});
+ipcMain.handle('settings:addGroundingRepo', async (_event, url: string) => {
+  if (typeof url !== 'string') return { ok: false, error: 'URL must be a string.' };
+  return addGroundingRepo(url);
+});
+ipcMain.handle('settings:removeGroundingRepo', async (_event, id: number) => {
+  if (typeof id !== 'number' || !Number.isFinite(id)) {
+    return { ok: false, error: 'Invalid repo id.' };
+  }
+  await removeGroundingRepo(id);
+  return { ok: true };
+});
+ipcMain.handle('settings:updateGroundingRepo', async (_event, id: number) => {
+  if (typeof id !== 'number' || !Number.isFinite(id)) {
+    return { ok: false, error: 'Invalid repo id.' };
+  }
+  // Fire and forget — the renderer polls listGroundingRepos for the
+  // status flip back to 'ready', exactly like add.
+  void updateGroundingRepo(id);
+  return { ok: true };
 });
 ipcMain.handle('settings:pickDirectory', async (event) => {
   // Anchor the directory picker to the calling window so the modal
@@ -708,9 +845,24 @@ ipcMain.handle('paper:state', async (_event, paperHash: string) => {
 // cheap — a single UPDATE of one INTEGER. (todo #42)
 ipcMain.handle(
   'paper:saveScroll',
-  async (_event, req: { paperHash: string; scrollY: number }): Promise<{ ok: boolean }> => {
+  async (
+    _event,
+    req: {
+      paperHash: string;
+      scrollY: number;
+      page?: number;
+      offsetInPage?: number;
+      zoom?: number;
+    },
+  ): Promise<{ ok: boolean }> => {
     try {
-      Papers.saveScroll(req.paperHash, req.scrollY);
+      Papers.saveScroll({
+        contentHash: req.paperHash,
+        scrollY: req.scrollY,
+        page: req.page,
+        offsetInPage: req.offsetInPage,
+        zoom: req.zoom,
+      });
       return { ok: true };
     } catch (err) {
       console.warn('[paper:saveScroll] failed', err);
@@ -801,6 +953,10 @@ ipcMain.handle(
       regionId: string | null;
       zoomImagePath?: string | null;
       anchorText?: string | null;
+      /** 'lens' (default) or 'inline'. Carried through so the
+       * renderer's hydration path can pick the right marker colour
+       * for inline-ask anchors without a separate lookup. */
+      displayMode?: string | null;
     },
   ) => {
     LensAnchors.upsert(a);
@@ -1023,6 +1179,330 @@ ipcMain.handle(
     }
   },
 );
+
+// ── Whiteboard Diagrams pipeline IPC ────────────────────────────
+//
+// Spec: .claude/specs/whiteboard-diagrams.md
+// Methodology doc (kept in sync with this code): docs/methodology/whiteboard.md
+//
+// Three-handler shape:
+//   whiteboard:status   — cheap "is there a whiteboard for this paper?"
+//   whiteboard:generate — Pass 1 (Opus) → Pass 2 (Sonnet, Level 1) → verifier.
+//                         Streams progress events on a per-call channel.
+//   whiteboard:expand   — Pass 2 (Sonnet, Level 2) for one drillable node.
+//   whiteboard:get      — load whiteboard.excalidraw + understanding + issues
+//                         from disk; renderer hydrates from the result.
+//   whiteboard:saveScene — write whiteboard.excalidraw back to disk after
+//                          a user edit. Atomic-ish (write-then-rename via
+//                          fs.writeFile which on macOS is atomic for files
+//                          under typical sizes).
+//
+// Streaming model mirrors `explain:start`: handler returns a {requestId,
+// channel} pair; the renderer subscribes to the channel and gets
+// `{type: 'pass1Delta'|'pass1Done'|'pass2Delta'|'pass2Done'|'verifier'|'done'|'error', …}`
+// messages until completion.
+const activeWhiteboards = new Map<string, AbortController>();
+
+ipcMain.handle('whiteboard:status', async (_event, paperHash: string) => {
+  const row = Whiteboards.get(paperHash);
+  if (!row) return { status: 'idle' as const };
+  return {
+    status: row.status,
+    generatedAt: row.generated_at,
+    pass1Cost: row.pass1_cost,
+    pass2Cost: row.pass2_cost,
+    totalCost: row.total_cost,
+    pass1LatencyMs: row.pass1_latency_ms,
+    verificationRate: row.verification_rate,
+    error: row.error,
+  };
+});
+
+ipcMain.handle(
+  'whiteboard:get',
+  async (
+    _event,
+    paperHash: string,
+  ): Promise<{
+    scene: string | null;
+    understanding: string | null;
+    issues: string | null;
+    status: string;
+    verificationRate: number | null;
+    /** Absolute path to the per-paper sidecar so the renderer can
+     * compose figure paths (`<indexPath>/images/page-NNN-fig-K.png`)
+     * for embedding inside whiteboard nodes. */
+    indexPath: string;
+  }> => {
+    const indexPath = indexDirFor(paperHash);
+    const scenePath = join(indexPath, WB_SCENE_FILE);
+    const understandingPath = join(indexPath, WB_UNDERSTANDING_FILE);
+    const issuesPath = join(indexPath, WB_ISSUES_FILE);
+    const safeRead = async (p: string): Promise<string | null> => {
+      try {
+        if (!existsSync(p)) return null;
+        return await readFile(p, 'utf-8');
+      } catch {
+        return null;
+      }
+    };
+    const [scene, understanding, issues] = await Promise.all([
+      safeRead(scenePath),
+      safeRead(understandingPath),
+      safeRead(issuesPath),
+    ]);
+    const row = Whiteboards.get(paperHash);
+    return {
+      scene,
+      understanding,
+      issues,
+      status: row?.status ?? (scene ? 'ready' : 'idle'),
+      verificationRate: row?.verification_rate ?? null,
+      indexPath,
+    };
+  },
+);
+
+ipcMain.handle(
+  'whiteboard:saveScene',
+  async (
+    _event,
+    req: { paperHash: string; scene: string },
+  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    try {
+      const indexPath = indexDirFor(req.paperHash);
+      await mkdir(indexPath, { recursive: true });
+      const scenePath = join(indexPath, WB_SCENE_FILE);
+      await writeFile(scenePath, req.scene, 'utf-8');
+      console.log(
+        `[Whiteboard Save] paper=${req.paperHash.slice(0, 10)} bytes=${req.scene.length}`,
+      );
+      return { ok: true, path: scenePath };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Whiteboard Save] failed: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  },
+);
+
+ipcMain.handle(
+  'whiteboard:generate',
+  async (
+    event,
+    req: { paperHash: string; pdfPath: string; purposeAnchor?: string },
+  ) => {
+    const requestId = randomUUID();
+    const channel = `whiteboard:event:${requestId}`;
+    const abortController = new AbortController();
+    activeWhiteboards.set(requestId, abortController);
+    const sender = event.sender;
+    const indexPath = indexDirFor(req.paperHash);
+
+    const safeChannelSend = (msg: unknown): void => {
+      if (sender.isDestroyed()) return;
+      sender.send(channel, msg);
+    };
+
+    // Mark status row up-front so concurrent paper:state lookups see
+    // "pass1" instead of "idle". The renderer keys its consent vs.
+    // Doherty-skeleton vs. hydrated render off this status.
+    Whiteboards.upsert({
+      paperHash: req.paperHash,
+      status: 'pass1',
+      error: null,
+    });
+
+    (async () => {
+      let pass1: Pass1Result | null = null;
+      let pass2: Pass2Result | null = null;
+      let verifier: VerifierResult | null = null;
+      try {
+        // -- Pass 1 -------------------------------------------------
+        pass1 = await runWhiteboardPass1({
+          paperHash: req.paperHash,
+          indexPath,
+          purposeAnchor: req.purposeAnchor,
+          abortController,
+          onProgress: (delta) => safeChannelSend({ type: 'pass1Delta', text: delta }),
+        });
+        Whiteboards.upsert({
+          paperHash: req.paperHash,
+          status: 'pass2',
+          pass1Cost: pass1.costUsd,
+          pass1LatencyMs: pass1.latencyMs,
+        });
+        safeChannelSend({
+          type: 'pass1Done',
+          understanding: pass1.understanding,
+          costUsd: pass1.costUsd,
+          latencyMs: pass1.latencyMs,
+        });
+
+        // -- Verifier (background; doesn't block Pass 2) ------------
+        // Kick it off in parallel with Pass 2 — the verifier reads
+        // disk and runs CPU-only so it doesn't compete with the
+        // network-bound Sonnet call. Its result lands BEFORE the
+        // renderer needs it because Pass 2 takes ~5-10 s.
+        const verifierPromise = runWhiteboardVerifier({
+          paperHash: req.paperHash,
+          indexPath,
+          understanding: pass1.understanding,
+        }).catch((err) => {
+          console.warn(`[Whiteboard Verifier] failed: ${err instanceof Error ? err.message : err}`);
+          return { issues: [], verificationRate: 1, quoteStatus: {} } as VerifierResult;
+        });
+
+        // -- Pass 2 (Level 1) ---------------------------------------
+        pass2 = await runWhiteboardPass2({
+          paperHash: req.paperHash,
+          indexPath,
+          understanding: pass1.understanding,
+          renderRequest: 'Render the Level 1 diagram.',
+          level: 1,
+          abortController,
+          onProgress: (delta) => safeChannelSend({ type: 'pass2Delta', text: delta }),
+        });
+        safeChannelSend({
+          type: 'pass2Done',
+          raw: pass2.raw,
+          costUsd: pass2.costUsd,
+          latencyMs: pass2.latencyMs,
+          cachedPrefixHit: pass2.cachedPrefixHit,
+        });
+
+        // -- Wait for verifier; emit verifier event with quote status.
+        verifier = await verifierPromise;
+        safeChannelSend({
+          type: 'verifier',
+          verificationRate: verifier.verificationRate,
+          issues: verifier.issues,
+          quoteStatus: verifier.quoteStatus,
+        });
+
+        // -- Persist final status row.
+        const totalCost = (pass1.costUsd ?? 0) + (pass2.costUsd ?? 0);
+        Whiteboards.upsert({
+          paperHash: req.paperHash,
+          status: 'ready',
+          generatedAt: Date.now(),
+          pass2Cost: pass2.costUsd,
+          totalCost,
+          verificationRate: verifier.verificationRate,
+          error: null,
+        });
+
+        safeChannelSend({
+          type: 'done',
+          totalCost,
+          verificationRate: verifier.verificationRate,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Whiteboard] generate failed: ${message}`);
+        Whiteboards.upsert({
+          paperHash: req.paperHash,
+          status: 'failed',
+          error: message,
+        });
+        safeChannelSend({ type: 'error', message });
+      } finally {
+        activeWhiteboards.delete(requestId);
+      }
+    })();
+
+    return { requestId, channel };
+  },
+);
+
+ipcMain.handle(
+  'whiteboard:expand',
+  async (
+    event,
+    req: { paperHash: string; nodeId: string; nodeLabel?: string },
+  ) => {
+    const requestId = randomUUID();
+    const channel = `whiteboard:event:${requestId}`;
+    const abortController = new AbortController();
+    activeWhiteboards.set(requestId, abortController);
+    const sender = event.sender;
+    const indexPath = indexDirFor(req.paperHash);
+
+    const safeChannelSend = (msg: unknown): void => {
+      if (sender.isDestroyed()) return;
+      sender.send(channel, msg);
+    };
+
+    (async () => {
+      try {
+        // We need the cached Pass 1 understanding doc — both for the
+        // Sonnet input and for cache-hit attribution.
+        const understandingPath = join(indexPath, WB_UNDERSTANDING_FILE);
+        if (!existsSync(understandingPath)) {
+          throw new Error('No Pass 1 understanding doc on disk — generate the whiteboard first.');
+        }
+        const understanding = await readFile(understandingPath, 'utf-8');
+
+        const labelPart = req.nodeLabel ? ` (labelled "${req.nodeLabel}")` : '';
+        const renderRequest = `Render the Level 2 diagram for the Level 1 node with id "${req.nodeId}"${labelPart}. Show its interior — the components inside it.`;
+
+        const pass2 = await runWhiteboardPass2({
+          paperHash: req.paperHash,
+          indexPath,
+          understanding,
+          renderRequest,
+          level: 2,
+          parentNodeId: req.nodeId,
+          abortController,
+          onProgress: (delta) => safeChannelSend({ type: 'pass2Delta', text: delta }),
+        });
+
+        safeChannelSend({
+          type: 'pass2Done',
+          raw: pass2.raw,
+          costUsd: pass2.costUsd,
+          latencyMs: pass2.latencyMs,
+          cachedPrefixHit: pass2.cachedPrefixHit,
+          parentNodeId: req.nodeId,
+        });
+
+        // Bump per-paper Pass 2 cost rollup.
+        const row = Whiteboards.get(req.paperHash);
+        const newPass2Cost = (row?.pass2_cost ?? 0) + (pass2.costUsd ?? 0);
+        const newTotal = (row?.pass1_cost ?? 0) + newPass2Cost;
+        Whiteboards.upsert({
+          paperHash: req.paperHash,
+          pass2Cost: newPass2Cost,
+          totalCost: newTotal,
+        });
+
+        safeChannelSend({
+          type: 'done',
+          parentNodeId: req.nodeId,
+          totalCost: newTotal,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Whiteboard] expand failed: ${message}`);
+        safeChannelSend({ type: 'error', message });
+      } finally {
+        activeWhiteboards.delete(requestId);
+      }
+    })();
+
+    return { requestId, channel };
+  },
+);
+
+ipcMain.handle('whiteboard:abort', async (_event, requestId: string) => {
+  const ctrl = activeWhiteboards.get(requestId);
+  if (ctrl) {
+    ctrl.abort();
+    activeWhiteboards.delete(requestId);
+    return true;
+  }
+  return false;
+});
 
 /**
  * Copy the bundled sample PDF into a user-writable location (not ~/Documents,
@@ -1368,6 +1848,29 @@ app.whenReady().then(async () => {
   buildAppMenu();
   // Eagerly initialize DB so a missing migration surfaces at startup, not on first explain.
   getDb();
+
+  // GitHub-repo grounding: eviction job runs once per app start. Default
+  // is "evict repos unused for 30 days," opt-out via Preferences.
+  // Eviction DELETES user data so the spec mandates the toggle stays
+  // visible. We don't await — eviction is best-effort and shouldn't
+  // delay the first window's appearance.
+  void (async () => {
+    try {
+      const settings = readSettings();
+      const enabled =
+        typeof settings.groundingRepoEvictionEnabled === 'boolean'
+          ? settings.groundingRepoEvictionEnabled
+          : true;
+      const days =
+        typeof settings.groundingRepoEvictionDays === 'number' &&
+        Number.isFinite(settings.groundingRepoEvictionDays)
+          ? Math.max(1, Math.round(settings.groundingRepoEvictionDays))
+          : 30;
+      await evictStaleRepos({ enabled, ttlMs: days * 86400_000 });
+    } catch (err) {
+      console.warn('[repos eviction] failed', err);
+    }
+  })();
 
   // Multi-window startup (todo #38). If the user launched Fathom with
   // one or more PDFs (Open With, drag-onto-dock, argv), open one window

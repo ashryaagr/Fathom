@@ -11,6 +11,30 @@ psychology reviewer** that has veto authority over any team's work.
 This file is the durable charter — every future session should read
 it before spawning subagents.
 
+## The close-the-loop principle (CORE — read first, established 2026-04-25)
+
+When AI teammates ship software the user sees the **output**, not the source. A typecheck-clean build that produces a cluttered diagram, an answer that misses the point, a focus light that pulses wrong is **not done** — even if every test passes. This is the failure mode that produced the broken Whiteboard render on first install: the implementer reported "typecheck clean and build succeeds" and the orchestrator (the PM) declared the feature live without ever rendering the diagram against a real paper. The diagram was visibly broken (overlapping text, skeleton placeholders never torn down, no drill UX). The whole team-of-agents architecture is worthless if it ships software the user immediately rejects.
+
+Every implementer teammate operates under these rules:
+
+1. **Render against a real example before declaring done.** Pick one of the user's actual papers (or the bundled `samples/attention-is-all-you-need.pdf` if no user paper is available). Run the feature against it. Look at the output. If the output is bad — cluttered, wrong, slow, ugly — iterate. Re-render. Look again. Repeat until the output matches the spec's quality bar. *Then* report done. The first render of a feature is allowed to be wrong; what is not allowed is reporting done without looking.
+
+2. **A separate quality-verifier teammate may do the looking.** If the implementer is too close to their own code, spawn a dedicated `*-qa` teammate (e.g. `whiteboard-qa@fathom-build`) that:
+   - Drives the app via `scripts/fathom-test.sh` or the in-app harness.
+   - Captures the visible output (screenshots via `capture` / `shot`, log tail, scene JSON inspection on disk).
+   - Grades against the spec's stated quality bar (working memory caps, visual continuity, latency targets, color grammar, etc.).
+   - SendMessages findings back to the implementer, who iterates.
+   The implementer + QA pair iterate until both report done. The PM (the orchestrator conversation) does NOT install the build until the close-the-loop pass is on the record.
+
+3. **Iteration is built into the channel.** Teammates are named and addressable via SendMessage precisely so the loop closes without re-briefing from a fresh agent each round. "The diagram is too dense — collapse two nodes" is a SendMessage to the existing teammate, not a new spawn that loses all the context of round 1.
+
+4. **The PM holds the install.** Build + install + launch is the PM's job, but the trigger is the implementer + QA's joint sign-off — not the typecheck passing. If a teammate reports "build is clean," the PM asks "and what does it look like when you ran it?" before installing. If the answer is "I didn't run it," the PM sends them back.
+
+5. **Composition with related principles:**
+   - The **AI-built-product principle** (CLAUDE.md §1) is the user's audit surface — methodology docs + structured logs the user can read after the fact.
+   - The **close-the-loop principle** (this section) is the implementer's audit surface — verifying the output before the user has to.
+   - Both are mandatory. Neither substitutes for the other. A feature with great docs but a broken render is broken; a feature with a clean render but no docs is undocumented.
+
 ## Why teams instead of a single coder
 
 Three reasons.
@@ -310,6 +334,63 @@ is the SYSTEM load right? A diff that touches all three (e.g. a
 new pluggable backend, a new gesture that adds a Claude tool)
 gets all three reviews.
 
+## The alignment checker
+
+Added in response to a real failure mode the user named directly:
+*"There should be a teammate whose specific purpose is to check
+whether all my requirements have been completed or not. There
+should be no to-do left. And everything done should be as per
+what I asked for. There should be an alignment check that is
+done. And this needs to be embedded on our agent team design."*
+
+The PM produces specs from instructions. The cognitive / AI / SE
+reviewers gate quality. **Nobody checks "did we actually deliver
+everything the user asked for, against the literal text of every
+message?"** That's the alignment checker's domain.
+
+**Scope**: Read-only. Reads `todo.md`, the team task list, the
+`.claude/specs/` folder, and EVERY user message in the recent
+conversation. Cross-references each user-stated requirement
+against current code state, current `todo.md` status, and
+current commits.
+
+**Brief**: Be the user's voice in the room. Distrust "DONE"
+labels. For each user-stated requirement, prove it has been
+satisfied — by reading code, running typecheck, or asking the
+relevant team to demonstrate the behaviour. If satisfaction
+can't be proven from artefacts alone, the requirement is NOT
+satisfied; flag it.
+
+**Evidence bar**: Each requirement gets one of three verdicts:
+  • ✓ SATISFIED — cite the file/commit/test that proves it
+  • ⏳ PARTIAL — cite what's done and what's missing, propose
+    the smallest follow-up work item
+  • ✗ MISSING — quote the user's instruction verbatim, name
+    the responsible team, log a new task in the task list
+
+The alignment checker NEVER closes a task as "done" by fiat.
+Closure happens only after the responsible team has shipped
+AND the alignment checker can point to the satisfying artefact.
+
+**When the alignment checker runs**:
+
+- **Before any commit that the user will see** — orchestrator
+  runs the checker against the diff + the recent user messages
+  to confirm the diff actually addresses what the user asked
+  for, not just what was easiest to build.
+- **Before declaring a release done** — full pass against
+  every open user requirement.
+- **When the user says "are we done with X?"** — focused pass
+  on X.
+- **When the user complains "I asked for Y, you didn't do it"**
+  — emergency pass plus a retrospective entry in the failure-
+  modes section below explaining how it slipped.
+
+**Relationship to the PM**: PM writes the spec card. Alignment
+checker verifies the spec is delivered. They sit at opposite
+ends of the work pipeline: PM at the start, alignment checker
+at the end. Both report to the user, not to the orchestrator.
+
 ## The cognitive-psychology reviewer
 
 Every team commit (or subagent output, before integration) goes
@@ -499,6 +580,47 @@ lesson.
    author/committer date when the wall-clock falls in the
    window, but don't *batch* an entire day's work into one
    commit just to satisfy it.
+
+6. **Symptom-treating instead of spec-treating** — the orchestrator
+   keeps shipping a feature, the user keeps reporting it's still
+   wrong, and each round addresses the *literal complaint* in the
+   most recent message ("make sides brighter", "no glow", "moves
+   when finger off") rather than re-checking against the spec.
+   Caught with the focus pacer: shipped 4–5 rounds of tactical
+   tweaks without ever asking "does my code actually highlight
+   exactly 5 WORDS?" The answer was no — it highlighted 5 spans,
+   and pdf.js spans often hold multiple words, so the entire
+   paragraph could light up. Root cause: the orchestrator was
+   acting as a developer responding to bug reports instead of
+   an engineer designing a verifiable feature.
+
+   **Mitigation**:
+   - Every feature gets a PM spec card from message 1, not after
+     the third "still not working." Pacer pre-dated the team
+     architecture, which is why it slipped — backfill specs for
+     pre-team features.
+   - Each spec carries an explicit acceptance criterion the
+     alignment checker can verify against artefacts (DOM count,
+     screenshot diff, `performance.now()` delta).
+   - After every fix in a multi-round dialogue, alignment checker
+     runs against the spec before declaring the round done.
+
+7. **Rebuild-during-read disrupts the user** — the orchestrator
+   was rebuilding + reinstalling `/Applications/Fathom.app`
+   between every small change, while the user was actively
+   reading. User explicit instruction: *"only after you've
+   accomplished all my tasks should you open or rebuild the
+   software and then open it. Otherwise, it disrupts my
+   workflow. You should have finished everything and made sure
+   that all that I asked for is there."*
+
+   **Mitigation**: Batch ALL the user's outstanding requests
+   into one work cycle. Source edits + typecheck + commit can
+   happen freely (no user disruption). `dist:mac` + reinstall
+   ONLY happens at the end of a cycle, after the alignment
+   checker confirms every requirement in the cycle is
+   satisfied. If the user explicitly asks to test something
+   mid-cycle, that's an exception; otherwise wait.
 
 ## When the team should be torn down
 

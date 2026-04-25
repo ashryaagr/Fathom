@@ -61,11 +61,26 @@ export interface FocusedLens {
 
 /** A marker tied to a particular lens-open. Registered the moment the
  * user zooms, whether or not they ever ask Claude anything. Keyed by
- * `paperHash:page` for cheap per-page lookup from PageView. */
+ * `paperHash:page` for cheap per-page lookup from PageView.
+ *
+ * `displayMode` distinguishes the inline two-finger-ask flow from the
+ * regular semantic-zoom-open flow:
+ *   - 'lens'   — opened via ⌘+pinch / Ask button. Always rendered amber.
+ *   - 'inline' — opened via two-finger tap on a paragraph. Rendered
+ *                red while the answer is in flight, amber when done.
+ *
+ * `streaming` is a session-only flag the inline-ask path sets to
+ * `true` while its background stream is running and clears (or just
+ * lets `endStream` clear) once the answer has arrived. It is NOT
+ * persisted — on reopen, an inline marker with at least one body in
+ * `lens_turns` is treated as completed (amber); one without is shown
+ * red so the user can click to reopen and re-ask. */
 export interface LensMarker {
   lensId: string;
   bbox: { x: number; y: number; width: number; height: number };
   origin: 'region' | 'viewport';
+  displayMode: 'lens' | 'inline';
+  streaming?: boolean;
 }
 
 /** A drill edge — the parent→child relationship recording that the
@@ -152,6 +167,15 @@ interface LensState {
     page: number,
     marker: LensMarker,
   ) => void;
+  /** Flip a marker's `streaming` flag — drives the inline-ask
+   * red→amber transition on stream completion without re-creating
+   * the marker. */
+  setMarkerStreaming: (
+    paperHash: string,
+    page: number,
+    lensId: string,
+    streaming: boolean,
+  ) => void;
   /** Read-only helper used by PageView to render amber dots. */
   markersForPage: (paperHash: string, page: number) => LensMarker[];
   /** Register a drill edge. Persists to SQLite via IPC; safe to call
@@ -222,6 +246,7 @@ export const useLensStore = create<LensState>((set, get) => ({
               lensId: lens.id,
               bbox: lens.bbox,
               origin: lens.origin === 'viewport' ? 'viewport' : 'region',
+              displayMode: 'lens',
             },
           ]);
         }
@@ -468,7 +493,26 @@ export const useLensStore = create<LensState>((set, get) => ({
         s.focused && s.focused.id === lensId
           ? { ...s.focused, turns: updated }
           : s.focused;
-      return { cache, focused };
+      // Clear the `streaming` flag on any matching marker so the
+      // inline-ask red→amber transition fires the moment the stream
+      // ends. Cheap scan — there are at most a few dozen markers
+      // across all pages.
+      let lensMarkers = s.lensMarkers;
+      let touched = false;
+      for (const [key, list] of s.lensMarkers) {
+        if (!list.some((m) => m.lensId === lensId && m.streaming)) continue;
+        if (!touched) {
+          lensMarkers = new Map(s.lensMarkers);
+          touched = true;
+        }
+        lensMarkers.set(
+          key,
+          list.map((m) =>
+            m.lensId === lensId ? { ...m, streaming: false } : m,
+          ),
+        );
+      }
+      return { cache, focused, lensMarkers };
     }),
 
   setStreamError: (lensId, message) =>
@@ -487,7 +531,25 @@ export const useLensStore = create<LensState>((set, get) => ({
         s.focused && s.focused.id === lensId
           ? { ...s.focused, turns: updated }
           : s.focused;
-      return { cache, focused };
+      // Mirror endStream: clear marker streaming so the dot doesn't
+      // get stuck red after a failure. The body will carry the
+      // error, which the lens will show on click.
+      let lensMarkers = s.lensMarkers;
+      let touched = false;
+      for (const [key, list] of s.lensMarkers) {
+        if (!list.some((m) => m.lensId === lensId && m.streaming)) continue;
+        if (!touched) {
+          lensMarkers = new Map(s.lensMarkers);
+          touched = true;
+        }
+        lensMarkers.set(
+          key,
+          list.map((m) =>
+            m.lensId === lensId ? { ...m, streaming: false } : m,
+          ),
+        );
+      }
+      return { cache, focused, lensMarkers };
     }),
 
   askFollowUp: (question) => {
@@ -502,9 +564,40 @@ export const useLensStore = create<LensState>((set, get) => ({
     set((s) => {
       const key = `${paperHash}:${page}`;
       const existing = s.lensMarkers.get(key) ?? [];
-      if (existing.some((m) => m.lensId === marker.lensId)) return s;
+      if (existing.some((m) => m.lensId === marker.lensId)) {
+        // Already registered. If the new record carries fresh state
+        // the existing one lacks (e.g. an inline-mode upgrade, or the
+        // streaming flag flipping), merge those forward without
+        // creating a duplicate.
+        const merged = existing.map((m) =>
+          m.lensId === marker.lensId
+            ? {
+                ...m,
+                displayMode: marker.displayMode ?? m.displayMode,
+                streaming:
+                  marker.streaming === undefined ? m.streaming : marker.streaming,
+              }
+            : m,
+        );
+        const lensMarkers = new Map(s.lensMarkers);
+        lensMarkers.set(key, merged);
+        return { lensMarkers };
+      }
       const lensMarkers = new Map(s.lensMarkers);
       lensMarkers.set(key, [...existing, marker]);
+      return { lensMarkers };
+    }),
+
+  setMarkerStreaming: (paperHash, page, lensId, streaming) =>
+    set((s) => {
+      const key = `${paperHash}:${page}`;
+      const existing = s.lensMarkers.get(key);
+      if (!existing) return s;
+      const next = existing.map((m) =>
+        m.lensId === lensId ? { ...m, streaming } : m,
+      );
+      const lensMarkers = new Map(s.lensMarkers);
+      lensMarkers.set(key, next);
       return { lensMarkers };
     }),
 

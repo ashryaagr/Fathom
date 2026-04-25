@@ -2,8 +2,13 @@ import { useLensStore, type FocusedLens, type Turn } from './store';
 import { useRegionsStore } from '../state/regions';
 import { useDocumentStore } from '../state/document';
 
-// Track the most recent in-flight stream so a new question / regenerate can cancel it.
-let currentHandle: { abort: () => void; lensId: string; turnIndex: number } | null = null;
+// Per-lens in-flight stream handles. Independent lenses (e.g. inline
+// asks against different paragraphs) must NOT cancel each other —
+// only a re-stream of the SAME lensId aborts the prior one. Pre-
+// inline-ask, this was a single global `currentHandle`, which meant
+// two background asks running in parallel would silently kill each
+// other.
+const handlesByLens = new Map<string, { abort: () => void; turnIndex: number }>();
 
 const DRILL_SYSTEM_PROMPT = `You are explaining a concept that appeared in a research paper, to a curious reader who has highlighted that concept in a clarification they were already reading.
 
@@ -35,6 +40,22 @@ export async function streamExplanationForFocused(
 ): Promise<void> {
   const focused = useLensStore.getState().focused;
   if (!focused) return;
+  await streamExplanationForLens(focused, paperText);
+}
+
+/**
+ * Stream an explanation against any lens — focused or not. Used by the
+ * inline two-finger-ask flow which dispatches a stream for a lens that
+ * the user has NOT entered (no full-screen lens taking over). The
+ * stream pipeline writes through the same store actions
+ * (`streamDelta`, `endStream`, …) which already update the cache by
+ * lensId, so the result is visible in the lens whenever the user
+ * later opens it.
+ */
+export async function streamExplanationForLens(
+  focused: FocusedLens,
+  paperText: string | undefined,
+): Promise<void> {
   // If the last turn is already finished and non-empty, nothing to do.
   const lastTurn = focused.turns[focused.turns.length - 1];
   if (lastTurn && !lastTurn.streaming && lastTurn.body.length > 0 && !lastTurn.error) return;
@@ -54,18 +75,22 @@ export async function streamExplanationForFocused(
   const pdfPath = undefined;
   void docState;
 
-  if (currentHandle) {
-    console.log('[Lens] aborting in-flight stream', currentHandle.lensId);
+  const targetId = focused.id;
+  const turnIndex = focused.turns.length - 1;
+
+  // Abort only a prior in-flight stream FOR THIS SAME LENS — other
+  // lenses' streams (e.g. background inline asks on different
+  // paragraphs) keep going.
+  const existing = handlesByLens.get(targetId);
+  if (existing) {
+    console.log('[Lens] aborting in-flight stream', targetId);
     try {
-      currentHandle.abort();
+      existing.abort();
     } catch {
       /* ignore */
     }
-    currentHandle = null;
+    handlesByLens.delete(targetId);
   }
-
-  const targetId = focused.id;
-  const turnIndex = focused.turns.length - 1;
   console.log('[Lens] streamExplanationForFocused begin', {
     lensId: targetId,
     turnIndex,
@@ -157,16 +182,16 @@ export async function streamExplanationForFocused(
         onDone: () => {
           console.log('[Lens] stream done', targetId);
           useLensStore.getState().endStream(targetId);
-          if (currentHandle?.lensId === targetId) currentHandle = null;
+          handlesByLens.delete(targetId);
         },
         onError: (msg) => {
           console.error('[Lens] stream error', targetId, msg);
           useLensStore.getState().setStreamError(targetId, msg);
-          if (currentHandle?.lensId === targetId) currentHandle = null;
+          handlesByLens.delete(targetId);
         },
       },
     );
-    currentHandle = { abort: handle.abort, lensId: targetId, turnIndex };
+    handlesByLens.set(targetId, { abort: handle.abort, turnIndex });
   } catch (e) {
     useLensStore.getState().setStreamError(targetId, e instanceof Error ? e.message : String(e));
   }

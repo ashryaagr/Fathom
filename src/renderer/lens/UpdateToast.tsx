@@ -38,6 +38,18 @@ export default function UpdateToast() {
     });
   }, []);
 
+  // Auto-dismiss the error toast after 8 s. User feedback 2026-04-25:
+  // "even if it's an error message, it should just close itself after
+  // some time." Errors that persist (a real broken update channel) will
+  // re-appear on the next periodic check; we don't need a permanent
+  // sticky surface for a transient blip. Other states (downloading,
+  // ready) stay until the user dismisses or progresses.
+  useEffect(() => {
+    if (!status || status.state !== 'error') return;
+    const id = setTimeout(() => setDismissed(true), 8000);
+    return () => clearTimeout(id);
+  }, [status]);
+
   if (!status || dismissed) return null;
 
   // Silent states: don't bother the user.

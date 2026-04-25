@@ -7,6 +7,12 @@ export interface PaperRow {
   digest_json: string | null;
   last_scroll_y: number | null;
   last_path: string | null;
+  /** Reading-position memory v2 — page + offset + zoom. Raw scrollY
+   * (above) is kept as a back-compat fallback for old rows that
+   * predate v2. (todo #42) */
+  last_page: number | null;
+  last_offset_in_page: number | null;
+  last_zoom: number | null;
 }
 
 export interface RegionRow {
@@ -56,11 +62,39 @@ export const Papers = {
   },
   /** Persist where the user was scrolled to in the PDF, so the next
    * open lands at the same place. Throttled writes are the renderer's
-   * responsibility — this just clobbers the column. (todo #42) */
-  saveScroll(contentHash: string, scrollY: number): void {
+   * responsibility — this just clobbers the columns. (todo #42)
+   *
+   * v2 takes the full position vector (page + offset-in-page + zoom)
+   * because raw scrollY is zoom-dependent and was producing the
+   * "wrong page on reopen" bug. The legacy `scrollY` field is still
+   * written as a back-compat hint but the renderer prefers the v2
+   * fields when present. */
+  saveScroll(args: {
+    contentHash: string;
+    scrollY: number;
+    page?: number;
+    offsetInPage?: number;
+    zoom?: number;
+  }): void {
     getDb()
-      .prepare('UPDATE papers SET last_scroll_y = ? WHERE content_hash = ?')
-      .run(Math.max(0, Math.round(scrollY)), contentHash);
+      .prepare(
+        `UPDATE papers SET
+           last_scroll_y = @scroll,
+           last_page = COALESCE(@page, last_page),
+           last_offset_in_page = COALESCE(@offset, last_offset_in_page),
+           last_zoom = COALESCE(@zoom, last_zoom)
+         WHERE content_hash = @hash`,
+      )
+      .run({
+        hash: args.contentHash,
+        scroll: Math.max(0, Math.round(args.scrollY)),
+        page: typeof args.page === 'number' ? args.page : null,
+        offset:
+          typeof args.offsetInPage === 'number'
+            ? Math.max(0, Math.min(1, args.offsetInPage))
+            : null,
+        zoom: typeof args.zoom === 'number' ? args.zoom : null,
+      });
   },
   /** Most-recently-opened papers (drives the welcome screen's recent
    * list, todo #43). Filters out rows without a known path because we
@@ -182,6 +216,11 @@ export interface LensAnchorRow {
   region_id: string | null;
   zoom_image_path: string | null;
   anchor_text: string | null;
+  /** 'lens' for full-screen-lens-origin anchors, 'inline' for the
+   * inline two-finger-ask flow. Drives marker colour at hydrate time
+   * (red while the inline stream is in flight, amber once a body
+   * exists in `lens_turns`). */
+  display_mode: string;
   created_at: number;
 }
 
@@ -195,16 +234,24 @@ export const LensAnchors = {
     regionId: string | null;
     zoomImagePath?: string | null;
     anchorText?: string | null;
+    /** When omitted, the row is inserted as 'lens' but an existing
+     * row's mode is preserved on conflict — so the Ask-button / ⌘+
+     * pinch open path doesn't accidentally downgrade an existing
+     * 'inline' row when the user later opens it as a lens. The
+     * inline-ask flow always sends `displayMode: 'inline'`
+     * explicitly. */
+    displayMode?: string | null;
   }): void {
     getDb()
       .prepare(
-        `INSERT INTO lens_anchors(lens_id, paper_hash, origin, page, bbox_json, region_id, zoom_image_path, anchor_text, created_at)
-         VALUES (@lens_id, @paper_hash, @origin, @page, @bbox_json, @region_id, @zoom_image_path, @anchor_text, @created_at)
+        `INSERT INTO lens_anchors(lens_id, paper_hash, origin, page, bbox_json, region_id, zoom_image_path, anchor_text, display_mode, created_at)
+         VALUES (@lens_id, @paper_hash, @origin, @page, @bbox_json, @region_id, @zoom_image_path, @anchor_text, @display_mode, @created_at)
          ON CONFLICT(lens_id) DO UPDATE SET
            bbox_json       = COALESCE(excluded.bbox_json, lens_anchors.bbox_json),
            region_id       = COALESCE(excluded.region_id, lens_anchors.region_id),
            zoom_image_path = COALESCE(excluded.zoom_image_path, lens_anchors.zoom_image_path),
-           anchor_text     = COALESCE(excluded.anchor_text, lens_anchors.anchor_text)`,
+           anchor_text     = COALESCE(excluded.anchor_text, lens_anchors.anchor_text),
+           display_mode    = COALESCE(@display_mode_override, lens_anchors.display_mode)`,
       )
       .run({
         lens_id: a.lensId,
@@ -215,6 +262,11 @@ export const LensAnchors = {
         region_id: a.regionId,
         zoom_image_path: a.zoomImagePath ?? null,
         anchor_text: a.anchorText ?? null,
+        // INSERT path always needs a non-null value because the column
+        // is NOT NULL DEFAULT 'lens'; UPDATE path uses the override
+        // expression above (NULL → keep existing).
+        display_mode: a.displayMode ?? 'lens',
+        display_mode_override: a.displayMode ?? null,
         created_at: Date.now(),
       });
   },
@@ -345,6 +397,212 @@ export const LensHighlights = {
         'SELECT * FROM lens_highlights WHERE paper_hash = ? ORDER BY created_at',
       )
       .all(paperHash) as LensHighlightRow[];
+  },
+};
+
+/**
+ * GitHub-repo grounding. The user adds a git URL in Preferences; we
+ * clone it into a managed userData dir and feed the local path into
+ * the same `additionalDirectories` array Claude already uses for
+ * extra grounding folders. See `src/main/repos/cloneManager.ts` for
+ * the actual `git clone` shell-out and `.claude/specs/github-repo-
+ * grounding.md` for the design.
+ *
+ * Lifecycle of `clone_status`:
+ *   pending  → row inserted, clone not yet started
+ *   cloning  → `git clone` subprocess running
+ *   ready    → clone succeeded; local_path is a valid checkout
+ *   failed   → clone failed; `error` column has the message
+ *   evicted  → reserved (v1 hard-deletes on remove)
+ */
+export interface GroundingRepoRow {
+  id: number;
+  url: string;
+  local_path: string;
+  cloned_at: number | null;
+  last_used_at: number | null;
+  size_bytes: number | null;
+  clone_status: 'pending' | 'cloning' | 'ready' | 'failed' | 'evicted';
+  error: string | null;
+  created_at: number;
+}
+
+export const GroundingRepos = {
+  /** All repos, newest first. The Settings panel renders this list as-is. */
+  list(): GroundingRepoRow[] {
+    return getDb()
+      .prepare('SELECT * FROM grounding_repos ORDER BY created_at DESC')
+      .all() as GroundingRepoRow[];
+  },
+  /** Look up by URL (UNIQUE). Used to short-circuit "add" when the user
+   * pastes a URL we already have a row for. */
+  getByUrl(url: string): GroundingRepoRow | null {
+    return (getDb()
+      .prepare('SELECT * FROM grounding_repos WHERE url = ?')
+      .get(url) as GroundingRepoRow | undefined) ?? null;
+  },
+  getById(id: number): GroundingRepoRow | null {
+    return (getDb()
+      .prepare('SELECT * FROM grounding_repos WHERE id = ?')
+      .get(id) as GroundingRepoRow | undefined) ?? null;
+  },
+  /** Repos whose clone is on disk and usable as a grounding directory.
+   * Wired into the `additionalDirectories` build path in `explain:start`. */
+  ready(): GroundingRepoRow[] {
+    return getDb()
+      .prepare("SELECT * FROM grounding_repos WHERE clone_status = 'ready'")
+      .all() as GroundingRepoRow[];
+  },
+  /** Insert a fresh row at status='pending'. The clone manager flips
+   * status as it progresses. Returns the new row id. Throws on URL
+   * collision — callers should `getByUrl` first. */
+  add(args: { url: string; localPath: string }): number {
+    const result = getDb()
+      .prepare(
+        `INSERT INTO grounding_repos(url, local_path, clone_status, created_at)
+         VALUES (@url, @local_path, 'pending', @created_at)`,
+      )
+      .run({
+        url: args.url,
+        local_path: args.localPath,
+        created_at: Date.now(),
+      });
+    return Number(result.lastInsertRowid);
+  },
+  remove(id: number): void {
+    getDb().prepare('DELETE FROM grounding_repos WHERE id = ?').run(id);
+  },
+  /** Bump `last_used_at` so the eviction job knows the user is still
+   * actively grounding against this repo. Called from `explain:start`
+   * for every ready repo we feed into `additionalDirectories`. */
+  markUsed(id: number): void {
+    getDb()
+      .prepare('UPDATE grounding_repos SET last_used_at = ? WHERE id = ?')
+      .run(Date.now(), id);
+  },
+  /** Internal helper used by the clone manager to flip status + persist
+   * size + error string in a single round-trip. Pass undefined to leave
+   * a column unchanged. */
+  updateStatus(args: {
+    id: number;
+    status: GroundingRepoRow['clone_status'];
+    sizeBytes?: number | null;
+    error?: string | null;
+    clonedAt?: number | null;
+  }): void {
+    getDb()
+      .prepare(
+        `UPDATE grounding_repos SET
+           clone_status = @status,
+           size_bytes   = COALESCE(@size_bytes, size_bytes),
+           error        = @error,
+           cloned_at    = COALESCE(@cloned_at, cloned_at)
+         WHERE id = @id`,
+      )
+      .run({
+        id: args.id,
+        status: args.status,
+        size_bytes: args.sizeBytes ?? null,
+        // Pass NULL explicitly when the caller wants to clear the
+        // error column on a successful retry. Default-undefined keeps
+        // the existing message.
+        error: args.error === undefined ? null : args.error,
+        cloned_at: args.clonedAt ?? null,
+      });
+  },
+  /** Repos whose `last_used_at` is older than `cutoff` (ms epoch) AND
+   * are in the 'ready' state. The eviction job consumes this list at
+   * app start. Repos that have never been used (`last_used_at IS NULL`)
+   * use `cloned_at` as the fallback timestamp — a repo cloned weeks
+   * ago and never queried is still a candidate. */
+  staleReady(cutoff: number): GroundingRepoRow[] {
+    return getDb()
+      .prepare(
+        `SELECT * FROM grounding_repos
+         WHERE clone_status = 'ready'
+           AND COALESCE(last_used_at, cloned_at, created_at) < ?`,
+      )
+      .all(cutoff) as GroundingRepoRow[];
+  },
+};
+
+/**
+ * Whiteboard diagrams (spec: .claude/specs/whiteboard-diagrams.md).
+ * One row per paper that has had a whiteboard generated. Filesystem
+ * still holds the source of truth — Excalidraw scene at
+ * `<sidecar>/whiteboard.excalidraw`, Pass 1 understanding doc at
+ * `<sidecar>/whiteboard-understanding.md`, soft-verifier results at
+ * `<sidecar>/whiteboard-issues.json`. This table is the index the
+ * main process consults so the renderer doesn't have to stat disk on
+ * every paper-state lookup. */
+export interface WhiteboardRow {
+  paper_hash: string;
+  status: 'idle' | 'pass1' | 'pass2' | 'ready' | 'failed';
+  generated_at: number | null;
+  pass1_cost: number | null;
+  pass2_cost: number | null;
+  total_cost: number | null;
+  pass1_latency_ms: number | null;
+  verification_rate: number | null;
+  error: string | null;
+  created_at: number;
+}
+
+export const Whiteboards = {
+  get(paperHash: string): WhiteboardRow | null {
+    return (
+      (getDb()
+        .prepare('SELECT * FROM whiteboards WHERE paper_hash = ?')
+        .get(paperHash) as WhiteboardRow | undefined) ?? null
+    );
+  },
+  /** Upsert with sparse fields. Pass undefined to leave a column
+   * unchanged on the UPDATE branch. The status transitions are driven
+   * from `whiteboard.ts`'s pipeline. */
+  upsert(args: {
+    paperHash: string;
+    status?: WhiteboardRow['status'];
+    generatedAt?: number | null;
+    pass1Cost?: number | null;
+    pass2Cost?: number | null;
+    totalCost?: number | null;
+    pass1LatencyMs?: number | null;
+    verificationRate?: number | null;
+    error?: string | null;
+  }): void {
+    getDb()
+      .prepare(
+        `INSERT INTO whiteboards(
+           paper_hash, status, generated_at, pass1_cost, pass2_cost, total_cost,
+           pass1_latency_ms, verification_rate, error, created_at
+         ) VALUES (
+           @paper_hash, @status, @generated_at, @pass1_cost, @pass2_cost, @total_cost,
+           @pass1_latency_ms, @verification_rate, @error, @created_at
+         )
+         ON CONFLICT(paper_hash) DO UPDATE SET
+           status              = COALESCE(excluded.status, whiteboards.status),
+           generated_at        = COALESCE(excluded.generated_at, whiteboards.generated_at),
+           pass1_cost          = COALESCE(excluded.pass1_cost, whiteboards.pass1_cost),
+           pass2_cost          = COALESCE(excluded.pass2_cost, whiteboards.pass2_cost),
+           total_cost          = COALESCE(excluded.total_cost, whiteboards.total_cost),
+           pass1_latency_ms    = COALESCE(excluded.pass1_latency_ms, whiteboards.pass1_latency_ms),
+           verification_rate   = COALESCE(excluded.verification_rate, whiteboards.verification_rate),
+           error               = excluded.error`,
+      )
+      .run({
+        paper_hash: args.paperHash,
+        status: args.status ?? null,
+        generated_at: args.generatedAt ?? null,
+        pass1_cost: args.pass1Cost ?? null,
+        pass2_cost: args.pass2Cost ?? null,
+        total_cost: args.totalCost ?? null,
+        pass1_latency_ms: args.pass1LatencyMs ?? null,
+        verification_rate: args.verificationRate ?? null,
+        // We always want to clear the error column on a successful step;
+        // pass `null` explicitly when the caller advances the status.
+        error: args.error === undefined ? null : args.error,
+        created_at: Date.now(),
+      });
   },
 };
 

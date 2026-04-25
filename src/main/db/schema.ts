@@ -170,6 +170,21 @@ function migrate(db: Database.Database): void {
   if (!paperCols.some((c) => c.name === 'last_path')) {
     db.exec('ALTER TABLE papers ADD COLUMN last_path TEXT');
   }
+  // todo #42 v2 — raw scrollY isn't enough. The user reported reopen
+  // landed on the wrong page because scrollY in CSS px depends on
+  // zoom: scroll=2000 at zoom=1 lands on a different page than
+  // scroll=2000 at zoom=2. Persist page + offset-in-page + zoom too,
+  // so reopen restores all three independent of how the previous
+  // session was sized.
+  if (!paperCols.some((c) => c.name === 'last_page')) {
+    db.exec('ALTER TABLE papers ADD COLUMN last_page INTEGER');
+  }
+  if (!paperCols.some((c) => c.name === 'last_offset_in_page')) {
+    db.exec('ALTER TABLE papers ADD COLUMN last_offset_in_page REAL');
+  }
+  if (!paperCols.some((c) => c.name === 'last_zoom')) {
+    db.exec('ALTER TABLE papers ADD COLUMN last_zoom REAL');
+  }
 
   // Additive migration: the zoom image path was added after the initial schema shipped.
   // Check pragma and only ALTER if the column is missing.
@@ -177,4 +192,70 @@ function migrate(db: Database.Database): void {
   if (!cols.some((c) => c.name === 'zoom_image_path')) {
     db.exec('ALTER TABLE explanations ADD COLUMN zoom_image_path TEXT');
   }
+
+  // Inline two-finger-ask flow: distinguishes lens anchors that were
+  // opened via the full-screen lens ('lens') from those born inside an
+  // in-page Ask bubble ('inline'). Used at hydration time to colour
+  // the marker correctly — inline asks render red while the stream is
+  // in flight (no body in lens_turns yet) and amber once an answer
+  // exists. Pre-existing rows default to 'lens' so nothing about the
+  // current lens-marker rendering changes for old data.
+  const anchorCols = db.pragma('table_info(lens_anchors)') as Array<{ name: string }>;
+  if (!anchorCols.some((c) => c.name === 'display_mode')) {
+    db.exec("ALTER TABLE lens_anchors ADD COLUMN display_mode TEXT NOT NULL DEFAULT 'lens'");
+  }
+
+  // Whiteboard diagrams (spec: .claude/specs/whiteboard-diagrams.md +
+  // docs/methodology/whiteboard.md). One row per paper that has had a
+  // whiteboard generated. Filesystem still holds the source of truth
+  // (whiteboard.excalidraw, whiteboard-understanding.md, whiteboard-
+  // issues.json under the sidecar) — this table is the *index* the
+  // main process consults to answer "is there a whiteboard for this
+  // paper?" without stat-ing the disk on every paper-state lookup.
+  //
+  // Status lifecycle: pass1 -> pass2 -> ready (happy path) or
+  // pass1 -> failed / pass2 -> failed at any stage. The renderer reads
+  // this status to drive the consent prompt vs Doherty skeleton vs
+  // hydrated render. Cost columns are optional; surfaced to the user
+  // in the methodology doc when/if we add a per-paper cost panel.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS whiteboards (
+      paper_hash TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'idle',
+      generated_at INTEGER,
+      pass1_cost REAL,
+      pass2_cost REAL,
+      total_cost REAL,
+      pass1_latency_ms INTEGER,
+      verification_rate REAL,
+      error TEXT,
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  // GitHub-repo grounding (spec: .claude/specs/github-repo-grounding.md).
+  // The user pastes a git URL in Preferences; we clone into a managed
+  // userData dir and add the local clone path to the same
+  // `additionalDirectories` array we already feed Claude during every
+  // explain call. One row per cloned repo. Keyed by URL (UNIQUE) so
+  // re-adding the same URL is idempotent.
+  //
+  // Status lifecycle: pending -> cloning -> ready (happy path) or
+  // pending -> cloning -> failed (network / 404 / private). 'evicted'
+  // is reserved for future use if we want to keep history of removed
+  // repos; v1 hard-deletes the row on remove.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS grounding_repos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL UNIQUE,
+      local_path TEXT NOT NULL,
+      cloned_at INTEGER,
+      last_used_at INTEGER,
+      size_bytes INTEGER,
+      clone_status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_grounding_repos_status ON grounding_repos(clone_status);
+  `);
 }

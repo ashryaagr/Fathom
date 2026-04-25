@@ -62,6 +62,38 @@ function send(status: UpdateStatus): void {
   wc.send('update:status', status);
 }
 
+/**
+ * Decide whether an error from the update-check / download path is
+ * "transient" (network blip, GitHub 5xx, DNS hiccup). Transient errors
+ * still get logged for diagnosis but should NOT surface to the user as a
+ * "Update couldn't download" toast — they're not actionable, and they
+ * spam the user every 6 hours when GitHub is having a bad day.
+ *
+ * Triggered by 2026-04-25 incident: a GitHub "Unicorn!" 502 on
+ * `releases/latest` produced a user-facing error toast for a problem
+ * that resolved itself in minutes. The next periodic check would have
+ * recovered silently — we want failure-then-recovery to look like
+ * silence-then-silence, not error-then-silence.
+ *
+ * Definite errors (404 = release doesn't exist, 401/403 = auth, parse
+ * errors on the YAML, etc.) still surface so the user knows when the
+ * update channel is genuinely broken.
+ */
+function isTransientUpdateError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  // electron-updater wraps HttpError with the status code in the message,
+  // e.g. `HttpError: 502 ...`. Match 5xx in the message.
+  if (/HttpError:\s*5\d\d\b/.test(msg)) return true;
+  // Network-layer failures (no connectivity, DNS, timeouts, resets).
+  if (/\b(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH|EAI_AGAIN|ECONNRESET)\b/.test(msg)) return true;
+  if (/network.*(unreachable|timeout|reset)/i.test(msg)) return true;
+  // electron-updater's "no internet" + "release feed unparseable due to 5xx" wrappers.
+  if (/Cannot parse releases feed/i.test(msg) && /5\d\d/.test(msg)) return true;
+  if (/Unable to find latest version on GitHub/i.test(msg) && /5\d\d/.test(msg)) return true;
+  return false;
+}
+
 export function getLastUpdateStatus(): UpdateStatus {
   return lastStatus;
 }
@@ -203,23 +235,33 @@ export function initAutoUpdater(window: BrowserWindow): void {
 
   autoUpdater.on('update-not-available', () => send({ state: 'up-to-date' }));
 
-  autoUpdater.on('error', (err) =>
+  autoUpdater.on('error', (err) => {
+    if (isTransientUpdateError(err)) {
+      // Transient (5xx, DNS, timeout). Log only; the next periodic check
+      // recovers silently. See isTransientUpdateError docstring.
+      console.warn('[Fathom Updater] suppressed transient error:', err?.message ?? err);
+      return;
+    }
     send({
       state: 'error',
       message: err?.message ?? String(err),
       downloadUrl:
         'https://github.com/ashryaagr/Fathom/releases/latest/download/Fathom-arm64.zip',
-    }),
-  );
+    });
+  });
 
   // Initial check, delayed so startup isn't slowed.
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) =>
+    autoUpdater.checkForUpdates().catch((err) => {
+      if (isTransientUpdateError(err)) {
+        console.warn('[Fathom Updater] suppressed transient error on initial check:', err?.message ?? err);
+        return;
+      }
       send({
         state: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }),
-    );
+      });
+    });
   }, 3000);
 
   // Re-check every 6 hours while running.
@@ -234,7 +276,12 @@ export function initAutoUpdater(window: BrowserWindow): void {
   );
 }
 
-/** IPC handler — "Check for Updates…" from the menu or UI. */
+/** IPC handler — "Check for Updates…" from the menu or UI.
+ *
+ * NB: a manual check IS user-initiated, so even transient errors get
+ * surfaced — the user just clicked "Check for updates" and deserves a
+ * concrete answer. Background / periodic checks do NOT surface transient
+ * errors (that's the spammy case the auto-suppress fixes). */
 export async function manualCheckForUpdates(): Promise<UpdateStatus> {
   if (!app.isPackaged) return { state: 'up-to-date' };
   try {

@@ -1,7 +1,10 @@
 ---
 layout: default
-title: Methodology
+title: Methodology — The Paper Pipeline
+permalink: /methodology/paper/
 ---
+
+> Part of the [Methodology Index](/methodology/). This page covers how Fathom processes the **paper itself**: indexing, lens dives, in-place explanations. The [Whiteboard methodology](/methodology/whiteboard/) covers the multi-level visual diagram pipeline.
 
 How Fathom actually works — the engineering and scientific choices behind
 the product, in one document, so the "why" doesn't have to be inferred

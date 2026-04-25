@@ -85,6 +85,39 @@ scripts/fathom-test.sh shot back-to-pdf       # expect: back on the PDF, marker 
 scripts/fathom-test.sh log 40
 ```
 
+## Inline two-finger ask (PARTIALLY MANUAL — todo.md #51)
+
+The two-finger tap on a paragraph opens a small "Dive into" bubble;
+typed question + Enter drops a marker on the page that goes red while
+Claude streams in a background lens, then cross-fades amber when the
+answer is ready. The harness can SEE the marker colour transition via
+`capture`, but cannot yet synthesize the trackpad two-finger tap or
+the post-completion marker click — both require coordinate-precise
+clicks that AppleScript doesn't expose without registering new global
+shortcuts in the main process.
+
+**Until the harness commands exist** (todo.md #51 — add `inline-ask
+<question>` and `click-marker <n>` subcommands plus the matching
+main-process IPC), validate this flow manually after each release:
+
+1. Open the sample paper.
+2. Two-finger tap on a body paragraph → small "Dive into" bubble appears
+   anchored to the cursor.
+3. Type a short question (≈ 5 words), press Enter.
+4. Bubble closes immediately. A RED dot appears on the right edge of
+   the paragraph and PULSES (1.2 s opacity loop).
+5. Wait for the stream to finish (~10–25 s for the sample paper).
+   Dot cross-fades RED → AMBER over 600 ms; pulse stops.
+6. Click the amber dot → lens opens with the question + streamed answer.
+7. Quit Fathom (⌘Q), relaunch, reopen the same paper from "Recently
+   read" → same amber dot is in the same place; click → same Q&A.
+
+A regression on any of these steps is shippable-blocker severity (the
+marker colour is the only feedback the user has that the background
+stream finished — silent failure here is unrecoverable from the user's
+side). Re-run on every release until the harness can do steps 2–7
+autonomously.
+
 If any step shows a red toast, an empty lens, no marker, or an error in
 the log — that's the test failing. Report the specific screenshot and
 log line, don't just say "it didn't work".

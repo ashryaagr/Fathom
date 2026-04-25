@@ -106,3 +106,25 @@ button {
   letter-spacing: 0.005em;
   line-height: 1.55;
 }
+
+/* Inline-ask streaming marker — pulse ON, pulse OFF.
+ *
+ * Cog-reviewer constraint (Ware 2004 §5): the red→amber colour
+ * transition must carry a NON-COLOUR signal too so deuteranopic /
+ * protanopic users can still distinguish "answer streaming" from
+ * "answer ready". The pulse is that signal: a 1.2 s opacity loop
+ * (0.7→1.0→0.7) is unmistakable in peripheral vision and stops
+ * dead the moment the stream completes. The two states are then
+ * separable by motion alone, no colour needed.
+ *
+ * Cross-fade is on the marker's `transition` property (600 ms ease-
+ * in, defined inline on the button) — gradual ≥500 ms transitions
+ * are reliably noticed via change-blindness (Simons & Levin 1997)
+ * even when the user's foveal attention is elsewhere on the page. */
+@keyframes fathom-marker-pulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1.0; }
+}
+.fathom-marker-streaming {
+  animation: fathom-marker-pulse 1.2s ease-in-out infinite;
+}

@@ -18,6 +18,8 @@ import { useTourStore } from './lens/tourStore';
 import { createHighlightFromSelection } from './pdf/highlightFromSelection';
 import FocusLight from './pdf/FocusLight';
 import ErrorBoundary from './ErrorBoundary';
+import WhiteboardTab from './whiteboard/WhiteboardTab';
+import { useWhiteboardStore } from './whiteboard/store';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 
@@ -59,6 +61,12 @@ export default function App() {
   const [focusLightBetaEnabled, setFocusLightBetaEnabled] = useState(false);
   const [focusLightActive, setFocusLightActive] = useState(false);
   const [focusLightWpm, setFocusLightWpm] = useState(300);
+  // Active tab inside the document workspace. The Whiteboard tab is
+  // gated on indexing being complete (otherwise its Pass 1 input
+  // doesn't exist). Tabs reset to 'pdf' whenever a new paper opens so
+  // the user always lands on the source. Switch via ⌘1 / ⌘2 or by
+  // clicking the tab strip in the header.
+  const [activeTab, setActiveTab] = useState<'pdf' | 'whiteboard'>('pdf');
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setFlash = useCallback((msg: string) => {
@@ -145,6 +153,9 @@ export default function App() {
       // Clear per-lens cache AND persisted zoom paths so nothing leaks across papers.
       useLensStore.setState({ cache: new Map(), persistedZoomPaths: new Map() });
 
+      // New paper → land on the PDF tab. Whiteboard tab is opt-in per
+      // paper (consent rule); we never auto-switch the user there.
+      setActiveTab('pdf');
       setDocument({
         name: pdf.name,
         path: pdf.path,
@@ -153,6 +164,9 @@ export default function App() {
         doc,
         numPages: doc.numPages,
         initialScrollY: pdf.lastScrollY ?? 0,
+        initialPage: pdf.lastPage ?? null,
+        initialOffset: pdf.lastOffsetInPage ?? null,
+        initialZoom: pdf.lastZoom ?? null,
       });
 
       // Skip restoring cached regions from disk — the extraction algorithm evolves (e.g.
@@ -247,10 +261,24 @@ export default function App() {
                     /* bad JSON in legacy row — keep zero bbox */
                   }
                 }
+                // displayMode came from the additive lens_anchors
+                // column. Old rows default to 'lens'. The inline-ask
+                // flow stamps 'inline'; per the user's spec
+                // resolution for the kill-mid-flight case, an inline
+                // anchor with no body in lens_turns is rendered red
+                // on reopen (so the user can click to re-ask).
+                const displayMode: 'lens' | 'inline' =
+                  a.display_mode === 'inline' ? 'inline' : 'lens';
+                const hasBody =
+                  state.lensTurns?.some(
+                    (t) => t.lens_id === a.lens_id && t.body.length > 0,
+                  ) ?? false;
                 useLensStore.getState().registerMarker(a.paper_hash, a.page, {
                   lensId: a.lens_id,
                   bbox,
                   origin: a.origin === 'viewport' ? 'viewport' : 'region',
+                  displayMode,
+                  streaming: displayMode === 'inline' && !hasBody,
                 });
               }
             }
@@ -447,6 +475,19 @@ export default function App() {
         return;
       }
 
+      // ⌘1 / ⌘2 — switch between PDF and Whiteboard tabs.
+      // Matches the macOS HIG convention used in Safari, Chrome,
+      // Notion, Cursor for tab switching. Available when a paper is
+      // open; the Whiteboard tab itself manages its own consent UI
+      // for un-generated papers, so the switch never errors.
+      if (e.metaKey && !e.shiftKey && (e.key === '1' || e.key === '2')) {
+        const doc = useDocumentStore.getState().document;
+        if (!doc) return;
+        e.preventDefault();
+        setActiveTab(e.key === '1' ? 'pdf' : 'whiteboard');
+        return;
+      }
+
       // ⌘[ — back through lens history (swipe right equivalent).
       if (e.metaKey && !e.shiftKey && e.key === '[') {
         e.preventDefault();
@@ -487,9 +528,12 @@ export default function App() {
         if (cancelled) return;
         setFocusLightBetaEnabled(!!s.focusLightBetaEnabled);
         const w = s.focusLightWpm;
+        // Lower bound enforced (10 wpm); no upper bound — the user
+        // explicitly asked for an uncapped WPM via the Preferences
+        // text box.
         setFocusLightWpm(
           typeof w === 'number' && Number.isFinite(w)
-            ? Math.max(10, Math.min(150, Math.round(w)))
+            ? Math.max(10, Math.round(w))
             : 80,
         );
       } catch {
@@ -513,6 +557,28 @@ export default function App() {
       setFocusLightActive(false);
     }
   }, [focusLightBetaEnabled, focusLightActive]);
+
+  // F-key toggles the Focus Light. Per user 2026-04-25: "the button F
+  // should turn the focus light on, and F should turn it off." Same key
+  // for both states. Only fires when the beta is enabled in Preferences
+  // (otherwise pressing F when the toggle isn't on would silently do
+  // nothing, which would be confusing). Suppressed when the user is
+  // typing in an input / textarea / contenteditable so the lens Ask box,
+  // inline-ask bubble, and Preferences fields aren't hijacked.
+  useEffect(() => {
+    if (!focusLightBetaEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      // Don't hijack F when modifier keys are held (⌘F = find, etc.).
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+      setFocusLightActive((v) => !v);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusLightBetaEnabled]);
 
   useEffect(() => {
     if (!docState) return;
@@ -832,7 +898,31 @@ export default function App() {
         className="relative z-[50] flex h-12 items-center justify-center border-b border-black/5 bg-[color:var(--color-paper)]/95 px-3 text-[13px] font-medium text-black/60 backdrop-blur select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <span className="truncate">{docState ? docState.name : 'Fathom'}</span>
+        {docState ? (
+          <div
+            className="flex items-center gap-1"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <TabButton
+              label="PDF"
+              tip="Read the paper (⌘1)"
+              active={activeTab === 'pdf'}
+              onClick={() => setActiveTab('pdf')}
+            />
+            <TabButton
+              label="Whiteboard"
+              tip="Hand-drawn diagram of the paper's core methodology (⌘2)"
+              active={activeTab === 'whiteboard'}
+              onClick={() => setActiveTab('whiteboard')}
+              statusDot={<WhiteboardTabStatusDot paperHash={docState.contentHash} />}
+            />
+            <span className="ml-3 max-w-[260px] truncate text-[12px] font-normal text-black/35">
+              {docState.name}
+            </span>
+          </div>
+        ) : (
+          <span className="truncate">Fathom</span>
+        )}
         <div
           className="absolute right-3 flex items-center gap-1.5"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -929,9 +1019,28 @@ export default function App() {
       </header>
       <main className="relative flex-1 overflow-hidden">
         {docState ? (
-          <ErrorBoundary where="PdfViewer">
-            <PdfViewer />
-          </ErrorBoundary>
+          <>
+            {/* Mount BOTH tabs always; toggle visibility with display
+                instead of unmounting. Keeps PDF scroll position +
+                Excalidraw canvas state across tab switches — same
+                "tabs are cheap, state survives" rule Safari uses. */}
+            <div
+              className="absolute inset-0"
+              style={{ display: activeTab === 'pdf' ? 'block' : 'none' }}
+            >
+              <ErrorBoundary where="PdfViewer">
+                <PdfViewer />
+              </ErrorBoundary>
+            </div>
+            <div
+              className="absolute inset-0"
+              style={{ display: activeTab === 'whiteboard' ? 'block' : 'none' }}
+            >
+              <ErrorBoundary where="WhiteboardTab">
+                <WhiteboardTab document={docState} />
+              </ErrorBoundary>
+            </div>
+          </>
         ) : (
           <ErrorBoundary where="EmptyState">
             <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p) => void openPdf(p)} />
@@ -1430,7 +1539,7 @@ function HelpOverlay({
       onClick={onClose}
     >
       <div
-        className="w-[420px] rounded-xl bg-white p-6 shadow-2xl"
+        className="w-[760px] max-w-[92vw] rounded-xl bg-white p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -1443,16 +1552,26 @@ function HelpOverlay({
             ✕
           </button>
         </div>
-        <dl className="flex flex-col gap-3 text-sm">
+        {/* Two-column layout — list grew long enough that single-column
+            forced the modal to scroll. Per user 2026-04-25: split into
+            columns. CSS columns preserves the <dl> reading order so a
+            screen-reader still hears every shortcut in sequence; the
+            visual rendering wraps into two roughly-equal columns. */}
+        <dl className="text-sm columns-1 gap-x-8 sm:columns-2 [&>div]:break-inside-avoid">
           <Row k="Pinch" v="Zoom in / out (anchored on cursor)" />
           <Row k="⌘ + pinch in" v="Dive into the paragraph under the cursor" />
           <Row k="⌘ + pinch out" v={focused ? 'Go back one level' : 'No effect (no lens open)'} />
           <Row k="Select text + ⌘ + pinch in" v="Dive into the selected concept" />
+          <Row k="Two-finger tap" v={'Open a small "Dive into" box on the paragraph — type a question, press Enter, marker turns red while answering, gold when done'} />
+          <Row k="Click red marker" v="Open the lens to watch the answer stream" />
+          <Row k="Click gold marker" v="Open the lens with the saved Q&A" />
           <Row k="Top-left Back/Close button" v="Leave the current lens (or click an amber marker / ⌘ [)" />
+          <Row k="⌘ 1 / ⌘ 2" v="Switch between PDF and Whiteboard tabs" />
           <Row k="⌘ ⇧ D" v="Dive in (keyboard alternative to ⌘+pinch)" />
           <Row k="⌘ ⇧ A" v="Ask about the current viewport" />
           <Row k="⌘ H" v="Highlight the current text selection (amber)" />
           <Row k="Click highlight" v="Remove it" />
+          <Row k="F" v="Toggle Focus Light on / off (only when the beta is enabled in Preferences)" />
           <Row k="⌘ [ / ⌘ ]" v="Back / forward through lens history" />
           <Row k="⌘ + 0" v="Reset zoom to 100%" />
           <Row k="⌘ + = / ⌘ + −" v="Zoom in / out" />
@@ -1475,12 +1594,15 @@ function HelpOverlay({
 }
 
 function Row({ k, v }: { k: string; v: string }) {
+  // mb-3 + break-inside-avoid replace the parent dl's gap-3 (which CSS
+  // columns ignore). Each row is a self-contained block that won't be
+  // split across the column break.
   return (
-    <div className="flex items-baseline gap-3">
-      <dt className="w-[170px] flex-shrink-0 font-mono text-[11px] tracking-wide text-black/55 uppercase">
+    <div className="mb-3 flex items-baseline gap-3 break-inside-avoid">
+      <dt className="w-[160px] flex-shrink-0 font-mono text-[11px] tracking-wide text-black/55 uppercase">
         {k}
       </dt>
-      <dd className="text-[13px] text-black/75">{v}</dd>
+      <dd className="flex-1 text-[13px] text-black/75">{v}</dd>
     </div>
   );
 }
@@ -1521,6 +1643,100 @@ function HeaderIcon({
         {tip}
       </span>
     </span>
+  );
+}
+
+/** Workspace tab button — PDF / Whiteboard. Lives in the header's
+ * left cluster and switches the main pane between the source PDF and
+ * the generated whiteboard. macOS-HIG-style: instant tab change, no
+ * confirmation modal, persistent state across switches. */
+function TabButton({
+  label,
+  tip,
+  active,
+  onClick,
+  statusDot,
+}: {
+  label: string;
+  tip: string;
+  active: boolean;
+  onClick: () => void;
+  /** Optional small colored dot rendered after the label. The
+   * Whiteboard tab uses this to surface generation state at a glance
+   * (red+pulse = generating, amber = ready, red = failed) — same
+   * grammar as the inline-ask streaming markers, so the user reads it
+   * as one consistent "is the AI working?" signal across the product. */
+  statusDot?: React.ReactNode;
+}) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        onClick={onClick}
+        aria-pressed={active}
+        title={tip}
+        className={
+          'flex h-7 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium transition select-none ' +
+          (active
+            ? 'bg-black/[0.07] text-black/85'
+            : 'text-black/55 hover:bg-black/[0.03] hover:text-black/75')
+        }
+      >
+        {label}
+        {statusDot}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-1/2 z-[200] mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/82 px-2 py-1 text-[11px] font-medium text-white/95 opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-sm transition-opacity delay-150 group-hover:opacity-100"
+      >
+        {tip}
+      </span>
+    </span>
+  );
+}
+
+/** Whiteboard-tab status dot. Subscribes to the per-paper whiteboard
+ * status and renders a colored circle next to the "Whiteboard" tab
+ * label. Color + animation grammar (must match the inline-ask streaming
+ * marker, see `index.css` `.fathom-marker-streaming` and
+ * `pdf/PageView.tsx` — the user explicitly asked for the color
+ * language to be unified):
+ *
+ *   - Generating (Pass 1 or Pass 2 in flight, or Level 2 expanding):
+ *     red (#d4413a) + 1.2s opacity pulse via `.fathom-marker-streaming`.
+ *   - Ready (Level 1 painted, no in-flight expansions): amber
+ *     (var(--color-lens)), no animation.
+ *   - Failed: red, no animation.
+ *   - Idle / no consent yet: nothing rendered.
+ *
+ * Aria-label spells out the state so a screen reader user gets the
+ * same status without depending on color or motion (cog reviewer §6
+ * two-channel rule — color + motion are the two channels here). */
+function WhiteboardTabStatusDot({ paperHash }: { paperHash: string }) {
+  const status = useWhiteboardStore((s) => s.byPaper.get(paperHash)?.status);
+  const expandingCount = useWhiteboardStore(
+    (s) => s.byPaper.get(paperHash)?.expandingNodeIds.size ?? 0,
+  );
+  if (!status || status === 'idle' || status === 'consent') return null;
+  const isGenerating =
+    status === 'pass1' || status === 'pass2' || status === 'expanding' || expandingCount > 0;
+  const isFailed = status === 'failed';
+  const color = isGenerating || isFailed ? '#d4413a' : 'var(--color-lens)';
+  const ariaLabel = isGenerating
+    ? 'Whiteboard generating'
+    : isFailed
+      ? 'Whiteboard generation failed'
+      : 'Whiteboard ready';
+  return (
+    <span
+      role="status"
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      className={
+        'inline-block h-2 w-2 rounded-full ' +
+        (isGenerating ? 'fathom-marker-streaming' : '')
+      }
+      style={{ backgroundColor: color }}
+    />
   );
 }
 
