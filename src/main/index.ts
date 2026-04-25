@@ -1033,15 +1033,58 @@ async function maybeShowFirstRunWelcome(_win: BrowserWindow): Promise<void> {
 // macOS sends `open-file` when a user drags a PDF onto the Fathom dock icon
 // or chooses Open With → Fathom in Finder. If the window is not up yet, we
 // queue the path and replay once it's ready.
+//
+// Critical: on a COLD launch (Fathom not running, user clicks Open With),
+// the open-file event is dispatched DURING `will-finish-launching` —
+// before app.whenReady resolves and before any module-top-level
+// listener has had a chance to settle. Registering the listener inside
+// the will-finish-launching callback is the canonical Electron pattern
+// for capturing the earliest possible delivery. Verified by debug
+// breadcrumb: a top-level-only listener missed cold-launch events
+// every time; moving inside will-finish-launching fixes it.
+//
+// We also enqueue any pdf-shaped path from process.argv at module
+// load — this is a belt-and-suspenders fallback for cases where macOS
+// passes the file as an arg instead of via open-file (some packaged
+// builds / OS versions exhibit this).
+//
+// Debug breadcrumb to /tmp/fathom-openfile.log: always-on, persisted
+// regardless of whether fathom.log has been initialized yet, so future
+// "Open With doesn't work" reports are diagnosable without DevTools.
 const openFileQueue: string[] = [];
-app.on('open-file', (event, filePath) => {
-  event.preventDefault();
+function recordOpenFile(filePath: string, source: string): void {
+  try {
+    writeFileSync(
+      '/tmp/fathom-openfile.log',
+      `[${new Date().toISOString()}] ${source} path=${filePath} mainWindow=${mainWindow ? 'present' : 'null'}\n`,
+      { flag: 'a' },
+    );
+  } catch {
+    /* breadcrumb is best-effort */
+  }
+}
+function handleExternalPdf(filePath: string, source: string): void {
+  recordOpenFile(filePath, source);
   if (mainWindow) {
     safeSend('pdf:openExternal', filePath);
   } else {
     openFileQueue.push(filePath);
   }
+}
+app.on('will-finish-launching', () => {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    handleExternalPdf(filePath, 'open-file');
+  });
 });
+// Argv fallback. process.argv on macOS cold-launch sometimes carries
+// the file path as the last argument; on Windows always does. Filter
+// for `.pdf` to avoid mis-interpreting electron / asar args.
+for (const arg of process.argv.slice(1)) {
+  if (typeof arg === 'string' && arg.toLowerCase().endsWith('.pdf') && existsSync(arg)) {
+    handleExternalPdf(arg, 'argv');
+  }
+}
 
 /**
  * Surface a clear, actionable "Claude Code isn't working" dialog. Called at
