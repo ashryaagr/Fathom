@@ -111,14 +111,14 @@ export default function PdfViewer() {
         }
         semanticAccumDeltaY += e.deltaY;
         if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
-        // In semantic mode we deliberately DO NOT visually zoom. The pinch
-        // motion is a commit signal, not a resize — letting the page scale
-        // during ⌘+pinch made the target paragraph slide out from under the
-        // cursor, which contributed to the unreliable-feel. The armed ring
-        // around the viewport is our feedback instead.
-        return;
       }
 
+      // Apply visual zoom for BOTH plain and ⌘+pinch. The earlier attempt
+      // to suppress visual zoom during ⌘+pinch made it impossible for the
+      // user to aim — they couldn't visually close in on the passage they
+      // wanted to dive into. The whole point of "pinch to zoom then release
+      // ⌘ to commit" is that the same zoom motion both narrows the target
+      // and signals the commit. Restored to the original behaviour.
       applyAnchoredZoom(
         el,
         e.clientX,

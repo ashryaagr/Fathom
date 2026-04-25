@@ -485,45 +485,62 @@ function preprocessForStreaming(body: string, streaming: boolean): string {
 }
 
 /**
- * Render an inline SVG reliably. We use `<img src="data:image/svg+xml;…">` rather than
- * `dangerouslySetInnerHTML` because the browser treats the <img> as a first-class image
- * and renders the SVG even when it's missing width/xmlns or other attributes that trip
- * up inline-SVG-in-HTML parsers. On parse errors we fall back to showing the source so
- * the user at least sees what Claude emitted and can report it.
+ * Render an inline SVG tolerantly.
+ *
+ * Failure modes the old strict-parse implementation hit and this one
+ * avoids:
+ *  1. Mid-stream render — Claude has started an SVG but the closing
+ *     `</svg>` hasn't streamed yet. Strict parse → error. We now detect
+ *     incompleteness and show a calm "rendering diagram…" placeholder.
+ *  2. Ampersand in text content / attribute value not pre-escaped. The
+ *     browser's SVG engine handles this fine; DOMParser's strict XML
+ *     mode doesn't. We escape bare `&` that isn't already an entity.
+ *  3. Minor missing attributes — xmlns, viewBox. We add defaults.
+ *
+ * We only fall back to the red "parse failed" box if the <img> itself
+ * can't load — i.e. even the browser's lenient SVG renderer gave up.
  */
-function SvgFigure({ raw }: { raw: string }) {
-  // Ensure a wrapping <svg> element and an xmlns attribute — both are required by
-  // spec for a data URL to render.
+function SvgFigure({ raw, streaming }: { raw: string; streaming?: boolean }) {
+  const [renderFailed, setRenderFailed] = useState(false);
+
+  // Detect incomplete SVG (mid-stream). Simplest check: no closing tag yet.
+  const isComplete = /<\/svg\s*>/i.test(raw);
+
+  // Ensure a wrapping <svg> element + xmlns for the data URL.
   let svg = /<svg\b/i.test(raw)
     ? raw
     : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">${raw}</svg>`;
   if (!/xmlns=/.test(svg)) {
     svg = svg.replace(/<svg\b/, '<svg xmlns="http://www.w3.org/2000/svg"');
   }
+
+  // Escape bare ampersands that aren't part of an existing entity. SVG
+  // attributes like `href="a&b"` are a common Claude failure mode for
+  // DOMParser strict-XML but the browser handles them fine once escaped.
+  svg = svg.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
+
   // Strip scripts / event handlers (trusted source but belt-and-braces).
   svg = svg
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/javascript:/gi, '');
 
-  // Validate the SVG parses. If it doesn't, show the source instead of a silent white box.
-  const parseDoc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-  const parseErr = parseDoc.querySelector('parsererror');
-  const isValid = !parseErr && parseDoc.documentElement.nodeName.toLowerCase() === 'svg';
+  // Mid-stream: just a soft placeholder, not the red error box.
+  if (!isComplete) {
+    return (
+      <figure className="my-3 flex min-h-[100px] items-center justify-center rounded-md border border-dashed border-[color:var(--color-lens)]/25 bg-[color:var(--color-lens-soft)]/25 px-3 py-3">
+        <span className="animate-pulse text-[11px] italic text-black/40">
+          rendering diagram…
+        </span>
+      </figure>
+    );
+  }
 
-  console.log('[Lens] SVG render', {
-    rawLength: raw.length,
-    svgLength: svg.length,
-    isValid,
-    parseErrorText: parseErr?.textContent?.slice(0, 200) ?? null,
-    preview: svg.slice(0, 180),
-  });
-
-  if (!isValid) {
+  if (renderFailed) {
     return (
       <figure className="my-3 rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
         <div className="mb-1 text-[10px] font-semibold tracking-wider text-red-600 uppercase">
-          diagram parse failed
+          diagram couldn't render
         </div>
         <pre className="overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-black/70">
           {raw}
@@ -539,7 +556,10 @@ function SvgFigure({ raw }: { raw: string }) {
         src={dataUrl}
         alt="Diagram"
         className="block h-auto max-w-full"
-        onError={() => console.error('[Lens] SVG <img> failed to load')}
+        onError={() => {
+          console.error('[Lens] SVG <img> failed to load; raw:', raw.slice(0, 300));
+          setRenderFailed(true);
+        }}
       />
     </figure>
   );

@@ -51,7 +51,7 @@ Auto-updater runs silently today. Add the promised toast that says
 can trigger `quitAndInstall` proactively instead of waiting for the next
 quit.
 
-## 8. Suppress visual zoom during ⌘+pinch — ✅ DONE
+## 8. Suppress visual zoom during ⌘+pinch — ⛔ REVERTED (was wrong — visual zoom during ⌘+pinch is what lets the user aim at the target before committing. Restored to the original behaviour.)
 Currently the page still visually zooms while ⌘ is held — contributes to
 the mixed-gesture confusion. Semantic mode should NOT visually zoom;
 reserve visual zoom for plain pinch only. (Direction-accumulation fix
