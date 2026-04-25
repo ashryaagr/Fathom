@@ -258,20 +258,16 @@ export default function PdfViewer() {
           release ⌘ to dive in · selection or viewport
         </div>
       )}
-      {/* Layout decisions (v1.0.20):
-          - `flex flex-col items-center` is what actually centers the
-            pages horizontally. v1.0.19's `mx-auto` on each PageView
-            was failing because something in the cascade (most likely
-            the inline `width: slotWidth` interacting with how
-            position-relative children with shadows lay out inside
-            block parents — verified empirically: the page hugged the
-            left edge at x=0 when it should have sat at x=143 in a
-            1216 px content box). `items-center` resolves it without
-            ambiguity.
-          - `[scrollbar-gutter:stable_both-edges]` keeps the centering
-            stable when the scrollbar appears/disappears.
-          - `px-8 py-4` is the breathing room around the page. */}
-      <div ref={scrollerRef} className="flex flex-1 flex-col items-center overflow-auto px-8 py-4 [scrollbar-gutter:stable_both-edges]" data-pdf-scroller>
+      {/* `scrollbar-gutter: stable both-edges` reserves the same gutter
+          on BOTH sides whether or not the vertical scrollbar is
+          visible, so the `mx-auto`-centered page stays optically
+          centered regardless of the user's macOS "show scrollbars"
+          preference. v1.0.20 tried switching this to `flex flex-col
+          items-center` to fix a separate "page hugs left edge"
+          symptom — but that broke pdf.js rendering (canvases stayed
+          blank, only the slot div + markers painted). Reverted; the
+          centering bug is being investigated separately. */}
+      <div ref={scrollerRef} className="flex-1 overflow-auto px-8 py-4 [scrollbar-gutter:stable_both-edges]" data-pdf-scroller>
         {pages.map((p) => {
           // Use the most-recently-known size as a placeholder for un-measured pages so the
           // layout doesn't flash the wrong dimensions. Most research papers are uniform-sized.
