@@ -383,7 +383,128 @@ here, recommend chunking" is.
 
 ## The list of teams is intentionally short
 
-Five product teams + one reviewer is the entire structure. Adding
-more teams creates handoff overhead that exceeds the parallelism
-benefit at this codebase size (~25 source files across renderer +
-main). Re-evaluate the team count if the codebase doubles.
+Five product teams + three reviewers (Cog Reviewer, AI Scientist,
+Software Engineer) + one PM is the entire structure. Adding more
+teams creates handoff overhead that exceeds the parallelism benefit
+at this codebase size (~25 source files across renderer + main).
+Re-evaluate the team count if the codebase doubles.
+
+---
+
+## Operational status (live, updated as the team evolves)
+
+The team is OPERATIONAL via Claude Code's Teams API, not just a
+documented architecture. The live source of truth is:
+
+- **Team config**: `~/.claude/teams/fathom-build/config.json` — the
+  authoritative roster of currently-active teammates with their
+  agentIds and roles.
+- **Shared task list**: `~/.claude/tasks/fathom-build/` — what's
+  pending / in-flight / completed across the team.
+- **Spec cards**: `.claude/specs/*.md` — PM-produced specifications,
+  one per non-trivial feature, that team subagents build against.
+- **Cog audits**: `.claude/specs/cog-audit-*.md` — Cog Reviewer's
+  written audits, one per major feature reviewed.
+
+To see who's on the team right now, read the config file. Teammate
+names (not agentIds) are how to address them via SendMessage. The
+orchestrator (`team-lead`) is always present.
+
+## How the orchestrator's role evolved (lessons learned in
+operation)
+
+When the team was first stood up, the orchestrator played both
+"PM" and "developer." That collapsed into the failure mode that
+motivated creating the PM role: clear/easy slices got executed,
+hard/ambiguous slices became `todo.md` entries that aged.
+
+The orchestrator's *current* role is narrower:
+
+- **Receive user instructions.** The user is the only real product
+  decision-maker; everything else is in service.
+- **For trivial fixes** (one file, no UX impact, no schema change):
+  do it inline. Don't spin up a team for a typo or a bumped
+  constant. The team has to earn its overhead.
+- **For non-trivial work**: route through PM (spec card) → spawn
+  the right team subagent → receive their diff summary → apply
+  the relevant reviews (cog / AI / SE) → commit + push.
+- **Always the only one who commits and pushes.** Team subagents
+  produce diffs; the orchestrator integrates and ships. This
+  keeps the commit chain coherent and the user-facing release
+  process unambiguous.
+- **Holds the in-progress queue.** When the user adds an
+  instruction mid-sprint, the orchestrator either pauses the
+  current dispatch and re-routes through PM, or notes the new
+  instruction in `todo.md` to be specced after the current
+  dispatch completes.
+
+## What goes in `todo.md` vs the team task list
+
+These are intentionally separate, with overlap only by accident:
+
+- **`todo.md`** is the human-readable backlog *narrative* — what
+  has shipped, what's queued, what's been dropped, why. Written
+  in prose. Numbered for citation in commits ("todo #44").
+  Survives across sessions.
+- **`~/.claude/tasks/fathom-build/`** is the team's machine-
+  readable task list — atomic units of work for teammates to
+  claim and complete. Resets when the team is shut down. Tasks
+  here often *reference* a `todo.md` number for context.
+
+When a `todo.md` item is being actively worked on, mirror it as
+a team task. When that team task completes, update the `todo.md`
+entry's status (✅ DONE / 🔄 PARTIAL / ⛔ DROPPED) — the team
+task list is implementation, `todo.md` is the user-facing log.
+
+## Failure modes we've documented from real operation
+
+These were caught in this team's first few hours of operation;
+adding them to the harness so the next session inherits the
+lesson.
+
+1. **Multi-faceted instruction → orchestrator picks the easiest
+   slice, defers the rest** — fixed by introducing the PM role.
+   Pre-PM: the inline two-finger ask request slipped through
+   three turns. Post-PM: same instruction produced a spec in
+   one turn with explicit open questions for user resolution.
+
+2. **Agent says "X is impossible because of OS limit Y" and the
+   user keeps re-requesting X anyway** — fixed by writing the
+   limitation INTO the failure-mode doc the next session reads
+   first. Pre-fix: I (the orchestrator) re-explained the macOS
+   "no finger-rest event" limitation across multiple turns. The
+   `fathom-cog-review.md` skill now has §1's "working memory"
+   note that mentions this limit so the next session doesn't
+   try the same heuristic.
+
+3. **User edits files while teams are working** — the user is a
+   producer too, not just a consumer. The team task list has
+   to account for files in the working tree being modified
+   concurrently. Mitigation: `npm run typecheck` before any
+   commit; if it fails, find which team's diff broke and ask
+   them to reconcile via SendMessage.
+
+4. **Stale labels in `todo.md`** — entries marked PENDING were
+   actually shipped sessions ago. Fixed by passing through the
+   list periodically (the orchestrator does a cleanup commit
+   when it notices). The team-task list is more disciplined
+   because tasks have explicit status, but `todo.md` requires
+   manual care.
+
+5. **Long-running streams of small edits without commit** — the
+   working tree accumulates 5+ teams' worth of changes. If
+   anything breaks mid-session, recovery is hard. Fix: commit
+   small, named, frequently. The Pacific-window rule (gitignored
+   `.local/rules.md`) makes this trickier — backdate the
+   author/committer date when the wall-clock falls in the
+   window, but don't *batch* an entire day's work into one
+   commit just to satisfy it.
+
+## When the team should be torn down
+
+The team persists until the orchestrator explicitly tears it
+down via `TeamDelete`. Currently it stays alive across the whole
+build effort. If the user explicitly says "we're done" or the
+task list is empty for a long stretch, gracefully shut down
+teammates (SendMessage with `{type: "shutdown_request"}`) then
+`TeamDelete`.

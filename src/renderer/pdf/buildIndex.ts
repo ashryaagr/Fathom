@@ -1,4 +1,5 @@
-import type { PDFDocumentProxy, PDFPageProxy } from './pdfjs';
+import type { PDFPageProxy } from './pdfjs';
+import type { PdfDocFacade } from './multiWorkerDoc';
 import { extractAllPagesText } from './extractAllPages';
 import { extractAllFigureBoxes, type FigureBox } from './extractFigures';
 
@@ -20,7 +21,7 @@ interface ExtractedFigure {
 }
 
 export async function buildPaperIndex(
-  doc: PDFDocumentProxy,
+  doc: PdfDocFacade,
   paperHash: string,
   onProgress?: (p: IndexBuildProgress) => void,
 ): Promise<void> {

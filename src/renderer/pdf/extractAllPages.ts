@@ -1,11 +1,11 @@
-import type { PDFDocumentProxy } from './pdfjs';
+import type { PdfDocFacade } from './multiWorkerDoc';
 
 /**
  * Extract raw text for every page of a PDF in reading order. Used to seed the on-disk
  * index so Claude can Read/Grep/Glob the paper as a real file system instead of paying
  * poppler costs on every explain call.
  */
-export async function extractAllPagesText(doc: PDFDocumentProxy): Promise<string[]> {
+export async function extractAllPagesText(doc: PdfDocFacade): Promise<string[]> {
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);

@@ -250,6 +250,29 @@ Surrounding context (paragraphs before/after the anchor) is deliberately *not* s
 
 ---
 
+## 11. Minor principles
+
+These are smaller-than-major preferences — not load-bearing enough to
+sit alongside Product / Design / Scientific / Engineering, but real
+enough that an agent should default to them when no stronger rule
+overrides. Each one cites the user instruction it came from.
+
+- **Visual indicators over short status text for transient UI.** For UI
+  states that resolve in milliseconds — a page rendering, a save flushing,
+  a stream warming up — I prefer a brief visual cue (spinner, pulse,
+  colour shift, glyph) over a status word like "Loading", "Rendering",
+  "Working". Short status text adds reading load that the eye doesn't
+  need for a state that's about to disappear; a glyph signals the same
+  thing in roughly half the foveal-acuity span and dissolves into the
+  visual rhythm without inviting comprehension. Cross-references:
+  `.claude/skills/fathom-cog-review.md` §3 (Doherty's threshold) and §4
+  (foveal acuity ~2°). Counter-example: persistent state changes (a
+  paper has been indexed, an update is ready to install) DO get plain
+  English text, because the user is being asked to remember or act on
+  them.
+
+---
+
 ## Appendix: the user's instructions, verbatim
 
 The 28 distinct user instructions that shaped Fathom v1 are preserved at

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { pdfjsLib } from './pdf/pdfjs';
+import { MultiWorkerDoc, SingleWorkerDoc, type PdfDocFacade } from './pdf/multiWorkerDoc';
 import { useDocumentStore } from './state/document';
 import { useRegionsStore } from './state/regions';
 import { useLensStore } from './lens/store';
@@ -20,6 +20,20 @@ import FocusLight from './pdf/FocusLight';
 import ErrorBoundary from './ErrorBoundary';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
+
+/**
+ * Open the PDF against N pdf.js workers instead of one so adjacent
+ * page renders run in parallel (todo #44). N=3 saturates a typical
+ * 2-column research paper's "above the fold" prefetch (4-6 pages
+ * deep) without ballooning per-paper memory beyond the renderer's
+ * comfortable budget.
+ *
+ * Flag, not config: a regression in the worker-pool path is one
+ * line to revert by flipping this back to false. Single-worker path
+ * is preserved verbatim (`SingleWorkerDoc`) as the off branch.
+ */
+const MULTI_WORKER_RENDER = true;
+const WORKER_COUNT = 3;
 
 export default function App() {
   const setDocument = useDocumentStore((s) => s.setDocument);
@@ -90,7 +104,7 @@ export default function App() {
         setLoading(false);
         return;
       }
-      const loadingTask = pdfjsLib.getDocument({
+      const docOpts = {
         data: new Uint8Array(pdf.bytes),
         // Relative URLs (no leading slash) so these resolve correctly both in
         // the Vite dev server (http://localhost/) and in the packaged app
@@ -108,8 +122,20 @@ export default function App() {
         // No cap on image size — research papers often embed very high-res figures.
         maxImageSize: -1,
         useSystemFonts: true,
-      });
-      const doc = await loadingTask.promise;
+      };
+      const tDocOpen = performance.now();
+      const doc: PdfDocFacade = MULTI_WORKER_RENDER
+        ? await MultiWorkerDoc.open(WORKER_COUNT, docOpts)
+        : await SingleWorkerDoc.open(docOpts);
+      const docOpenMs = Math.round(performance.now() - tDocOpen);
+      console.log(
+        `[Fathom] doc open: numPages=${doc.numPages} workers=${MULTI_WORKER_RENDER ? WORKER_COUNT : 1} t=${docOpenMs}ms`,
+      );
+      void window.lens.logDev?.(
+        'info',
+        'Render',
+        `doc open: numPages=${doc.numPages} workers=${MULTI_WORKER_RENDER ? WORKER_COUNT : 1} t=${docOpenMs}ms`,
+      );
 
       // Reset stale stores for the previous document.
       useRegionsStore.getState().clear();
@@ -1222,95 +1248,76 @@ function EmptyState({
           style={{ background: 'rgba(224, 211, 172, 0.9)' }}
         />
 
-        {/* Choice grid */}
-        <div className="grid grid-cols-1 gap-3 px-10 pt-7 pb-4 sm:grid-cols-2">
-          <button
-            onClick={() => void openSample()}
-            disabled={sampleLoading || loading}
-            className="group flex flex-col items-start gap-2 rounded-[14px] border px-5 py-5 text-left transition disabled:cursor-progress disabled:opacity-60"
-            style={{
-              borderColor: 'rgba(201, 131, 42, 0.35)',
-              background: 'rgba(201, 131, 42, 0.06)',
-            }}
-          >
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-full"
-              style={{ background: 'rgba(201, 131, 42, 0.18)' }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                   stroke="#9f661b" strokeWidth="1.7" strokeLinecap="round"
-                   strokeLinejoin="round" aria-hidden="true">
-                <circle cx="10.5" cy="10.5" r="6" />
-                <path d="M20 20 L15 15" />
-              </svg>
-            </div>
-            <div className="text-[14.5px] font-medium leading-tight" style={{ color: '#1a1614' }}>
-              {sampleLoading ? 'Opening sample…' : 'Try with sample paper'}
-            </div>
-            <div className="text-[12px] leading-snug" style={{ color: '#7a6a52' }}>
-              <em>Attention Is All You Need</em> — Vaswani et al., the paper that introduced the Transformer. Pinch any dense passage and see what Fathom does with it.
-            </div>
-          </button>
-
+        {/* Single big drop+open zone (todo #7). The two-card grid was
+            replaced with one larger zone — more inviting for drag-
+            drop, more obviously "where you start." Click anywhere in
+            the zone (or use ⌘O) to open the file picker; drag a PDF
+            onto it to skip the picker. */}
+        <div className="px-10 pt-7 pb-4">
           <button
             onClick={onOpen}
             disabled={loading}
-            className="group flex flex-col items-start gap-2 rounded-[14px] border px-5 py-5 text-left transition hover:bg-black/[0.015] disabled:cursor-progress disabled:opacity-60"
-            style={{ borderColor: 'rgba(26, 22, 20, 0.12)', background: 'transparent' }}
+            className="group relative flex w-full flex-col items-center justify-center gap-3 rounded-[16px] border-2 border-dashed px-8 py-12 text-center transition disabled:cursor-progress disabled:opacity-60"
+            style={{
+              borderColor: dragOver ? 'rgba(201, 131, 42, 0.85)' : 'rgba(26, 22, 20, 0.18)',
+              background: dragOver ? 'rgba(201, 131, 42, 0.06)' : 'transparent',
+            }}
           >
             <div
-              className="flex h-9 w-9 items-center justify-center rounded-full"
+              className="flex h-12 w-12 items-center justify-center rounded-full"
               style={{ background: 'rgba(26, 22, 20, 0.06)' }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
                    stroke="#1a1614" strokeWidth="1.6" strokeLinecap="round"
                    strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 6 L10 6 L12 8 L20 8 L20 19 L4 19 Z" />
+                <path d="M12 4 L12 16 M6 10 L12 16 L18 10" />
               </svg>
             </div>
-            <div className="text-[14.5px] font-medium leading-tight" style={{ color: '#1a1614' }}>
-              {loading ? 'Opening…' : 'Open your own paper'}
-            </div>
-            <div className="text-[12px] leading-snug" style={{ color: '#7a6a52' }}>
-              Browse for a PDF, or drop one onto this card. `⌘O` also works.
+            <div>
+              <div className="text-[16px] font-medium leading-tight" style={{ color: '#1a1614' }}>
+                {loading ? 'Opening…' : 'Drop a PDF here'}
+              </div>
+              <div className="mt-1 text-[12.5px] leading-snug" style={{ color: '#7a6a52' }}>
+                or click to browse · `⌘O`
+              </div>
             </div>
           </button>
         </div>
 
-        {/* Recent papers (todo #43). Hidden when the user has nothing
-            recent, so first-launch sessions don't show an empty
-            section. Click a row to reopen at the saved scroll
-            position (todo #42 wires the position itself). */}
-        {recents.length > 0 && (
-          <div className="px-10 pb-5">
-            <div
-              aria-hidden="true"
-              className="mx-auto mb-3 h-px w-16"
-              style={{ background: 'rgba(224, 211, 172, 0.9)' }}
-            />
-            <div
-              className="mb-2 text-[10.5px] font-semibold tracking-wide uppercase"
-              style={{ color: '#9c8b6a' }}
-            >
-              Recently opened
-            </div>
-            <ul className="flex flex-col gap-1">
-              {recents.map((r) => (
-                <li key={r.contentHash}>
-                  <button
-                    onClick={() => onOpenPath(r.path)}
-                    disabled={loading}
-                    className="group flex w-full items-center justify-between gap-4 rounded-md px-2.5 py-2 text-left transition hover:bg-black/[0.04] disabled:cursor-progress disabled:opacity-60"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className="block truncate text-[13.5px] font-medium"
-                        style={{ color: '#1a1614' }}
-                      >
-                        {r.title ?? r.path.split('/').pop() ?? r.path}
-                      </span>
-                      <span
-                        className="mt-0.5 block truncate text-[11px]"
+        {/* Recent papers (todo #43) — always shown now, with the
+            sample paper as the LAST entry (todo #7). The sample row
+            carries a small "sample" tag so it's distinguishable from
+            the user's actual recents. This frees up the top of the
+            card for the bigger drop zone. */}
+        <div className="px-10 pb-5">
+          <div
+            aria-hidden="true"
+            className="mx-auto mb-3 h-px w-16"
+            style={{ background: 'rgba(224, 211, 172, 0.9)' }}
+          />
+          <div
+            className="mb-2 text-[10.5px] font-semibold tracking-wide uppercase"
+            style={{ color: '#9c8b6a' }}
+          >
+            Recently opened
+          </div>
+          <ul className="flex flex-col gap-1">
+            {recents.map((r) => (
+              <li key={r.contentHash}>
+                <button
+                  onClick={() => onOpenPath(r.path)}
+                  disabled={loading}
+                  className="group flex w-full items-center justify-between gap-4 rounded-md px-2.5 py-2 text-left transition hover:bg-black/[0.04] disabled:cursor-progress disabled:opacity-60"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className="block truncate text-[13.5px] font-medium"
+                      style={{ color: '#1a1614' }}
+                    >
+                      {r.title ?? r.path.split('/').pop() ?? r.path}
+                    </span>
+                    <span
+                      className="mt-0.5 block truncate text-[11px]"
                         style={{ color: '#9c8b6a' }}
                       >
                         {r.path}
@@ -1325,28 +1332,46 @@ function EmptyState({
                   </button>
                 </li>
               ))}
+              {/* Sample paper as the LAST row in recents (todo #7).
+                  Tagged "sample" so it's distinguishable from the
+                  user's actual recents. Click → opens through the
+                  same pipeline as a real paper. */}
+              <li>
+                <button
+                  onClick={() => void openSample()}
+                  disabled={sampleLoading || loading}
+                  className="group flex w-full items-center justify-between gap-4 rounded-md px-2.5 py-2 text-left transition hover:bg-black/[0.04] disabled:cursor-progress disabled:opacity-60"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="block truncate text-[13.5px] font-medium"
+                        style={{ color: '#1a1614' }}
+                      >
+                        {sampleLoading ? 'Opening sample…' : 'Attention Is All You Need'}
+                      </span>
+                      <span
+                        className="rounded-full border px-1.5 py-[1px] text-[9px] font-medium tracking-wider uppercase"
+                        style={{
+                          color: '#9f661b',
+                          borderColor: 'rgba(201, 131, 42, 0.45)',
+                          background: 'rgba(201, 131, 42, 0.08)',
+                        }}
+                      >
+                        sample
+                      </span>
+                    </span>
+                    <span
+                      className="mt-0.5 block truncate text-[11px]"
+                      style={{ color: '#9c8b6a' }}
+                    >
+                      Vaswani et al. — pinch any dense passage to see what Fathom does
+                    </span>
+                  </span>
+                </button>
+              </li>
             </ul>
           </div>
-        )}
-
-        {/* Drop hint — only surfaces while the user is dragging */}
-        <div
-          className="flex items-center justify-center gap-2 px-10 pt-1 pb-7 text-[12px]"
-          style={{ color: dragOver ? '#9f661b' : '#9c8b6a' }}
-        >
-          {dragOver ? (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                   strokeLinejoin="round">
-                <path d="M12 4 L12 16 M6 10 L12 16 L18 10" />
-              </svg>
-              <span style={{ fontFamily: "'Excalifont', 'Caveat', cursive" }}>Drop it anywhere on the card</span>
-            </>
-          ) : (
-            <span>… or just drag a PDF onto this window.</span>
-          )}
-        </div>
 
         {error && (
           <div className="px-10 pb-6 text-center text-[12px]" style={{ color: '#b02a2a' }}>

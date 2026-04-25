@@ -281,13 +281,28 @@ Plan: track most-recent N papers (paperHash → path → title), show
 a list in EmptyState below the existing Try-sample / Open-yours
 cards. Click to reopen at the saved scroll position (#42).
 
-## 44. Multi-worker pdf.js rendering — 🔄 PENDING
+## 44. Multi-worker pdf.js rendering — 🔄 IN PROGRESS (se-1-rendering)
 User: *"start working on the multi-threadable strategy so that
 the rendering becomes faster."*
 Plan: open the PDF N times with N PDFWorker instances; route
 getPage(n) by `n % N` so up to N pages render in parallel. Memory
 cost = N× page-cache; acceptable for typical research papers.
 Default N=3.
+
+Implementation sketch:
+- New `src/renderer/pdf/multiWorkerDoc.ts`: `MultiWorkerDoc` class
+  holding N `PDFDocumentProxy` instances; `getPage(n)` routes by
+  `(n-1) % N`. Implements a tiny `PdfDocFacade` interface
+  (`numPages`, `getPage`, `destroy`) that's the only surface the
+  renderer code uses.
+- `OpenDocument.doc` typed as the facade so callers don't change
+  shape.
+- `App.tsx` openPdf builds the facade behind a `MULTI_WORKER_RENDER`
+  constant (N=3 when on, falls back to single-worker path when off).
+- `PageView.tsx`: wrap the `page.render()` call in performance.now()
+  and emit one `[render p=N t=Xms zoom=Z]` line per finished render
+  via `window.lens.logDev` so before/after timing lands in
+  fathom.log without DevTools.
 
 ## 45. Replace "Rendering…" text with a small spinner — 🔄 PENDING
 User: *"if the rendering does take time, we can show more than

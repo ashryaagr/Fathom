@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PDFDocumentProxy } from '../pdf/pdfjs';
+import type { PdfDocFacade } from '../pdf/multiWorkerDoc';
 
 export interface OpenDocument {
   name: string;
@@ -7,7 +7,10 @@ export interface OpenDocument {
   /** Absolute path to the per-paper lens folder (<pdfpath>.lens/). */
   indexDir: string;
   contentHash: string;
-  doc: PDFDocumentProxy;
+  /** Document facade — single- or multi-worker. Callers only use
+   * `numPages` and `getPage(n)`; the multi-worker variant routes
+   * the latter across N pdf.js workers for parallel page renders. */
+  doc: PdfDocFacade;
   numPages: number;
   /** CSS-pixel scrollY from the last reading session. Consumed once
    * by PdfViewer's scroll-restore effect. (todo #42) */
@@ -23,7 +26,13 @@ interface DocumentState {
 }
 
 export const MIN_ZOOM = 0.5;
-export const MAX_ZOOM = 4;
+// User asked to be able to zoom past the previous 400% cap — research
+// papers with tiny figure captions and dense math rewards 600–800%
+// zoom on a single column. Bumped to 8 (= 800%). Anything higher and
+// the canvas pixel buffer at full DPR exceeds Chromium's per-canvas
+// memory ceiling on multi-page docs; revisit only if a user reports
+// hitting 8.
+export const MAX_ZOOM = 8;
 
 export const useDocumentStore = create<DocumentState>((set) => ({
   document: null,

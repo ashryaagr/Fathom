@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { pdfjsLib, type PDFDocumentProxy } from './pdfjs';
+import { pdfjsLib } from './pdfjs';
+import type { PdfDocFacade } from './multiWorkerDoc';
 import { extractRegions, type Region } from './extractRegions';
 import { useRegionsStore } from '../state/regions';
 import { useLensStore, type FocusedLens } from '../lens/store';
 import HighlightLayer from './HighlightLayer';
 
 interface Props {
-  doc: PDFDocumentProxy;
+  doc: PdfDocFacade;
   pageNumber: number;
   paperHash: string;
   zoom: number;
@@ -148,8 +149,20 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
       const renderScale = zoom * dpr;
       const cssScale = zoom;
 
+      // Per-page render timing — emitted to fathom.log via logDev so
+      // the multi-worker pool's effect on first-paint and
+      // scroll-to-new-page latency is visible without DevTools. The
+      // single-worker baseline shows page renders strictly serialised
+      // (each page's `render` t starts ≈ when the previous one ends);
+      // with N workers, adjacent pages' `render` t intervals overlap.
+      // Three timestamps:
+      //   - tStart: effect entered (kicked off getPage)
+      //   - tPage:  doc.getPage resolved (worker queue admitted)
+      //   - tDone:  page.render() resolved (pixels on canvas)
+      const tStart = performance.now();
       const page = await doc.getPage(pageNumber);
       if (cancelled) return;
+      const tPage = performance.now();
 
       const renderViewport = page.getViewport({ scale: renderScale });
       const cssViewport = page.getViewport({ scale: cssScale });
@@ -192,8 +205,17 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
         return;
       }
       if (cancelled) return;
+      const tDone = performance.now();
       setRenderedAt(Date.now());
       renderedZoomRef.current = zoom;
+      const getPageMs = Math.round(tPage - tStart);
+      const renderMs = Math.round(tDone - tPage);
+      const totalMs = Math.round(tDone - tStart);
+      void window.lens.logDev?.(
+        'info',
+        'Render',
+        `page ${pageNumber} z=${zoom.toFixed(2)} getPage=${getPageMs}ms render=${renderMs}ms total=${totalMs}ms`,
+      );
 
       const textContent = await textContentPromise;
       if (cancelled) return;
@@ -282,9 +304,13 @@ export default function PageView({ doc, pageNumber, paperHash, zoom, baseSize }:
         zoom={zoom}
         getPageRect={() => containerRef.current?.getBoundingClientRect() ?? null}
       />
-      {renderedAt === null && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-black/30 select-none">
-          {visible ? 'Rendering…' : ''}
+      {renderedAt === null && visible && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          <div
+            className="h-7 w-7 rounded-full border-2 border-black/10 border-t-black/30 animate-spin"
+            role="status"
+            aria-label="Loading page"
+          />
         </div>
       )}
     </div>

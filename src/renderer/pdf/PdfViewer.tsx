@@ -77,17 +77,38 @@ export default function PdfViewer() {
     if (!el || !docState) return;
     const hash = docState.contentHash;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      // Synchronously dispatch the most-recent scroll position so the
+      // last 500 ms of scrolling before close/switch isn't lost. The
+      // bug this fixes: user reported reopening landed on the wrong
+      // page because the debounced timer was cleared on cleanup
+      // before its callback ran. Now cleanup flushes first, THEN
+      // clears.
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const y = el.scrollTop;
+      void window.lens.savePaperScroll?.({ paperHash: hash, scrollY: y }).catch(() => {});
+    };
     const onScroll = () => {
       if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const y = el.scrollTop;
-        void window.lens.savePaperScroll?.({ paperHash: hash, scrollY: y }).catch(() => {});
-      }, 500);
+      timer = setTimeout(flush, 500);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    // Also flush when the window loses visibility (user switched
+    // away mid-read) — same reason as cleanup. Using
+    // visibilitychange instead of beforeunload because Electron
+    // window-close on macOS goes through hide-then-quit, not
+    // beforeunload.
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      if (timer !== null) clearTimeout(timer);
+      flush();
       el.removeEventListener('scroll', onScroll);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [docState]);
 
@@ -691,18 +712,70 @@ function applyAnchoredZoom(
   const rect = scroller.getBoundingClientRect();
   const preZoomScrollLeft = scroller.scrollLeft;
   const preZoomScrollTop = scroller.scrollTop;
-  const cursorInScrollerX = clientX - rect.left + preZoomScrollLeft;
-  const cursorInScrollerY = clientY - rect.top + preZoomScrollTop;
-  // After zoom, the same document point sits at cursor*factor inside the
-  // scroller; to keep it under the cursor we must scroll by that delta.
-  const targetScrollLeft = preZoomScrollLeft + cursorInScrollerX * (realFactor - 1);
-  const targetScrollTop = preZoomScrollTop + cursorInScrollerY * (realFactor - 1);
+
+  // Capture the cursor's position relative to a STABLE document anchor —
+  // the leftmost rendered page element. We use the page-element's
+  // pre-zoom screen rect rather than the scroller-content origin
+  // because the scroller has `mx-auto` on its child, so the page's
+  // left edge SHIFTS as zoom changes (gutter recomputation). If we
+  // anchor against the scroller-content origin like the previous code
+  // did, the cursor "drifts left" because the page's left edge has
+  // moved out from under the cursor — that's the bug the user reported.
+  //
+  // We track the cursor's offset INSIDE the page (in pre-zoom units),
+  // then after zoom scroll so that same offset (× factor) lands under
+  // the cursor again. Page-relative coords are immune to mx-auto
+  // shifts because the page itself is the reference frame.
+  const pageEls = scroller.querySelectorAll<HTMLElement>('[data-page]');
+  let prePageEl: HTMLElement | null = null;
+  let prePageRect: DOMRect | null = null;
+  for (const el of pageEls) {
+    const r = el.getBoundingClientRect();
+    if (clientY >= r.top && clientY <= r.bottom) {
+      prePageEl = el;
+      prePageRect = r;
+      break;
+    }
+  }
+  // Fallback to the leftmost visible page if cursor isn't directly over
+  // any page (the gap between pages, the bottom of the doc).
+  if (!prePageEl || !prePageRect) {
+    if (pageEls.length > 0) {
+      prePageEl = pageEls[0];
+      prePageRect = pageEls[0].getBoundingClientRect();
+    }
+  }
 
   multiplyZoom(realFactor);
 
   requestAnimationFrame(() => {
-    scroller.scrollLeft = targetScrollLeft;
-    scroller.scrollTop = targetScrollTop;
+    if (!prePageEl || !prePageRect) {
+      // No page reference — best-effort fallback to the old math.
+      const cursorInScrollerX = clientX - rect.left + preZoomScrollLeft;
+      const cursorInScrollerY = clientY - rect.top + preZoomScrollTop;
+      scroller.scrollLeft = preZoomScrollLeft + cursorInScrollerX * (realFactor - 1);
+      scroller.scrollTop = preZoomScrollTop + cursorInScrollerY * (realFactor - 1);
+      return;
+    }
+    // Where is the same page now, after zoom + React re-layout?
+    const postPageRect = prePageEl.getBoundingClientRect();
+    // Cursor's offset INSIDE the page, pre-zoom (CSS pixels).
+    const offsetXInPagePre = clientX - prePageRect.left;
+    const offsetYInPagePre = clientY - prePageRect.top;
+    // After zoom, the same offset in page-content scales by factor.
+    const offsetXInPagePost = offsetXInPagePre * realFactor;
+    const offsetYInPagePost = offsetYInPagePre * realFactor;
+    // Where the page's left/top sit in document (scroller-content)
+    // coords AFTER React's layout finished:
+    const postPageDocLeft = postPageRect.left + scroller.scrollLeft - rect.left;
+    const postPageDocTop = postPageRect.top + scroller.scrollTop - rect.top;
+    // The point originally under the cursor sits here in doc coords:
+    const targetDocX = postPageDocLeft + offsetXInPagePost;
+    const targetDocY = postPageDocTop + offsetYInPagePost;
+    // To put it back under the cursor, scroll so that doc coord
+    // appears at (clientX - rect.left, clientY - rect.top).
+    scroller.scrollLeft = targetDocX - (clientX - rect.left);
+    scroller.scrollTop = targetDocY - (clientY - rect.top);
   });
 }
 
