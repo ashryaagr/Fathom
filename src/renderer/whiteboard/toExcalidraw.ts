@@ -32,6 +32,7 @@
 
 import type { WBDiagram, WBNode } from './dsl';
 import type { LaidOutDiagram } from './elkLayout';
+import { FIGURE_SLOT_WIDTH } from './elkLayout';
 
 // --- Custom data shape we round-trip through Excalidraw's per-element
 // `customData` map. Picks up at click time + on .excalidraw save.
@@ -215,6 +216,12 @@ export function diagramToSkeleton(
     const isModelKind = node.kind === 'model';
     const rectId = `wb-node-${node.id}-${stamp}`;
     const fileId = figureBindings?.get(node.id);
+    // When a figure is embedded, the ELK layout reserved an extra
+    // FIGURE_SLOT_WIDTH px on top of the base node width. We render
+    // the rectangle at the *base* width and place the figure in the
+    // gutter to the right; without this split the figure would overlap
+    // the rectangle, defeating the "side-by-side" embedding.
+    const rectWidth = fileId ? laidOut.width - FIGURE_SLOT_WIDTH : laidOut.width;
 
     // Compose the bound text content. Label on line 1; if a summary is
     // present we drop it on a new line in a smaller cognitive register
@@ -239,7 +246,7 @@ export function diagramToSkeleton(
       id: rectId,
       x: origin.x + laidOut.x,
       y: origin.y + laidOut.y,
-      width: laidOut.width,
+      width: rectWidth,
       height: laidOut.height,
       strokeColor: palette.stroke,
       backgroundColor: palette.fill,
@@ -298,7 +305,7 @@ export function diagramToSkeleton(
       elements.push({
         type: 'image',
         fileId: fileId as unknown as never,
-        x: origin.x + laidOut.x + laidOut.width + 8,
+        x: origin.x + laidOut.x + rectWidth + 8,
         y: origin.y + laidOut.y + (laidOut.height - figH) / 2,
         width: figW,
         height: figH,
@@ -320,7 +327,7 @@ export function diagramToSkeleton(
     // tag rather than crowding the bound text below.
     if (node.citation) {
       const verified = node.citation.verified !== false;
-      const cx = origin.x + laidOut.x + laidOut.width - 14;
+      const cx = origin.x + laidOut.x + rectWidth - 14;
       const cy = origin.y + laidOut.y - 6;
       elements.push({
         type: 'rectangle',
@@ -361,16 +368,18 @@ export function diagramToSkeleton(
       }
     }
 
-    // Drill glyph — tiny ⌖ in the bottom-right of drillable nodes.
-    // Sits 4 px BELOW the rectangle's bottom edge so it doesn't crowd
-    // the bound label. Stays clickable because it shares the node's
-    // hit-target via customData.drillable.
+    // Drill glyph — small ⌖ INSIDE the bottom-right of drillable
+    // nodes (3 px in from each edge). Sitting outside the rectangle
+    // (v1) read as "stray punctuation" to the visual critic; inside
+    // it reads as "this is the affordance". The rect is sized with
+    // headroom (NODE_INNER_PAD_Y) so the glyph never collides with
+    // the bound label text.
     if (node.drillable) {
       elements.push({
         type: 'text',
         id: `wb-drill-${node.id}-${stamp}`,
-        x: origin.x + laidOut.x + laidOut.width - 16,
-        y: origin.y + laidOut.y + laidOut.height + 2,
+        x: origin.x + laidOut.x + rectWidth - 16,
+        y: origin.y + laidOut.y + laidOut.height - 18,
         text: '⌖',
         fontSize: 14,
         fontFamily: FONT_FAMILY_HELVETICA,
@@ -386,29 +395,59 @@ export function diagramToSkeleton(
     }
   }
 
-  // --- Edges. We use Excalidraw arrow elements with start/end bindings
-  //     so they snap to the rectangles and route around them
-  //     automatically. ELK's bend points are interesting but Excalidraw
-  //     handles routing nicely on its own when bound.
+  // --- Edges. ELK already routed every edge through `points[]` —
+  //     start, optional bend points, end — that DO NOT cross any node
+  //     because we asked for `elk.edgeRouting=ORTHOGONAL`. We feed
+  //     these polylines directly into the Excalidraw arrow's `points`
+  //     array. v1 used a single straight segment (`[[0,0],[dx,dy]]`)
+  //     which Excalidraw drew as a diagonal that often passed THROUGH
+  //     a sibling node; the routed polyline avoids that.
   diagram.edges.forEach((edge, i) => {
     const startRect = `wb-node-${edge.from}-${stamp}`;
     const endRect = `wb-node-${edge.to}-${stamp}`;
     const fromLO = layout.nodes.find((n) => n.id === edge.from);
     const toLO = layout.nodes.find((n) => n.id === edge.to);
     if (!fromLO || !toLO) return;
-    const startX = origin.x + fromLO.x + fromLO.width;
-    const startY = origin.y + fromLO.y + fromLO.height / 2;
-    const endX = origin.x + toLO.x;
-    const endY = origin.y + toLO.y + toLO.height / 2;
+    // Find the matching laid-out edge (ELK gives us one polyline per
+    // input edge, in input order). If ELK didn't return points (rare —
+    // happens if the layered algorithm dropped a self-loop), fall
+    // back to the straight from-edge-mid-right → to-edge-mid-left
+    // segment we used in v1.
+    const layoutEdge = layout.edges[i];
+    let arrowOriginX: number;
+    let arrowOriginY: number;
+    let relativePoints: Array<[number, number]>;
+    if (layoutEdge && layoutEdge.points.length >= 2) {
+      // ELK polyline is in scene coords *relative to the layout's
+      // top-left*. Add `origin` to translate into our diagram's scene
+      // coords. The Excalidraw arrow's `x`/`y` is the FIRST point,
+      // and `points` are offsets relative to that origin.
+      const [first, ...rest] = layoutEdge.points;
+      arrowOriginX = origin.x + first.x;
+      arrowOriginY = origin.y + first.y;
+      relativePoints = [
+        [0, 0],
+        ...rest.map((p): [number, number] => [
+          origin.x + p.x - arrowOriginX,
+          origin.y + p.y - arrowOriginY,
+        ]),
+      ];
+    } else {
+      arrowOriginX = origin.x + fromLO.x + fromLO.width;
+      arrowOriginY = origin.y + fromLO.y + fromLO.height / 2;
+      const endX = origin.x + toLO.x;
+      const endY = origin.y + toLO.y + toLO.height / 2;
+      relativePoints = [
+        [0, 0],
+        [endX - arrowOriginX, endY - arrowOriginY],
+      ];
+    }
     elements.push({
       type: 'arrow',
       id: `wb-edge-${i}-${stamp}`,
-      x: startX,
-      y: startY,
-      points: [
-        [0, 0],
-        [endX - startX, endY - startY],
-      ],
+      x: arrowOriginX,
+      y: arrowOriginY,
+      points: relativePoints,
       strokeColor: '#1a1614',
       strokeWidth: 1.2,
       roughness: 1,

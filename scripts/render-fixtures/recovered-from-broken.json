@@ -1,0 +1,68 @@
+{
+  "level": 1,
+  "title": "Recovered from previous broken render",
+  "nodes": [
+    {
+      "id": "L1.1",
+      "label": "Input Embed + PosEnc",
+      "summary": "Token embeddings scaled by \u221ad_model, summed with fixed sinusoidal positional encodings; feeds both stacks.",
+      "kind": "process",
+      "drillable": false
+    },
+    {
+      "id": "L1.2",
+      "label": "Encoder Stack (N=6)",
+      "summary": "Six identical layers; each has self-attention and FFN sublayers, both wrapped in residual + LayerNorm.",
+      "kind": "process",
+      "drillable": true
+    },
+    {
+      "id": "L1.3",
+      "label": "Multi-Head Attention",
+      "summary": "h=8 parallel scaled dot-product attention heads; reused as encoder self-attention, masked decoder self-attent\u2026",
+      "kind": "process",
+      "drillable": true
+    },
+    {
+      "id": "L1.4",
+      "label": "Decoder Stack (N=6)",
+      "summary": "Six identical layers with masked self-attention, encoder-decoder attention, and FFN; masking preserves auto-r\u2026",
+      "kind": "process",
+      "drillable": true
+    },
+    {
+      "id": "L1.5",
+      "label": "Linear + Softmax",
+      "summary": "Tied-weight linear projection to vocab logits, then softmax over next-token distribution.",
+      "kind": "process",
+      "drillable": false
+    }
+  ],
+  "edges": [
+    {
+      "from": "L1.1",
+      "to": "L1.2"
+    },
+    {
+      "from": "L1.1",
+      "to": "L1.4"
+    },
+    {
+      "from": "L1.2",
+      "to": "L1.4"
+    },
+    {
+      "from": "L1.3",
+      "to": "L1.2"
+    },
+    {
+      "from": "L1.3",
+      "to": "L1.4"
+    },
+    {
+      "from": "L1.4",
+      "to": "L1.5"
+    }
+  ],
+  "layout_hint": "lr"
+}

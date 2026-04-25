@@ -168,12 +168,41 @@ This is a forcing function for "is it ready" awareness — the user does not hav
 
 Two equivalent ways to drill from a Level 1 node into its Level 2 expansion (per CLAUDE.md §2.1: every interaction needs a keyboard path AND a gesture path):
 
-1. **Click the drillable Level 1 node** (preferred — discoverable, no learning curve). Drillable nodes carry a dashed inner border + amber ⌖ glyph. Click → Level 2 frame becomes the active focus, breadcrumb updates to "Paper ▸ <node label>", canvas animates `scrollToContent` over 320 ms with a `cubic-bezier(0.4, 0, 0.2, 1)` curve (inside Doherty's 400 ms threshold).
+1. **Click the drillable Level 1 node** (preferred — discoverable, no learning curve). Drillable nodes carry a dashed inner border + amber ⌖ glyph at the bottom-right. Click → Level 2 frame becomes the active focus, breadcrumb updates to "Paper ▸ <node label>", canvas animates `scrollToContent` over 320 ms with a `cubic-bezier(0.4, 0, 0.2, 1)` curve (inside Doherty's 400 ms threshold).
 2. **⌘+pinch on the node** (matches the existing PDF dive gesture — same recursion grammar, CLAUDE.md §2.1). Same animation curve, same destination. Useful when the user already has the trackpad in pinch-mode from the previous interaction.
+
+**Drill direction is VERTICAL.** The Level 2 frame sits BELOW its Level 1 parent in the Excalidraw scene, not to the right. The user's mental model is "zooming into a node moves you DOWN the page, not across" (PM update 2026-04-25). Same recursion grammar applies if Level 3 ever ships. The animated `scrollToContent` handles smooth panning; the positional choice is a layout decision in `WhiteboardTab.tsx::mountLevel2Frame`.
 
 Because Level 2 expansions are pre-warmed in parallel as soon as Level 1 lands (see "Eager Level 2 pre-warm" above), the typical drill is *instant* — the L2 frame is already painted, the click just animates the camera to it.
 
 To drill back out: click the breadcrumb's "Paper" segment, or two-finger swipe right (matches existing lens history navigation).
+
+## Pass 2.5 — visual critique loop ("AI agents that produce visual artefacts must see-and-iterate")
+
+After Pass 2 emits a `WBDiagram` and the renderer rasterises it via Excalidraw's `exportToCanvas`, an Opus 4.7 critique pass LOOKS at the rendered PNG against a small set of layout rules:
+
+- text inside boxes (no overflow)
+- arrows don't cross node geometry
+- no orphan dashed placeholders (skeleton was torn down)
+- drillable nodes carry the ⌖ glyph + dashed inner border
+- figure embeds resolve (no broken-image placeholders)
+- ≤ 5 nodes per diagram
+
+The critic emits one of:
+
+- `{ "ok": true }` — diagram passes; ship to canvas
+- `{ "fix": "patch", "ops": [...] }` — typed ops to apply locally (`shorten_summary`, `rename_label`, `drop_node`, `drop_edge`, `set_drillable`, `set_figure_ref`)
+- `{ "fix": "replace", "diagram": {...} }` — emit a fresh WBDiagram
+
+The renderer applies the fix, re-renders to PNG via the same `exportToCanvas` path, re-submits, and ships whatever the final iteration produced. Loop caps at 3 iterations. The PNG path is `<sidecar>/whiteboard-render-iter-N.png` and the model `Read`s it via the standard tool — same pattern as the lens reads the zoom image (CLAUDE.md §6 — "Claude's Read tool handles PNG natively"). No headless Puppeteer needed: `exportToCanvas` runs against the live renderer's Excalidraw bundle and returns a Canvas which we serialise via `.toDataURL('image/png')`.
+
+Cost: ~$0.05 per critique iteration on Opus 4.7. Worst case (3 iterations) adds ~$0.15 to a paper's first-time generation, bringing total to ~$2.05/paper. The critique cost is rolled into the per-paper Pass 2 cost counter so the bottom-left cost pill shows a true total.
+
+Logs:
+
+- `[Whiteboard Pass2.5] BEGIN paper=… iter=N png=…` per iteration
+- `[Whiteboard Pass2.5] END paper=… iter=N verdict=OK|patch|replace cost=$… t=…ms`
+- `[Whiteboard UI] Pass2.5 iter=N verdict=… cost=$…` from the renderer side
 
 ## Doherty acknowledgement contract
 
@@ -200,7 +229,7 @@ The 70 s first-paint and ~5 s per-iteration latencies are fine *as long as the i
 - **One whiteboard per paper.** No comparing two papers' diagrams side-by-side yet.
 - **Public papers only.** No support for protected PDFs or papers behind paywalls (orthogonal to this pipeline).
 - **English papers tested.** Other languages should work because Opus is multilingual, but we've observed Pass 1 selecting components correctly only in English so far.
-- **Cost may surprise users.** ~$1.50/paper is significantly more than the lens (~$0.05/dive). Consent prompt explicit about this.
+- **Cost may surprise users.** ~$1.90/paper is significantly more than the lens (~$0.05/dive). Consent prompt explicit about this.
 - **5-node ceiling enforced at parse time.** If Sonnet emits >5 nodes for a single diagram, the parser keeps the first 5 and drops dangling edges. Cog reviewer §1 hard rule (Cowan 4±1 working memory cap) — silently violating it would defeat the diagram's purpose.
 
 ## Updating this page

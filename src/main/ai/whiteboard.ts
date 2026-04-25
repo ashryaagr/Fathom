@@ -591,6 +591,270 @@ function buildPass2Prompt(args: RunPass2Args): string {
 }
 
 // --------------------------------------------------------------------
+// Pass 2.5 — VISUAL CRITIQUE
+// --------------------------------------------------------------------
+//
+// "AI agents that produce visual artefacts must see-and-iterate." After
+// Pass 2 emits a WBDiagram and the renderer rasterises it to a PNG via
+// `exportToCanvas`, we ask Opus 4.7 to LOOK at the PNG and check it
+// against the layout rules:
+//   - text inside boxes (no overflow)
+//   - arrows don't cross nodes
+//   - figure embeds resolve (no broken-image placeholders)
+//   - 5-node ceiling honoured
+//   - drillable nodes show ⌖ glyph + dashed border
+// If everything passes → {ok: true}. If something is wrong → either a
+// patch (typed ops list to apply locally) or a fresh WBDiagram. The
+// renderer caps iteration at 3 to avoid thrashing.
+//
+// Why Read tool instead of inline image content blocks: Opus's `Read`
+// tool natively handles PNGs (CLAUDE.md §6 — same trick the lens uses
+// for the zoom image). The renderer writes the PNG to a known path
+// inside the sidecar, the prompt names that path, the model calls
+// Read once. Avoids threading base64 image bytes through IPC and
+// matches the pattern the rest of Fathom uses for visual grounding.
+
+const PASS25_SYSTEM = `You are a visual layout reviewer for Fathom whiteboard diagrams. You see a rendered PNG of a hand-drawn diagram and the JSON it was rendered from. You enforce a small set of layout rules and emit either {"ok": true} or a fix.
+
+Rules (HARD — any violation requires a fix):
+  1. **Text fits inside its box.** Every node's label and summary must be entirely INSIDE the rounded rectangle. No overflow, no clipping at the box edge, no overlap with sibling boxes.
+  2. **Arrows don't cross node geometry.** Edges between nodes route AROUND nodes, never through them. Clipping the source/target box at the entry/exit point is fine; cutting through a third node is not.
+  3. **No orphan placeholders.** If you see dashed empty rectangles WITHOUT any real-content node painted on top of them, the skeleton wasn't torn down — that's a fix.
+  4. **Drillable nodes have ⌖ glyph.** Any node with \`drillable: true\` in the JSON must have a small ⌖ glyph visible near its bottom-right corner AND a dashed inner border. Solid borders + no glyph means drillable wasn't honoured.
+  5. **Figure embeds resolve.** If the JSON has \`figure_ref\` on a node, you should see an actual cropped figure PNG embedded next to that node — not a grey "image missing" placeholder.
+  6. **≤5 nodes per diagram.** If you count more than 5 rectangles in the diagram, that's a fix (the parser should have trimmed; if rendered, it's a bug).
+
+Output ONE JSON object, no prose, in a \`\`\`json fence:
+
+\`\`\`json
+{ "ok": true }                        // diagram passes; ship as-is
+\`\`\`
+
+OR
+
+\`\`\`json
+{
+  "fix": "patch",
+  "ops": [
+    { "op": "shorten_summary", "node_id": "L1.2", "to": "≤25 words new summary" },
+    { "op": "rename_label", "node_id": "L1.3", "to": "≤24 chars" },
+    { "op": "drop_node", "node_id": "L1.6" },
+    { "op": "drop_edge", "from": "L1.1", "to": "L1.4" },
+    { "op": "set_drillable", "node_id": "L1.2", "drillable": true }
+  ],
+  "reason": "one-sentence explanation of what was wrong"
+}
+\`\`\`
+
+OR (if patching can't fix it — most rare):
+
+\`\`\`json
+{
+  "fix": "replace",
+  "diagram": { ...complete WBDiagram with the same shape Pass 2 emits... },
+  "reason": "one-sentence explanation"
+}
+\`\`\`
+
+You can call \`Read\` on the PNG path the prompt gives you to see the rendered diagram. You may call it multiple times if you want to zoom or re-check; usage is metered.
+
+Be conservative. Most renders pass. Only emit a fix when a real rule violation is visible. NEVER fix on aesthetic preference — these rules are the bar, not "could look prettier".`;
+
+export interface Pass25CritiqueOk {
+  ok: true;
+}
+
+export interface Pass25Patch {
+  op:
+    | 'shorten_summary'
+    | 'rename_label'
+    | 'drop_node'
+    | 'drop_edge'
+    | 'set_drillable'
+    | 'set_figure_ref';
+  /** Target node id for ops that take one. */
+  node_id?: string;
+  /** New value for shorten_summary / rename_label. */
+  to?: string;
+  /** drop_edge: edge endpoints. */
+  from?: string;
+  /** set_drillable: target value. */
+  drillable?: boolean;
+  /** set_figure_ref: target page+figure. */
+  figure_ref?: { page: number; figure: number };
+}
+
+export interface Pass25CritiquePatch {
+  fix: 'patch';
+  ops: Pass25Patch[];
+  reason: string;
+}
+
+export interface Pass25CritiqueReplace {
+  fix: 'replace';
+  diagram: unknown; // shape-checked by parseWBDiagram on the renderer side
+  reason: string;
+}
+
+export type Pass25Critique = Pass25CritiqueOk | Pass25CritiquePatch | Pass25CritiqueReplace;
+
+export interface Pass25Result {
+  raw: string;
+  costUsd: number;
+  latencyMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  /** Parsed verdict; null on parse failure (treated as ok=true to avoid
+   * blocking the user on a critique parse bug). */
+  verdict: Pass25Critique | null;
+}
+
+export interface RunPass25Args {
+  paperHash: string;
+  indexPath: string;
+  /** The current WBDiagram (after any prior patch iterations) being
+   * critiqued, serialised as a JSON string for inlining in the prompt. */
+  diagramJson: string;
+  /** Absolute path to the PNG render the model should `Read`. Lives in
+   * the sidecar so Read's per-paper allowlist permits access. */
+  renderedPngPath: string;
+  /** Iteration index (1, 2, or 3). Threaded into the log line + into
+   * the prompt so the model sees what it tried before. */
+  iteration: number;
+  abortController?: AbortController;
+}
+
+export async function runPass25Critique(args: RunPass25Args): Promise<Pass25Result> {
+  const t0 = Date.now();
+  const cwd = safeCwd(args.indexPath);
+  const pathToClaudeCodeExecutable = resolveClaudeExecutablePath() ?? undefined;
+
+  console.log(
+    `[Whiteboard Pass2.5] BEGIN paper=${args.paperHash.slice(0, 10)} ` +
+      `iter=${args.iteration} png=${args.renderedPngPath.split('/').pop()}`,
+  );
+
+  const userPrompt = [
+    `<rendered_diagram_path>${args.renderedPngPath}</rendered_diagram_path>`,
+    `<current_diagram_json>\n${args.diagramJson}\n</current_diagram_json>`,
+    `Iteration ${args.iteration} of at most 3. Read the rendered diagram PNG, check it against the rules in your system prompt, and emit ONE JSON object inside a \`\`\`json fence — either {"ok": true} or a fix object. No prose.`,
+  ].join('\n\n');
+
+  const q = query({
+    prompt: userPrompt,
+    options: {
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: PASS25_SYSTEM },
+      model: 'claude-opus-4-7',
+      // Read is the only tool — for the rendered PNG. No Glob, no
+      // WebSearch, no Bash. Sidecar dir is added so Read's per-paper
+      // permission allows the rendered-PNG path.
+      allowedTools: ['Read'],
+      additionalDirectories: [args.indexPath],
+      includePartialMessages: true,
+      permissionMode: 'bypassPermissions',
+      abortController: args.abortController,
+      cwd,
+      pathToClaudeCodeExecutable,
+      // 4 turns: read the PNG, optionally re-read for a closer look,
+      // emit the verdict.
+      maxTurns: 4,
+    },
+  });
+
+  let raw = '';
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  let cachedPrefixHit = false;
+
+  for await (const msg of q) {
+    if (msg.type === 'stream_event') {
+      const event = msg.event;
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        raw += event.delta.text;
+      }
+    } else if (msg.type === 'assistant') {
+      const usage = (msg.message as unknown as {
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      }).usage;
+      if (usage) {
+        if (typeof usage.input_tokens === 'number') inputTokens = usage.input_tokens;
+        if (typeof usage.output_tokens === 'number') outputTokens = usage.output_tokens;
+        if (typeof usage.cache_read_input_tokens === 'number' && usage.cache_read_input_tokens > 0) {
+          cachedPrefixHit = true;
+        }
+      }
+    } else if (msg.type === 'result') {
+      if (msg.subtype === 'error_max_turns' || msg.subtype === 'error_during_execution') {
+        if (raw.length === 0) {
+          throw new Error(`Whiteboard Pass 2.5 failed: ${msg.subtype}`);
+        }
+      }
+      const usageR = (msg as unknown as {
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      }).usage;
+      if (usageR) {
+        if (typeof usageR.input_tokens === 'number') inputTokens = usageR.input_tokens;
+        if (typeof usageR.output_tokens === 'number') outputTokens = usageR.output_tokens;
+        if (typeof usageR.cache_read_input_tokens === 'number' && usageR.cache_read_input_tokens > 0) {
+          cachedPrefixHit = true;
+        }
+      }
+    }
+  }
+
+  const latencyMs = Date.now() - t0;
+  const inTokensEst = inputTokens ?? estimateTokens(userPrompt);
+  const outTokensEst = outputTokens ?? estimateTokens(raw);
+  const inputCost = cachedPrefixHit
+    ? (inTokensEst / 1_000_000) * OPUS_INPUT_USD_PER_MTOKEN * CACHE_DISCOUNT
+    : (inTokensEst / 1_000_000) * OPUS_INPUT_USD_PER_MTOKEN;
+  const costUsd = inputCost + (outTokensEst / 1_000_000) * OPUS_OUTPUT_USD_PER_MTOKEN;
+
+  const verdict = parseCritiqueVerdict(raw);
+  console.log(
+    `[Whiteboard Pass2.5] END paper=${args.paperHash.slice(0, 10)} iter=${args.iteration} ` +
+      `verdict=${verdict ? ('ok' in verdict ? 'OK' : verdict.fix) : 'unparseable→OK'} ` +
+      `tokens(in=${inputTokens ?? '?'}, out=${outputTokens ?? '?'}) cost=$${costUsd.toFixed(4)} t=${latencyMs}ms`,
+  );
+
+  return { raw, costUsd, latencyMs, inputTokens, outputTokens, verdict };
+}
+
+function parseCritiqueVerdict(raw: string): Pass25Critique | null {
+  const fence = /```json\s*([\s\S]*?)```/i.exec(raw);
+  const body = fence ? fence[1] : raw;
+  try {
+    const parsed = JSON.parse(body.trim()) as Record<string, unknown>;
+    if (parsed.ok === true) return { ok: true };
+    if (parsed.fix === 'patch' && Array.isArray(parsed.ops)) {
+      return {
+        fix: 'patch',
+        ops: parsed.ops as Pass25Patch[],
+        reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      };
+    }
+    if (parsed.fix === 'replace' && parsed.diagram) {
+      return {
+        fix: 'replace',
+        diagram: parsed.diagram,
+        reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+// --------------------------------------------------------------------
 // Soft verifier — background grep-check of inline citations
 // --------------------------------------------------------------------
 

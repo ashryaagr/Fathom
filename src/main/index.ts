@@ -10,12 +10,14 @@ import { decomposePaper, digestToContext } from './ai/decompose';
 import {
   runPass1 as runWhiteboardPass1,
   runPass2 as runWhiteboardPass2,
+  runPass25Critique as runWhiteboardPass25Critique,
   runVerifier as runWhiteboardVerifier,
   WB_SCENE_FILE,
   WB_UNDERSTANDING_FILE,
   WB_ISSUES_FILE,
   type Pass1Result,
   type Pass2Result,
+  type Pass25Result,
   type VerifierResult,
 } from './ai/whiteboard';
 import { getDb } from './db/schema';
@@ -264,11 +266,16 @@ async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
     minWidth: 760,
     minHeight: 520,
     show: false,
-    // macOS native fullscreen on open. Per user 2026-04-25: "whenever we
-    // open a paper, it should always open in full screen." Each window
-    // (paper or welcome) gets its own Space — fits the read-deeply
-    // intent. The user can leave fullscreen via ⌃⌘F or the green button.
-    fullscreen: true,
+    // Fullscreen ONLY when a paper is loaded into the window. The
+    // welcome screen (no `initialPdfPath`) opens windowed so the user
+    // can drag-drop a PDF onto it without first having to leave a
+    // fullscreen Space. Per user 2026-04-25: "If you open it by
+    // default in full screen, then it will become hard for a user to
+    // paste the PDF in it or to drop a PDF in it." When a welcome
+    // window transitions to a PDF (drag-drop / file-picker / open-
+    // recent), the renderer fires `window:enterFullScreen` to flip
+    // the window into native fullscreen at that moment.
+    fullscreen: typeof initialPdfPath === 'string' && initialPdfPath.length > 0,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#fafaf7',
     vibrancy: 'under-window',
@@ -824,6 +831,22 @@ ipcMain.handle('update:install', async () => {
   await quitAndInstall();
 });
 ipcMain.handle('update:status', async () => getLastUpdateStatus());
+
+// `window:enterFullScreen` — renderer fires this when a PDF lands in
+// the calling window after a windowed start (welcome screen → drag-
+// drop / file-picker / open-recent transition). The createWindow path
+// also opens fullscreen for windows born with a PDF; this IPC covers
+// the in-place-transition case so the user's preferred reading mode
+// is consistent regardless of how the PDF arrived. Idempotent — no-op
+// if the window is already fullscreen.
+ipcMain.handle('window:enterFullScreen', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return { ok: false };
+  if (!win.isFullScreen()) {
+    win.setFullScreen(true);
+  }
+  return { ok: true };
+});
 
 ipcMain.handle('paper:state', async (_event, paperHash: string) => {
   const paper = Papers.get(paperHash);
@@ -1504,6 +1527,91 @@ ipcMain.handle('whiteboard:abort', async (_event, requestId: string) => {
   return false;
 });
 
+// ---- Whiteboard Pass 2.5 visual critique IPC ----
+//
+// The renderer rasterises the just-rendered WBDiagram to a PNG via
+// Excalidraw's `exportToCanvas`, then writes the PNG bytes via this
+// handler so the per-paper sidecar holds the file at a stable path
+// the Pass 2.5 prompt names. Returns the absolute path so the
+// renderer can pass it through to runWhiteboardPass25Critique.
+ipcMain.handle(
+  'whiteboard:writeRenderPng',
+  async (
+    _event,
+    req: { paperHash: string; iteration: number; pngBase64: string },
+  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    try {
+      const indexPath = indexDirFor(req.paperHash);
+      await mkdir(indexPath, { recursive: true });
+      // Single iteration-tagged path — overwritten on each Pass 2.5
+      // round so the sidecar doesn't accumulate stale renders.
+      const pngPath = join(indexPath, `whiteboard-render-iter-${req.iteration}.png`);
+      // Strip the `data:image/png;base64,` prefix if present.
+      const cleaned = req.pngBase64.replace(/^data:image\/[a-z]+;base64,/i, '');
+      await writeFile(pngPath, Buffer.from(cleaned, 'base64'));
+      console.log(
+        `[Whiteboard Pass2.5 IPC] wrote render iter=${req.iteration} bytes=${cleaned.length} → ${pngPath}`,
+      );
+      return { ok: true, path: pngPath };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Whiteboard Pass2.5 IPC] write render failed: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  },
+);
+
+// Run the Pass 2.5 critique itself. Renderer → main → vision-Claude.
+// Synchronous in the IPC sense — the renderer waits for the verdict
+// before deciding whether to apply ops / replace / ship.
+ipcMain.handle(
+  'whiteboard:critique',
+  async (
+    _event,
+    req: { paperHash: string; diagramJson: string; pngPath: string; iteration: number },
+  ): Promise<{
+    ok: boolean;
+    verdict: unknown | null;
+    raw: string;
+    costUsd: number;
+    latencyMs: number;
+    error?: string;
+  }> => {
+    try {
+      const indexPath = indexDirFor(req.paperHash);
+      const result: Pass25Result = await runWhiteboardPass25Critique({
+        paperHash: req.paperHash,
+        indexPath,
+        diagramJson: req.diagramJson,
+        renderedPngPath: req.pngPath,
+        iteration: req.iteration,
+      });
+      // Roll the critique cost up onto the per-paper Pass 2 cost
+      // counter — same bucket as render-side spend so the cost pill
+      // shows the user a true total.
+      const row = Whiteboards.get(req.paperHash);
+      const newPass2Cost = (row?.pass2_cost ?? 0) + (result.costUsd ?? 0);
+      const newTotal = (row?.pass1_cost ?? 0) + newPass2Cost;
+      Whiteboards.upsert({
+        paperHash: req.paperHash,
+        pass2Cost: newPass2Cost,
+        totalCost: newTotal,
+      });
+      return {
+        ok: true,
+        verdict: result.verdict,
+        raw: result.raw,
+        costUsd: result.costUsd,
+        latencyMs: result.latencyMs,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[Whiteboard Pass2.5] critique IPC failed: ${msg}`);
+      return { ok: false, verdict: null, raw: '', costUsd: 0, latencyMs: 0, error: msg };
+    }
+  },
+);
+
 /**
  * Copy the bundled sample PDF into a user-writable location (not ~/Documents,
  * which TCC blocks without a permission prompt — and blocks silently on our
@@ -1942,6 +2050,37 @@ app.whenReady().then(async () => {
     });
     globalShortcut.register('CommandOrControl+Shift+F5', () => {
       safeSendActive('settings:show');
+    });
+    // ⌘⇧F4 — switch to the Whiteboard tab + accept consent. Wired
+    // for `scripts/fathom-test.sh whiteboard-generate`, the smoke
+    // test the team-lead spec asks for. Renderer handler lives in
+    // App.tsx and triggers the same code path the user's "Generate
+    // whiteboard" button does.
+    globalShortcut.register('CommandOrControl+Shift+F4', () => {
+      safeSendActive('qa:triggerWhiteboardGenerate');
+    });
+    // ⌘⇧F3 — RENDER-ONLY whiteboard test. Skips Pass 1 + Pass 2
+    // entirely; the renderer loads a fixture WBDiagram from
+    // `<sidecar>/whiteboard-test-diagram.json` (or a hardcoded
+    // fallback if the file doesn't exist) and runs it through the
+    // ELK + diagramToSkeleton + convertToExcalidrawElements +
+    // exportToCanvas pipeline, mounts the result in the live scene,
+    // and writes the rendered PNG to disk via the existing
+    // whiteboard:writeRenderPng IPC. Iterates render-layer fixes in
+    // ~2s per round, NO Claude spend. Per CLAUDE.md §0 isolation
+    // principle — the bug is in the render layer, debug it in
+    // isolation, plug back in.
+    globalShortcut.register('CommandOrControl+Shift+F3', () => {
+      safeSendActive('qa:triggerWhiteboardRenderOnly');
+    });
+    // ⌘⇧F2 — drill into the first drillable L1 node of the currently
+    // mounted whiteboard. Wired for `scripts/fathom-test.sh
+    // whiteboard-drill` so automated close-the-loop runs can capture
+    // the L2 frame without needing a coordinate-based AppleScript
+    // click. Fires the same code path a user click would; if no
+    // whiteboard is mounted or no drillable nodes exist, no-op.
+    globalShortcut.register('CommandOrControl+Shift+F2', () => {
+      safeSendActive('qa:triggerWhiteboardDrillFirst');
     });
   }
   app.on('activate', async () => {

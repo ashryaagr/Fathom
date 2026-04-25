@@ -159,6 +159,44 @@ EOF
     # ⌘⇧F5 → main-process opens Preferences modal.
     osascript -e 'tell application "System Events" to key code 96 using {command down, shift down}' 2>/dev/null
     ;;
+  whiteboard-generate)
+    # ⌘⇧F4 → switch to the Whiteboard tab + auto-accept the consent
+    # affordance for the currently-open paper. Smoke-test the pipeline
+    # end-to-end against logs:
+    #   scripts/fathom-test.sh sample
+    #   scripts/fathom-test.sh whiteboard-generate
+    #   ... wait ~90 s ...
+    #   scripts/fathom-test.sh log 200 | grep '\[Whiteboard'
+    # Look for `[Whiteboard Pass1] BEGIN`, `[Whiteboard Pass1] END`,
+    # `[Whiteboard Pass2] BEGIN`, `[Whiteboard Render] ELK layout`,
+    # `[Whiteboard UI] L1 mounted` in order. key code 118 = F4.
+    osascript -e 'tell application "System Events" to key code 118 using {command down, shift down}' 2>/dev/null
+    echo "(whiteboard generation triggered; tail logs for [Whiteboard Pass1] and [Whiteboard Render])"
+    ;;
+  whiteboard-render-only)
+    # ⌘⇧F3 → render-only QA: skip Pass 1 + Pass 2, mount a fixture
+    # WBDiagram through the live render pipeline. NO Claude spend.
+    # Per CLAUDE.md §0 isolation principle — debug the render layer
+    # without paying for re-running the AI passes. ~2s per iteration.
+    # Logs: `[Whiteboard UI] render-only fixture begin`,
+    # `[Whiteboard Render] ELK layout`, `[Whiteboard UI] L1 mounted`.
+    # Drop a custom WBDiagram JSON at `<sidecar>/whiteboard-test-diagram.json`
+    # to override the hardcoded ReconViaGen fixture. key code 99 = F3.
+    osascript -e 'tell application "System Events" to key code 99 using {command down, shift down}' 2>/dev/null
+    echo "(render-only fixture triggered; tail logs for [Whiteboard UI] render-only)"
+    ;;
+  whiteboard-drill)
+    # ⌘⇧F2 → drill into the FIRST drillable L1 node of the currently
+    # mounted whiteboard. Picks the first node whose `drillable: true`
+    # in level1.nodes order; no parameters. Use after `whiteboard-generate`
+    # or `whiteboard-render-only` has produced an L1 — the L2 frame for
+    # the chosen node will mount BELOW its parent.
+    # Logs: `[Whiteboard UI] qa drill-first: drilling into <id> (<label>)`.
+    # Followed by the normal `[Whiteboard UI] L2 mounted parent=<id>` once
+    # the L2 frame paints. key code 120 = F2.
+    osascript -e 'tell application "System Events" to key code 120 using {command down, shift down}' 2>/dev/null
+    echo "(drill-first triggered; tail logs for [Whiteboard UI] qa drill-first)"
+    ;;
   open-pdf)
     # No global shortcut for this one yet — the file picker requires
     # an active window context. Falls back to window-targeted
@@ -169,9 +207,12 @@ EOF
     ;;
 
   *)
-    echo "usage: $0 {reset|launch|shot [name]|capture [name]|sample|log [n]|click <label>|key <keycode>|dive|ask|back|forward|prefs|open-pdf}" >&2
-    echo "       capture = non-disruptive offscreen screenshot via ⌘⇧F10 global shortcut (preferred for QA)" >&2
-    echo "       sample  = open the bundled sample paper via ⌘⇧F9 global shortcut" >&2
+    echo "usage: $0 {reset|launch|shot [name]|capture [name]|sample|log [n]|click <label>|key <keycode>|dive|ask|back|forward|prefs|open-pdf|whiteboard-generate|whiteboard-render-only|whiteboard-drill}" >&2
+    echo "       capture                = non-disruptive offscreen screenshot via ⌘⇧F10 global shortcut (preferred for QA)" >&2
+    echo "       sample                 = open the bundled sample paper via ⌘⇧F9 global shortcut" >&2
+    echo "       whiteboard-generate    = switch to Whiteboard tab + auto-accept consent via ⌘⇧F4 (smoke test, ~$1.90 spend)" >&2
+    echo "       whiteboard-render-only = mount a fixture WBDiagram through the live render layer via ⌘⇧F3 (no Claude spend)" >&2
+    echo "       whiteboard-drill       = drill into the first drillable L1 node via ⌘⇧F2 (no Claude spend if pre-warmed)" >&2
     exit 1
     ;;
 esac

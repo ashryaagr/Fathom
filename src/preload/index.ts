@@ -266,6 +266,36 @@ const api = {
     ipcRenderer.on('qa:triggerForward', listener);
     return () => ipcRenderer.removeListener('qa:triggerForward', listener);
   },
+  /** QA-harness: switch to the Whiteboard tab and accept the consent
+   * affordance for the currently-open paper. Wired so an automated
+   * smoke test can spawn Fathom, drive the global shortcut, and
+   * assert the `[Whiteboard Pass1]` log line appears within ~90 s. */
+  onQaTriggerWhiteboardGenerate: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerWhiteboardGenerate', listener);
+    return () =>
+      ipcRenderer.removeListener('qa:triggerWhiteboardGenerate', listener);
+  },
+  /** QA-harness: RENDER-ONLY whiteboard test (no Claude spend). The
+   * renderer loads a fixture WBDiagram and runs the render layer
+   * against it, mounting the result in the live scene + saving a PNG.
+   * Per CLAUDE.md §0 isolation principle. */
+  onQaTriggerWhiteboardRenderOnly: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerWhiteboardRenderOnly', listener);
+    return () =>
+      ipcRenderer.removeListener('qa:triggerWhiteboardRenderOnly', listener);
+  },
+  /** QA-harness: drill into the first drillable L1 node of the
+   * currently mounted whiteboard. Wired for `scripts/fathom-test.sh
+   * whiteboard-drill` so automated runs can capture L2 frames without
+   * a coordinate-based AppleScript click. */
+  onQaTriggerWhiteboardDrillFirst: (handler: () => void): (() => void) => {
+    const listener = () => handler();
+    ipcRenderer.on('qa:triggerWhiteboardDrillFirst', listener);
+    return () =>
+      ipcRenderer.removeListener('qa:triggerWhiteboardDrillFirst', listener);
+  },
 
   // ---- settings (tiny JSON under userData) ----
   getSettings: (): Promise<{
@@ -343,6 +373,13 @@ const api = {
     downloadUrl?: string;
   }> => ipcRenderer.invoke('update:check'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  /** Flip the calling window into native macOS fullscreen. Idempotent.
+   * Renderer calls this when a PDF lands in a window that started
+   * windowed (welcome screen → drag-drop / file-picker / open-recent
+   * transition). Windows born with a PDF are already fullscreen via
+   * the BrowserWindow constructor. */
+  enterFullScreen: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('window:enterFullScreen'),
   getUpdateStatus: (): Promise<{
     state: 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
     version?: string;
@@ -564,6 +601,42 @@ const api = {
     scene: string,
   ): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('whiteboard:saveScene', { paperHash, scene }),
+
+  /** Renderer → main: write the Pass 2.5 render PNG to disk inside the
+   * paper's sidecar so the critique prompt can `Read` it. Iteration
+   * tag keeps successive iteration renders separate; the path is
+   * returned so the renderer can pass it to whiteboardCritique. */
+  whiteboardWriteRenderPng: (
+    paperHash: string,
+    iteration: number,
+    pngBase64: string,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('whiteboard:writeRenderPng', { paperHash, iteration, pngBase64 }),
+
+  /** Renderer → main: run Pass 2.5 visual critique against a PNG that's
+   * already on disk. Synchronous from the renderer's POV — returns the
+   * verdict ({ok: true} | {fix: 'patch'|'replace', ...}) once Opus
+   * lands. Renderer applies the fix locally and re-renders + re-calls
+   * for up to 3 iterations. */
+  whiteboardCritique: (
+    paperHash: string,
+    diagramJson: string,
+    pngPath: string,
+    iteration: number,
+  ): Promise<{
+    ok: boolean;
+    verdict: unknown | null;
+    raw: string;
+    costUsd: number;
+    latencyMs: number;
+    error?: string;
+  }> =>
+    ipcRenderer.invoke('whiteboard:critique', {
+      paperHash,
+      diagramJson,
+      pngPath,
+      iteration,
+    }),
 
   whiteboardGenerate: (
     req: { paperHash: string; pdfPath: string; purposeAnchor?: string },

@@ -570,7 +570,50 @@ export const Whiteboards = {
     verificationRate?: number | null;
     error?: string | null;
   }): void {
-    getDb()
+    // INSERT-side validation rejects status=NULL (the column is NOT
+    // NULL with default 'idle'), and ON CONFLICT runs AFTER the row
+    // is validated. So upserts that omit `status` (cost-only bumps
+    // from whiteboard:expand and whiteboard:critique) used to throw
+    // `NOT NULL constraint failed: whiteboards.status` and silently
+    // drop the cost rollup — real bug observed in the 2026-04-26 PM
+    // close-the-loop run.
+    //
+    // Fix: when the caller didn't pass a status, branch into a
+    // simpler UPDATE-only path that doesn't touch status. New rows
+    // (no caller has ever written one) implicitly default to 'idle'
+    // via the column DEFAULT, but cost-only upserts always run AFTER
+    // a status was set, so the no-row-yet case is impossible by
+    // construction (Pass 1 always writes status='pass1' before any
+    // expand/critique fires).
+    const db = getDb();
+    if (args.status === undefined) {
+      db
+        .prepare(
+          `INSERT INTO whiteboards(paper_hash, status, created_at)
+             VALUES (@paper_hash, 'idle', @created_at)
+             ON CONFLICT(paper_hash) DO UPDATE SET
+               generated_at      = COALESCE(@generated_at, whiteboards.generated_at),
+               pass1_cost        = COALESCE(@pass1_cost, whiteboards.pass1_cost),
+               pass2_cost        = COALESCE(@pass2_cost, whiteboards.pass2_cost),
+               total_cost        = COALESCE(@total_cost, whiteboards.total_cost),
+               pass1_latency_ms  = COALESCE(@pass1_latency_ms, whiteboards.pass1_latency_ms),
+               verification_rate = COALESCE(@verification_rate, whiteboards.verification_rate),
+               error             = @error`,
+        )
+        .run({
+          paper_hash: args.paperHash,
+          generated_at: args.generatedAt ?? null,
+          pass1_cost: args.pass1Cost ?? null,
+          pass2_cost: args.pass2Cost ?? null,
+          total_cost: args.totalCost ?? null,
+          pass1_latency_ms: args.pass1LatencyMs ?? null,
+          verification_rate: args.verificationRate ?? null,
+          error: args.error ?? null,
+          created_at: Date.now(),
+        });
+      return;
+    }
+    db
       .prepare(
         `INSERT INTO whiteboards(
            paper_hash, status, generated_at, pass1_cost, pass2_cost, total_cost,
@@ -591,7 +634,7 @@ export const Whiteboards = {
       )
       .run({
         paper_hash: args.paperHash,
-        status: args.status ?? null,
+        status: args.status,
         generated_at: args.generatedAt ?? null,
         pass1_cost: args.pass1Cost ?? null,
         pass2_cost: args.pass2Cost ?? null,

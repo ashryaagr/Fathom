@@ -168,6 +168,14 @@ export default function App() {
         initialOffset: pdf.lastOffsetInPage ?? null,
         initialZoom: pdf.lastZoom ?? null,
       });
+      // Per user 2026-04-25: a window with a PDF should be fullscreen,
+      // but a windowed welcome screen should NOT be (otherwise drag-
+      // drop / file-picker affordances are stranded in another Space).
+      // The main process opens windows-with-a-PDF fullscreen at create
+      // time; this IPC handles the welcome → PDF in-place transition
+      // (same window, new content). Idempotent — no-op if the window
+      // is already fullscreen.
+      void window.lens.enterFullScreen?.();
 
       // Skip restoring cached regions from disk — the extraction algorithm evolves (e.g.
       // column-awareness) and stale cached regions would silently override the new ones.
@@ -654,10 +662,47 @@ export default function App() {
       useLensStore.getState().forward();
       window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
     });
+    // Switch to the Whiteboard tab and trigger generation for the
+    // currently-open paper. Wired for `scripts/fathom-test.sh
+    // whiteboard-generate`. We dispatch a CustomEvent rather than
+    // calling whiteboardGenerate directly so the WhiteboardTab's
+    // existing consent-bypass path handles it (same effect as the
+    // user pressing the "Generate whiteboard" button).
+    const unsubWb = window.lens.onQaTriggerWhiteboardGenerate(() => {
+      setActiveTab('whiteboard');
+      // Defer the auto-accept by one tick so the tab has time to
+      // mount + hydrate before we ask it to start the pipeline.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardGenerate'));
+      }, 50);
+    });
+    // Render-only QA: skip Pass 1 + Pass 2 entirely, mount a fixture
+    // WBDiagram so we can iterate on the render layer without Claude
+    // spend. Triggered by ⌘⇧F3 → `scripts/fathom-test.sh
+    // whiteboard-render-only` (added below). Per CLAUDE.md §0 the
+    // isolation principle.
+    const unsubWbRenderOnly = window.lens.onQaTriggerWhiteboardRenderOnly(() => {
+      setActiveTab('whiteboard');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardRenderOnly'));
+      }, 50);
+    });
+    // QA: drill into the first drillable L1 node. Fires after the
+    // whiteboard is mounted (`whiteboard-generate` or
+    // `whiteboard-render-only` first); WhiteboardTab listens.
+    const unsubWbDrillFirst = window.lens.onQaTriggerWhiteboardDrillFirst(() => {
+      setActiveTab('whiteboard');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardDrillFirst'));
+      }, 50);
+    });
     return () => {
       unsubDive();
       unsubBack();
       unsubForward();
+      unsubWb();
+      unsubWbRenderOnly();
+      unsubWbDrillFirst();
     };
   }, []);
 

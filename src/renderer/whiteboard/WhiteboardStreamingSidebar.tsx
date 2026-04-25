@@ -46,7 +46,7 @@ export default function WhiteboardStreamingSidebar({ paperHash }: Props) {
   const label =
     wb.status === 'pass1'
       ? 'Reading the paper end-to-end · Opus 4.7'
-      : 'Drawing the diagram · Sonnet 4.6';
+      : 'Drawing the diagram · Opus 4.7';
 
   return (
     <aside

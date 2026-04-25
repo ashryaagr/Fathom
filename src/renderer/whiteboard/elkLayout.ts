@@ -22,7 +22,7 @@
 
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode, ELK as ElkInstanceType } from 'elkjs/lib/elk-api';
-import type { WBDiagram, WBLayoutHint } from './dsl';
+import type { WBDiagram, WBLayoutHint, WBNode } from './dsl';
 
 // One ELK instance reused across calls. Lazily constructed on first
 // layout — Electron's main thread keeps the Worker alive between
@@ -37,24 +37,35 @@ function elk(): ElkInstanceType {
   return elkInstance;
 }
 
-/** Approximate node dimensions used during layout. The actual
- * Excalidraw rendered widths/heights match these so the user sees the
- * laid-out positions exactly. Stays in CSS-pixel units (which
- * Excalidraw treats as scene units). v2 sizes are larger than v1
- * because (a) bound text was overflowing 160×70 boxes at 16 px
- * Excalifont — Excalidraw does not auto-shrink, it just clips — and
- * (b) summaries up to 30 words need a third line of headroom. The
- * per-node sizing in `nodeSize()` adds slack for figure-bearing nodes
- * so the embedded PNG sits in a side gutter, not inside the rect. */
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 90;
-const NODE_HEIGHT_WITH_SUMMARY = 130;
+/** Hard floor on node dimensions — even an empty label gets at least
+ * this much space so the diagram has visual rhythm at small node
+ * counts. The actual width grows from here based on measured text. */
+const NODE_MIN_WIDTH = 180;
+const NODE_MIN_HEIGHT = 80;
+/** Hard ceiling — beyond this we wrap onto more lines rather than
+ * keep growing the rectangle. Past 320 px a node starts to feel like
+ * a paragraph rather than a label, breaking the diagram-density
+ * invariant (≤4-fixation read per node, cog reviewer §4). */
+const NODE_MAX_WIDTH = 320;
+/** Per-side internal padding inside the rectangle. Bound text from
+ * Excalidraw wraps inside `rect.width - 2*PAD`, so this MUST match
+ * what Excalidraw actually allows for the bound text element or our
+ * pre-measurement diverges from the renderer's wrap behaviour. */
+const NODE_INNER_PAD_X = 14;
+const NODE_INNER_PAD_Y = 14;
+/** Font sizes. Mirrors what `toExcalidraw.ts` writes to the bound
+ * text element (`fontSize: safeSummary ? 13 : 16`). Keep in sync. */
+const LABEL_FONT_SIZE = 16;
+const SUMMARY_FONT_SIZE = 13;
+const LINE_HEIGHT_RATIO = 1.25;
 /** Extra horizontal slot for an embedded paper figure. The figure
  * itself is ~100 px wide; the spacing keeps it from kissing the next
- * column when ELK lays nodes out left-to-right. */
-const FIGURE_SLOT_WIDTH = 120;
-const SPACING_NODE_NODE = 80;
-const SPACING_LAYER = 100;
+ * column when ELK lays nodes out left-to-right. Exported so
+ * toExcalidraw.ts can split a figure-bearing layout box back into
+ * "rectangle width" + "figure gutter" with the same constant. */
+export const FIGURE_SLOT_WIDTH = 120;
+const SPACING_NODE_NODE = 100;
+const SPACING_LAYER = 120;
 
 export interface LaidOutNode {
   id: string;
@@ -95,15 +106,29 @@ export async function layoutDiagram(d: WBDiagram): Promise<LaidOutDiagram> {
       'elk.direction': direction,
       'elk.spacing.nodeNode': String(SPACING_NODE_NODE),
       'elk.layered.spacing.nodeNodeBetweenLayers': String(SPACING_LAYER),
-      'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+      // Wider edge-to-node spacing so routed orthogonal arrows have
+      // room to bend AROUND nodes instead of grazing or crossing them.
+      // v1 used '24' which left orthogonal segments visually touching
+      // adjacent rectangles when 5 nodes were dense.
+      'elk.layered.spacing.edgeNodeBetweenLayers': '40',
+      'elk.spacing.edgeNode': '32',
+      'elk.spacing.edgeEdge': '20',
       'elk.layered.crossingMinimization.semiInteractive': 'true',
-      // Reasonable arrow routing — straight where possible, orthogonal
-      // when crossings make a diagonal too cluttered.
+      // ORTHOGONAL routing produces axis-aligned bend points that
+      // never cross node geometry (so long as edge-node spacing is
+      // wide enough). The renderer must feed `LaidOutEdge.points`
+      // into the Excalidraw arrow's `points` array — see
+      // toExcalidraw.ts. Without that, Excalidraw re-routes diagonally
+      // and the cross-through bug returns.
       'elk.edgeRouting': 'ORTHOGONAL',
     },
     children: d.nodes.map((n) => {
-      const { w, h } = nodeSize(n.summary, !!n.figure_ref);
-      return { id: n.id, width: w, height: h };
+      const { w, h } = nodeSize(n);
+      // Add the figure gutter to the layout width when a figure is
+      // embedded — keeps figures inside the slot ELK reserves for the
+      // node, not overlapping the next sibling.
+      const totalW = n.figure_ref ? w + FIGURE_SLOT_WIDTH : w;
+      return { id: n.id, width: totalW, height: h };
     }),
     edges: d.edges.map((e, i) => ({
       id: `e${i}`,
@@ -127,8 +152,8 @@ export async function layoutDiagram(d: WBDiagram): Promise<LaidOutDiagram> {
     id: c.id,
     x: c.x ?? 0,
     y: c.y ?? 0,
-    width: c.width ?? NODE_WIDTH,
-    height: c.height ?? NODE_HEIGHT,
+    width: c.width ?? NODE_MIN_WIDTH,
+    height: c.height ?? NODE_MIN_HEIGHT,
   }));
 
   const edges: LaidOutEdge[] = [];
@@ -160,8 +185,8 @@ export async function layoutDiagram(d: WBDiagram): Promise<LaidOutDiagram> {
     maxX = Math.max(maxX, n.x + n.width);
     maxY = Math.max(maxY, n.y + n.height);
   }
-  const width = result.width ?? Math.max(maxX, NODE_WIDTH);
-  const height = result.height ?? Math.max(maxY, NODE_HEIGHT);
+  const width = result.width ?? Math.max(maxX, NODE_MIN_WIDTH);
+  const height = result.height ?? Math.max(maxY, NODE_MIN_HEIGHT);
 
   console.log(
     `[Whiteboard Render] ELK layout: ${nodes.length} nodes, ${edges.length} edges, ` +
@@ -175,18 +200,125 @@ function elkDirection(hint: WBLayoutHint | undefined): string {
   return hint === 'tb' ? 'DOWN' : 'RIGHT';
 }
 
-/** Compute the box dimensions for a node based on whether it has a
- * summary line and an embedded paper figure. Exposed so the toExcalidraw
- * layer can size figure-bearing rects identically. */
-export function nodeSize(
-  summary: string | undefined,
-  hasFigure: boolean,
-): { w: number; h: number } {
-  const baseW = summary ? NODE_WIDTH : NODE_WIDTH;
-  const baseH = summary ? NODE_HEIGHT_WITH_SUMMARY : NODE_HEIGHT;
-  // Figure-bearing nodes get extra horizontal slack so the embedded
-  // PNG sits to the right of the rect without overlapping a sibling.
-  return { w: hasFigure ? baseW + FIGURE_SLOT_WIDTH : baseW, h: baseH };
+/** Lazy Canvas 2D context for text measurement. Created off-screen
+ * the first time a node is sized; reused across all subsequent
+ * measurements in the session. Free under the renderer's GC pressure. */
+let measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureContext(): CanvasRenderingContext2D | null {
+  if (measureCtx) return measureCtx;
+  if (typeof document === 'undefined') return null; // SSR / non-DOM
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  measureCtx = ctx;
+  return ctx;
+}
+
+/** Measure the rendered width of `text` at `fontSize` in
+ * Excalifont/Helvetica. Falls back to a chars × 0.55 * fontSize
+ * estimate when the canvas context is unavailable. */
+function measureTextWidth(text: string, fontSize: number, family: string): number {
+  const ctx = getMeasureContext();
+  if (!ctx) return text.length * fontSize * 0.55;
+  ctx.font = `${fontSize}px ${family}, system-ui, sans-serif`;
+  return ctx.measureText(text).width;
+}
+
+/** Word-wrap `text` to fit `maxInnerWidth` (already inside the rect's
+ * padding). Returns the array of wrapped lines. Used by both the
+ * sizer (to decide how tall the rect must be) and indirectly by the
+ * renderer (Excalidraw's bound-text wraps to the same width). */
+function wrapToWidth(text: string, fontSize: number, family: string, maxInnerWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [''];
+  const lines: string[] = [];
+  let current = '';
+  for (const w of words) {
+    const trial = current ? current + ' ' + w : w;
+    const trialW = measureTextWidth(trial, fontSize, family);
+    if (trialW <= maxInnerWidth || current === '') {
+      current = trial;
+    } else {
+      lines.push(current);
+      current = w;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/** Compute the box dimensions for a node sized to GUARANTEE its
+ * `label` + `summary` text fits inside without overflow at the
+ * rendered font size. The renderer in `toExcalidraw.ts` writes a
+ * single bound text element with `fontSize: safeSummary ? 13 : 16`
+ * and a `\n` between label and summary; we reproduce that wrapping
+ * here against a Canvas 2D context so the rectangle dimensions are
+ * known to the LLM/critique loop and to Excalidraw's containerId
+ * binding before render time.
+ *
+ * Returns `{ w, h }` in CSS pixels. Caller is responsible for adding
+ * FIGURE_SLOT_WIDTH separately when a figure is embedded. */
+export function nodeSize(node: Pick<WBNode, 'label' | 'summary' | 'figure_ref'>): { w: number; h: number } {
+  const family = "'Excalifont', 'Caveat', 'Kalam', 'Bradley Hand', cursive";
+  const familyHelv = "'Helvetica', system-ui, sans-serif";
+  const summary = node.summary?.trim() ?? '';
+  const label = node.label?.trim() ?? '';
+  // First, figure out the natural single-line width of the label at
+  // 16 px Excalifont. Lower-bound on rect width.
+  const labelOneLine = measureTextWidth(label, LABEL_FONT_SIZE, family);
+  // Same for summary at 13 px; it can be longer (≤30 words from the
+  // DSL parser) so we cap on NODE_MAX_WIDTH and let it wrap to lines.
+  const summaryNaturalW = summary ? measureTextWidth(summary, SUMMARY_FONT_SIZE, familyHelv) : 0;
+  // Pick the smallest rect that fits the label on one line AND the
+  // summary on at most 3 lines. Iterate widths in 20 px steps from
+  // the label's natural width to NODE_MAX_WIDTH. (Cheap — at most ~10
+  // probe widths, all measureText() calls are sub-millisecond.)
+  let chosenInnerW = Math.min(
+    NODE_MAX_WIDTH - 2 * NODE_INNER_PAD_X,
+    Math.max(labelOneLine, NODE_MIN_WIDTH - 2 * NODE_INNER_PAD_X),
+  );
+  let summaryLines: string[] = [];
+  if (summary) {
+    // Prefer a 2-line summary; widen the rect up to NODE_MAX_WIDTH
+    // until the summary fits in 2 lines, otherwise allow 3.
+    for (let probeW = chosenInnerW; probeW <= NODE_MAX_WIDTH - 2 * NODE_INNER_PAD_X; probeW += 20) {
+      const lines = wrapToWidth(summary, SUMMARY_FONT_SIZE, familyHelv, probeW);
+      if (lines.length <= 2) {
+        chosenInnerW = probeW;
+        summaryLines = lines;
+        break;
+      }
+      if (probeW + 20 > NODE_MAX_WIDTH - 2 * NODE_INNER_PAD_X) {
+        chosenInnerW = probeW;
+        summaryLines = lines.slice(0, 3);
+        if (lines.length > 3) {
+          // Truncate the last line with an ellipsis if 3 lines isn't
+          // enough — sized rect would otherwise have overflowing text.
+          summaryLines[2] = summaryLines[2].replace(/\s+\S*$/, '') + '…';
+        }
+        break;
+      }
+    }
+    // Sanity: never tighter than the longest line of the chosen wrap.
+    for (const ln of summaryLines) {
+      const lnW = measureTextWidth(ln, SUMMARY_FONT_SIZE, familyHelv);
+      if (lnW > chosenInnerW) chosenInnerW = Math.min(lnW, NODE_MAX_WIDTH - 2 * NODE_INNER_PAD_X);
+    }
+  }
+  void summaryNaturalW; // captured above; the loop computes the exact wrap
+
+  const w = Math.min(NODE_MAX_WIDTH, chosenInnerW + 2 * NODE_INNER_PAD_X);
+
+  // Height: label takes 1 line at LABEL_FONT_SIZE; summary takes
+  // summaryLines.length at SUMMARY_FONT_SIZE; both with line-height.
+  const labelLineH = LABEL_FONT_SIZE * LINE_HEIGHT_RATIO;
+  const summaryLineH = SUMMARY_FONT_SIZE * LINE_HEIGHT_RATIO;
+  const textH =
+    labelLineH +
+    (summary ? 6 /* gap between label and summary */ + summaryLines.length * summaryLineH : 0);
+  const h = Math.max(NODE_MIN_HEIGHT, Math.ceil(textH + 2 * NODE_INNER_PAD_Y));
+
+  return { w, h };
 }
 
 /** Deterministic horizontal layout used when ELK throws. Stacks nodes
@@ -195,13 +327,16 @@ export function nodeSize(
 function fallbackLineLayout(d: WBDiagram): LaidOutDiagram {
   const nodes: LaidOutNode[] = [];
   let x = 0;
+  let maxH = NODE_MIN_HEIGHT;
   for (const n of d.nodes) {
-    const { w, h } = nodeSize(n.summary, !!n.figure_ref);
-    nodes.push({ id: n.id, x, y: 0, width: w, height: h });
-    x += w + SPACING_NODE_NODE;
+    const { w, h } = nodeSize(n);
+    const totalW = n.figure_ref ? w + FIGURE_SLOT_WIDTH : w;
+    nodes.push({ id: n.id, x, y: 0, width: totalW, height: h });
+    x += totalW + SPACING_NODE_NODE;
+    if (h > maxH) maxH = h;
   }
   const width = Math.max(0, x - SPACING_NODE_NODE);
-  const height = NODE_HEIGHT_WITH_SUMMARY;
+  const height = maxH;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const edges: LaidOutEdge[] = d.edges.map((e) => {
     const a = byId.get(e.from);

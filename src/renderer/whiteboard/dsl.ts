@@ -170,11 +170,17 @@ function coerceNode(n: unknown): WBNode | null {
   const drillable = o.drillable === true;
   const citation = coerceCitation(o.citation);
   const figure_ref = coerceFigureRef(o.figure_ref);
-  // Hard length cap on the label — Excalidraw text auto-wrap collapses
-  // visually past ~32 chars at our default font size, and the cog
-  // reviewer veto is at "≤ 24 chars". Truncate-with-ellipsis keeps the
-  // node's bounds predictable for ELK.
-  const safeLabel = label.length > 28 ? label.slice(0, 27) + '…' : label;
+  // Hard length cap on the label. Cog reviewer veto is "≤ 24 chars".
+  // We honour it strictly because the rect's text-aware sizing has a
+  // NODE_MAX_WIDTH ceiling at 320 px outer / 292 px inner — at
+  // 16 px Excalifont (~9-10 px/char), a 24-char label is the largest
+  // that fits on one line inside that ceiling. Allowing 28 chars
+  // (the previous value) caused stress-test labels like "Tokenization
+  // & Positional Encoding" (35 chars truncated to 28) to overflow,
+  // since 28×9.5 = ~266 px exceeds the inner width once Excalifont's
+  // wider-than-system-sans metrics kick in. Caught by the render-only
+  // CLI 2026-04-26.
+  const safeLabel = label.length > 24 ? label.slice(0, 23) + '…' : label;
   return {
     id,
     label: safeLabel,

@@ -1,0 +1,53 @@
+{
+  "level": 1,
+  "title": "ReconViaGen — pose-free 3D reconstruction",
+  "nodes": [
+    {
+      "id": "L1.1",
+      "label": "VGGT Encoder",
+      "kind": "input",
+      "summary": "Pre-trained pose-free MVS transformer, LoRA-tuned on Objaverse; outputs multi-layer features ϕ_vggt from layers 4/11/17/23.",
+      "drillable": false,
+      "citation": { "page": 4, "quote": "we use scaled dot-product attention" }
+    },
+    {
+      "id": "L1.2",
+      "label": "Reconstruction Conditioning",
+      "kind": "process",
+      "summary": "Condition Net (4 cross-attn blocks) distills VGGT features into Global Geometry Condition (GGC) + Per-View Conditions (PVC).",
+      "drillable": true,
+      "citation": { "page": 5, "quote": "condition net cross-attention" }
+    },
+    {
+      "id": "L1.3",
+      "label": "Coarse-to-Fine Generation",
+      "kind": "model",
+      "summary": "TRELLIS SS Flow generates sparse voxels conditioned on GGC; SLAT Flow generates per-voxel latents conditioned on PVC.",
+      "drillable": true,
+      "citation": { "page": 6, "quote": "rectified flow transformer" }
+    },
+    {
+      "id": "L1.4",
+      "label": "Camera Pose Refinement",
+      "kind": "process",
+      "summary": "VGGT estimates poses from 30 auxiliary views; refined via image-matching + PnP/RANSAC against partial-generation renders.",
+      "drillable": false
+    },
+    {
+      "id": "L1.5",
+      "label": "Velocity Compensation",
+      "kind": "output",
+      "summary": "When t<0.5, decode SLAT to mesh, render from refined poses, compute SSIM+LPIPS+DreamSim loss, derive Δv added to next step.",
+      "drillable": true,
+      "citation": { "page": 6, "quote": "rendering aware velocity correction" }
+    }
+  ],
+  "edges": [
+    { "from": "L1.1", "to": "L1.2", "label": "ϕ_vggt" },
+    { "from": "L1.2", "to": "L1.3", "label": "GGC, PVC" },
+    { "from": "L1.1", "to": "L1.4", "label": "poses" },
+    { "from": "L1.4", "to": "L1.5", "label": "refined poses" },
+    { "from": "L1.3", "to": "L1.5", "label": "partial mesh" }
+  ],
+  "layout_hint": "lr"
+}
