@@ -53,6 +53,14 @@ body,
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+  /* Prevents macOS's browser-native "2-finger swipe horizontally = go
+     back/forward in history" gesture from hijacking our own swipe handler.
+     Without this, horizontal swipes near the left/right edges of the window
+     triggered Chromium's history navigation instead of firing wheel events
+     our swipe handler could read, causing the asymmetric "only works on
+     one side of the PDF" behavior. */
+  overscroll-behavior: none;
+  overscroll-behavior-x: none;
 }
 
 button {

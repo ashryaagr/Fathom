@@ -103,6 +103,11 @@ export default function PdfViewer() {
           semanticEver = true;
           semanticAccumDeltaY = 0;
           setArmed(true);
+          // Tell the GestureFeedback overlay semantic mode is active so it
+          // can draw the amber hairline around the viewport.
+          window.dispatchEvent(
+            new CustomEvent('fathom:semanticArmed', { detail: { on: true } }),
+          );
         }
         semanticAccumDeltaY += e.deltaY;
         if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
@@ -127,6 +132,7 @@ export default function PdfViewer() {
         semanticAccumDeltaY = 0;
         lastSemanticDir = null;
         setArmed(false);
+        window.dispatchEvent(new CustomEvent('fathom:semanticArmed', { detail: { on: false } }));
         return;
       }
       // In the PDF view there's no lens to close, so any semantic gesture
@@ -145,6 +151,10 @@ export default function PdfViewer() {
         useDocumentStore.getState().zoom,
         lastCursor,
       );
+      // Brief ring-pulse at the viewport center — visual confirmation that
+      // the pinch committed a zoom (as opposed to being silently dropped).
+      window.dispatchEvent(new CustomEvent('fathom:zoomCommit'));
+      window.dispatchEvent(new CustomEvent('fathom:semanticArmed', { detail: { on: false } }));
       if (useTourStore.getState().step === 'pinch') {
         useTourStore.getState().advance('ask');
       }

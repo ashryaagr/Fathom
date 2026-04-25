@@ -133,9 +133,14 @@ function FocusPane({
     };
 
     const keyupHandler = (e: KeyboardEvent) => {
-      // Esc intentionally does NOT close the lens — closing is a deliberate
-      // action: click the Back/Close button in the top-left, or swipe
-      // right with two fingers to go back through the stack.
+      // Esc intentionally does NOT close the lens — but if the user still
+      // reflexively hits it, fire a brief toast at the top so they learn
+      // what DOES close. The transient hint auto-dismisses after ~1.4s
+      // inside GestureFeedback.
+      if (e.key === 'Escape') {
+        window.dispatchEvent(new CustomEvent('fathom:escHint'));
+        return;
+      }
       if (e.key !== 'Meta') return;
       console.log(
         `[LensGesture ${logId}] Cmd release — semanticEver=${semanticEver} accumΔ=${semanticAccumDeltaY.toFixed(1)} capturedSel=${!!capturedSelection}`,

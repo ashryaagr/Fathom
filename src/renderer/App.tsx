@@ -10,6 +10,7 @@ import FocusView from './lens/FocusView';
 import FirstRunTour from './lens/FirstRunTour';
 import SettingsPanel from './lens/SettingsPanel';
 import CoachHint from './lens/CoachHint';
+import GestureFeedback from './lens/GestureFeedback';
 import { useTourStore } from './lens/tourStore';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
@@ -260,8 +261,14 @@ export default function App() {
     };
   }, [openPdf]);
 
-  // Two-finger horizontal swipe → browser-style back / forward through lens history.
-  // Accumulate deltaX over a short burst, trigger on threshold, reset on quiet period.
+  // Two-finger horizontal swipe → browser-style back / forward through lens
+  // history. Listens in the capture phase on the window so we beat the PDF
+  // scroller and any other child wheel-listener to the event — they were
+  // consuming horizontal wheel ticks as page-scroll and native
+  // back/forward navigation on macOS (Chromium's "swipe at window edge"
+  // feature). The `overscroll-behavior: none` in index.css plus capture-
+  // phase intercept here together lets a swipe anywhere on the window
+  // reach this handler regardless of cursor position.
   useEffect(() => {
     let accum = 0;
     let lastTime = 0;
@@ -283,28 +290,35 @@ export default function App() {
         committed = false;
       }
       lastTime = now;
-      // Only treat as a horizontal swipe if deltaX clearly dominates.
+      // Only horizontal-dominant wheels concern us. Once we've decided it's
+      // a swipe, preventDefault immediately so (a) the PDF scroller
+      // doesn't scroll horizontally, (b) Chromium's window-edge back/forward
+      // doesn't intercept. Both were causing the asymmetric "only works on
+      // one side of the PDF" regression users reported.
       if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.4) return;
+      e.preventDefault();
       accum += e.deltaX;
       if (committed) return;
       const threshold = 120;
       if (accum <= -threshold) {
         // Natural-scroll: fingers swipe RIGHT → deltaX negative → go BACK.
         committed = true;
-        e.preventDefault();
         useLensStore.getState().back();
-        // Interactive tour: the 'swipe' step is the final one.
+        window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
           useTourStore.getState().advance('celebrated');
         }
       } else if (accum >= threshold) {
         committed = true;
-        e.preventDefault();
         useLensStore.getState().forward();
+        window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
       }
     };
-    window.addEventListener('wheel', handler, { passive: false });
-    return () => window.removeEventListener('wheel', handler);
+    // Capture phase — fires before any child's bubble-phase listener. The
+    // PDF scroller's own wheel handler then can't consume the event.
+    window.addEventListener('wheel', handler, { passive: false, capture: true });
+    return () =>
+      window.removeEventListener('wheel', handler, { capture: true } as EventListenerOptions);
   }, []);
 
   return (
@@ -408,6 +422,7 @@ export default function App() {
       />
 
       <CoachHint />
+      <GestureFeedback />
 
       <SettingsPanel
         visible={showSettings}
