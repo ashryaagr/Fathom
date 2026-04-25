@@ -254,11 +254,13 @@ const api = {
     extraDirectories?: string[];
     customInstructions?: string;
     focusLightBetaEnabled?: boolean;
+    focusLightWpm?: number;
   }> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: {
     extraDirectories?: string[];
     customInstructions?: string;
     focusLightBetaEnabled?: boolean;
+    focusLightWpm?: number;
   }): Promise<void> => ipcRenderer.invoke('settings:update', patch),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('settings:pickDirectory'),
   markTourDone: (): Promise<void> => ipcRenderer.invoke('settings:markTourDone'),

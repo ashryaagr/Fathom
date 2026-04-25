@@ -44,6 +44,7 @@ export default function App() {
   //     pop up the moment they open Fathom.
   const [focusLightBetaEnabled, setFocusLightBetaEnabled] = useState(false);
   const [focusLightActive, setFocusLightActive] = useState(false);
+  const [focusLightWpm, setFocusLightWpm] = useState(300);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setFlash = useCallback((msg: string) => {
@@ -456,7 +457,14 @@ export default function App() {
     const refresh = async () => {
       try {
         const s = await window.lens.getSettings();
-        if (!cancelled) setFocusLightBetaEnabled(!!s.focusLightBetaEnabled);
+        if (cancelled) return;
+        setFocusLightBetaEnabled(!!s.focusLightBetaEnabled);
+        const w = s.focusLightWpm;
+        setFocusLightWpm(
+          typeof w === 'number' && Number.isFinite(w)
+            ? Math.max(80, Math.min(800, Math.round(w)))
+            : 300,
+        );
       } catch {
         /* settings unreadable — leave default */
       }
@@ -843,43 +851,29 @@ export default function App() {
               </svg>
             </HeaderIcon>
           )}
-          {/* Focus Light beta — shows ONLY when the user has enabled
+          {/* Focus pacer beta — shows ONLY when the user has enabled
               the beta in Preferences. Click to toggle the band on/off
-              for the current session. The label text "Focus Light" is
-              the user's exact ask: a clearly-named opt-in reading aid,
-              not a hidden gesture. */}
+              for the current session. Label is just "Focus" (no icon,
+              no full "Focus Light" wording) per the user's ask to keep
+              the top-right uncluttered. */}
           {docState && focusLightBetaEnabled && (
             <button
               onClick={() => setFocusLightActive((on) => !on)}
               title={
                 focusLightActive
-                  ? 'Focus Light is on — click to turn off'
-                  : 'Focus Light is off — click to turn on, then click on a paragraph to anchor it'
+                  ? 'Focus pacer on — click to turn off'
+                  : 'Focus pacer off — click to turn on, then click a word to start the 3-word reading band'
               }
-              aria-label="Toggle Focus Light"
+              aria-label="Toggle Focus pacer"
               aria-pressed={focusLightActive}
               className={
-                'flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium transition select-none ' +
+                'flex h-7 items-center rounded-full px-2.5 text-[12px] font-medium transition select-none ' +
                 (focusLightActive
                   ? 'bg-[#fff3b0] text-[#7a5300] shadow-[inset_0_0_0_1px_rgba(201,131,42,0.4)]'
                   : 'text-black/60 hover:bg-black/5')
               }
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="8" cy="8" r="2.5" fill={focusLightActive ? '#c9832a' : 'none'} />
-                <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.4 3.6l-1.4 1.4M5 11l-1.4 1.4M12.4 12.4 11 11M5 5 3.6 3.6" />
-              </svg>
-              Focus Light
+              Focus
             </button>
           )}
           <HeaderIcon
@@ -931,6 +925,7 @@ export default function App() {
           enabled={focusLightActive}
           paperHash={docState.contentHash}
           zoom={docZoom}
+          wpm={focusLightWpm}
         />
       )}
 

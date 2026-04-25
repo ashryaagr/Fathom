@@ -50,6 +50,10 @@ interface FathomSettings {
    * button that lets the user spotlight the column they're reading.
    * Off by default — must be explicitly enabled in Preferences. */
   focusLightBetaEnabled?: boolean;
+  /** Words-per-minute the Focus Light advances at. Default 300
+   * (average adult reading speed). Range clamped to [80, 800] in
+   * the renderer to keep the slider usable. */
+  focusLightWpm?: number;
 }
 
 function settingsPath(): string {
@@ -623,6 +627,11 @@ ipcMain.handle('settings:update', async (
       typeof patch.focusLightBetaEnabled === 'boolean'
         ? patch.focusLightBetaEnabled
         : undefined;
+  }
+  if ('focusLightWpm' in patch) {
+    const n = patch.focusLightWpm;
+    allowed.focusLightWpm =
+      typeof n === 'number' && Number.isFinite(n) ? Math.max(80, Math.min(800, Math.round(n))) : undefined;
   }
   writeSettings(allowed);
 });

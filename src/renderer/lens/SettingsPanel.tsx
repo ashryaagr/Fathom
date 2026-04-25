@@ -20,7 +20,10 @@ export interface FathomSettings {
   extraDirectories?: string[];
   customInstructions?: string;
   focusLightBetaEnabled?: boolean;
+  focusLightWpm?: number;
 }
+
+const DEFAULT_FOCUS_WPM = 300;
 
 export default function SettingsPanel({
   visible,
@@ -33,6 +36,7 @@ export default function SettingsPanel({
   const [newDir, setNewDir] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
   const [focusLightBeta, setFocusLightBeta] = useState(false);
+  const [focusLightWpm, setFocusLightWpm] = useState<number>(DEFAULT_FOCUS_WPM);
   const [saving, setSaving] = useState(false);
 
   // Load current settings when the panel opens.
@@ -46,6 +50,11 @@ export default function SettingsPanel({
         setDirs(s.extraDirectories ?? []);
         setCustomInstructions(s.customInstructions ?? '');
         setFocusLightBeta(!!s.focusLightBetaEnabled);
+        setFocusLightWpm(
+          typeof s.focusLightWpm === 'number' && Number.isFinite(s.focusLightWpm)
+            ? Math.max(80, Math.min(800, s.focusLightWpm))
+            : DEFAULT_FOCUS_WPM,
+        );
       } catch {
         // settings unreadable — start with defaults; saves will recreate the file
       }
@@ -88,6 +97,7 @@ export default function SettingsPanel({
         extraDirectories: dirs,
         customInstructions: customInstructions.trim() || undefined,
         focusLightBetaEnabled: focusLightBeta,
+        focusLightWpm,
       });
       // Notify the rest of the app — the header listens for this so the
       // Focus Light icon appears/disappears without needing a reload.
@@ -233,15 +243,51 @@ export default function SettingsPanel({
                       Focus Light
                     </span>
                     <span className="mt-0.5 block text-[12px] leading-relaxed text-black/55">
-                      A yellow highlighter band that follows your cursor across one
-                      column of text — a digital reading ruler. Click on a paragraph to
-                      anchor it; the band tracks your cursor's vertical position within
-                      that column. Pinch and two-finger gestures don't move it. Click
-                      the "Focus Light" button in the header to turn the band on/off
-                      while you read.
+                      A moving 3-word highlighter that paces your reading. Click any
+                      word to start; the band auto-advances at the speed below until
+                      it reaches the end of the paragraph or column. Click again to
+                      anchor it elsewhere. Pinch and two-finger gestures don't
+                      interrupt it. Toggle on/off from the "Focus Light" button in
+                      the header.
                     </span>
                   </span>
                 </label>
+                {/* WPM slider — only meaningful when the beta is on, but
+                    we keep it visible at all times so the user can pre-set
+                    their preferred speed before flipping the toggle. The
+                    range 80–800 covers casual reading (~150) through
+                    speed reading (~600+). 300 is the well-cited average
+                    adult reading speed. */}
+                <div
+                  className={
+                    'mt-3 rounded-md border border-black/10 bg-white/70 px-3 py-3 transition-opacity ' +
+                    (focusLightBeta ? '' : 'opacity-50')
+                  }
+                >
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[12px] font-medium text-[#2a2420]">
+                      Focus Light speed
+                    </span>
+                    <span className="font-mono text-[12px] text-black/65">
+                      {focusLightWpm} wpm
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={80}
+                    max={800}
+                    step={10}
+                    value={focusLightWpm}
+                    onChange={(e) => setFocusLightWpm(Number(e.target.value))}
+                    disabled={!focusLightBeta}
+                    className="w-full cursor-pointer accent-[#c9832a] disabled:cursor-not-allowed"
+                  />
+                  <div className="mt-1 flex justify-between text-[10px] text-black/45 uppercase tracking-wide">
+                    <span>slow · 80</span>
+                    <span>average · 300</span>
+                    <span>fast · 800</span>
+                  </div>
+                </div>
               </section>
             </div>
 
