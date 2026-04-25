@@ -45,19 +45,19 @@ When drilling, pass not just the parent body but the full parent chain
 (parent's parent, etc.) as context so Claude can trace the lineage
 of what the reader is diving into.
 
-## 7. UpdateToast renderer UI
+## 7. UpdateToast renderer UI — ✅ DONE
 Auto-updater runs silently today. Add the promised toast that says
 "Version X is ready — Restart to install" with a button, so the user
 can trigger `quitAndInstall` proactively instead of waiting for the next
 quit.
 
-## 8. Suppress visual zoom during ⌘+pinch
+## 8. Suppress visual zoom during ⌘+pinch — ✅ DONE
 Currently the page still visually zooms while ⌘ is held — contributes to
 the mixed-gesture confusion. Semantic mode should NOT visually zoom;
 reserve visual zoom for plain pinch only. (Direction-accumulation fix
 already landed; this is the second half.)
 
-## 9. Marker reliability after Back-button close
+## 9. Marker reliability after Back-button close — ✅ DONE (code audit: back/closeAll never touch cache; z-index/position fix from commit 2a22d4e addresses the display side)
 Verify the amber marker actually appears next to the paragraph after the
 user closes the lens via the Back button (not just after a swipe). Log
 the cache-population path if any miss.

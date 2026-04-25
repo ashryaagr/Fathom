@@ -111,6 +111,12 @@ export default function PdfViewer() {
         }
         semanticAccumDeltaY += e.deltaY;
         if (e.deltaY !== 0) lastSemanticDir = e.deltaY < 0 ? 'in' : 'out';
+        // In semantic mode we deliberately DO NOT visually zoom. The pinch
+        // motion is a commit signal, not a resize — letting the page scale
+        // during ⌘+pinch made the target paragraph slide out from under the
+        // cursor, which contributed to the unreliable-feel. The armed ring
+        // around the viewport is our feedback instead.
+        return;
       }
 
       applyAnchoredZoom(

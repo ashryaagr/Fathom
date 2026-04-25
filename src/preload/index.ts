@@ -121,13 +121,34 @@ const api = {
     return () => ipcRenderer.removeListener('settings:show', listener);
   },
 
-  // ---- auto-updater (manual check from the menu) ----
+  // ---- auto-updater ----
   checkForUpdates: (): Promise<{
     state: 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
     version?: string;
     message?: string;
     downloadUrl?: string;
   }> => ipcRenderer.invoke('update:check'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  getUpdateStatus: (): Promise<{
+    state: 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
+    version?: string;
+    message?: string;
+    downloadUrl?: string;
+  }> => ipcRenderer.invoke('update:status'),
+  onUpdateStatus: (
+    handler: (status: {
+      state: 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
+      version?: string;
+      message?: string;
+      downloadUrl?: string;
+      percent?: number;
+    }) => void,
+  ): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, status: Parameters<typeof handler>[0]) =>
+      handler(status);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
 
   explain: (req: ExplainRequest, cb: ExplainCallbacks): Promise<ExplainHandle> =>
     (async () => {

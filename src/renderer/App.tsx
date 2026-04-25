@@ -11,6 +11,7 @@ import FirstRunTour from './lens/FirstRunTour';
 import SettingsPanel from './lens/SettingsPanel';
 import CoachHint from './lens/CoachHint';
 import GestureFeedback from './lens/GestureFeedback';
+import UpdateToast from './lens/UpdateToast';
 import { useTourStore } from './lens/tourStore';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
@@ -423,6 +424,7 @@ export default function App() {
 
       <CoachHint />
       <GestureFeedback />
+      <UpdateToast />
 
       <SettingsPanel
         visible={showSettings}
