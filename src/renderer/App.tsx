@@ -462,8 +462,8 @@ export default function App() {
         const w = s.focusLightWpm;
         setFocusLightWpm(
           typeof w === 'number' && Number.isFinite(w)
-            ? Math.max(80, Math.min(800, Math.round(w)))
-            : 300,
+            ? Math.max(10, Math.min(150, Math.round(w)))
+            : 80,
         );
       } catch {
         /* settings unreadable — leave default */
@@ -861,8 +861,8 @@ export default function App() {
               onClick={() => setFocusLightActive((on) => !on)}
               title={
                 focusLightActive
-                  ? 'Focus pacer on — click to turn off'
-                  : 'Focus pacer off — click to turn on, then click a word to start the 3-word reading band'
+                  ? 'Focus pacer on — moves while one finger is on the trackpad; pauses when you lift it'
+                  : 'Focus pacer off — click to turn on, then click a word to start. Move one finger on the trackpad to advance.'
               }
               aria-label="Toggle Focus pacer"
               aria-pressed={focusLightActive}

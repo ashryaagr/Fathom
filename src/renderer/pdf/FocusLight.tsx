@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRegionsStore } from '../state/regions';
 import type { Region } from './extractRegions';
 
@@ -47,22 +48,39 @@ export default function FocusLight({
   const byPage = useRegionsStore((s) => s.byPage);
 
   // Anchor: the active reading session. Holds the resolved word list
-  // for the column the user clicked, plus the index into that list of
-  // the leading word in the 3-word window.
+  // for the column the user clicked, plus the index of the MIDDLE word
+  // in the 3-word window (the bright "pointer"). The window spans
+  // [middleIndex-1, middleIndex, middleIndex+1] — the middle is what
+  // the user is reading right now, the sides are the just-read tail
+  // and the about-to-read lead-in.
   const [anchor, setAnchor] = useState<{
     page: number;
     region: Region;
     spans: HTMLElement[];
-    wordIndex: number;
+    middleIndex: number;
   } | null>(null);
 
   // Force a re-render every animation tick so getBoundingClientRect
   // sees the current scroll position. Cheap — only when active.
   const [, setTick] = useState(0);
 
-  // Skip mouse-tracked re-anchoring during/just-after a wheel event
-  // (pinch-zoom or scroll). Without this, scrolling looks like a
-  // mouse "click" sometimes due to event ordering on macOS trackpads.
+  // Pause state — explicit, controlled by SPACEBAR. Earlier versions
+  // tried to detect "is one finger resting on the trackpad" via the
+  // mousemove timestamp, on the theory that mousemove fires when the
+  // user's reading finger moves. That heuristic broke down because
+  // macOS doesn't surface "finger touching trackpad without moving"
+  // to JS at all — when the user rests their finger to think, NO
+  // event fires, so the pacer would freeze even though the finger
+  // was right there. The result was the inconsistent "sometimes
+  // doesn't move" / "sometimes runs away" behaviour the user
+  // reported. Dropped the heuristic entirely; spacebar is the
+  // explicit pause/resume now.
+  const [paused, setPaused] = useState(false);
+
+  // Wheel-event lockout still applies. A two-finger pinch or scroll
+  // suspends the pacer for 250 ms so the user can zoom or scroll
+  // without the band marching forward underneath the in-flight
+  // gesture.
   const lastWheelRef = useRef(0);
   const WHEEL_LOCKOUT_MS = 250;
 
@@ -194,48 +212,85 @@ export default function FocusLight({
         setAnchor(null);
         return;
       }
-      const wordIndex = pickClickedSpanIndex(spans, ev.clientX, ev.clientY);
-      setAnchor({ page: hit.page, region: hit.region, spans, wordIndex });
+      const middleIndex = pickClickedSpanIndex(spans, ev.clientX, ev.clientY);
+      setAnchor({ page: hit.page, region: hit.region, spans, middleIndex });
     };
     window.addEventListener('mousedown', onMouseDown);
     return () => window.removeEventListener('mousedown', onMouseDown);
   }, [enabled, byPage, paperHash, zoom]);
 
-  // Auto-advance: every (60000 / wpm) ms, slide the window forward by
-  // one word until the end of the region.
+  // Spacebar toggles pause/resume. Standard pacer convention. We
+  // only intercept Space when the user isn't typing in an input —
+  // the lens's Ask box, search fields, etc. need Space to mean
+  // "space character", not "pause the pacer."
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setPaused((p) => !p);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [enabled]);
+
+  // Auto-advance interval. Ticks at WPM cadence. Skips ticks when:
+  //   • a wheel event fired within WHEEL_LOCKOUT_MS (mid pinch /
+  //     scroll — the pacer would jump under the user's gesture)
+  //   • the user has live text selected (working WITH the
+  //     selection — copying, dragging into the lens — pacing
+  //     forward would yank focus from what they're holding)
+  //   • paused (spacebar)
+  // Notably we do NOT gate on "is the user's finger on the trackpad"
+  // because macOS doesn't surface finger-resting-without-movement
+  // events at all — the user reported (and verified) that after
+  // 5-10 s of a still finger the OS stops emitting any signal even
+  // though the finger is still touching. That's an upstream limit;
+  // best the renderer can do is let the pacer run continuously and
+  // give the user an explicit pause control (spacebar).
   useEffect(() => {
     if (!enabled || !anchor) return;
-    const intervalMs = Math.max(40, Math.round(60000 / Math.max(40, wpm)));
+    if (paused) return;
+    const intervalMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
     const id = window.setInterval(() => {
+      if (Date.now() - lastWheelRef.current < WHEEL_LOCKOUT_MS) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
       setAnchor((current) => {
         if (!current) return current;
-        // Stop one word before the end so the trailing slot doesn't
-        // empty mid-pace; the user can re-click to continue into a
-        // new region.
-        if (current.wordIndex >= current.spans.length - 3) return current;
-        return { ...current, wordIndex: current.wordIndex + 1 };
+        if (current.middleIndex >= current.spans.length - 1) return current;
+        return { ...current, middleIndex: current.middleIndex + 1 };
       });
     }, intervalMs);
     return () => window.clearInterval(id);
-  }, [enabled, anchor, wpm]);
+  }, [enabled, anchor, wpm, paused]);
 
-  // While anchored, force re-renders so the highlight rects track
-  // scroll. rAF-throttled to keep cost negligible.
-  useEffect(() => {
-    if (!enabled || !anchor) return;
-    let raf = 0;
-    let cancelled = false;
-    const step = () => {
-      if (cancelled) return;
-      setTick((t) => (t + 1) % 1000);
-      raf = window.requestAnimationFrame(step);
-    };
-    raf = window.requestAnimationFrame(step);
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(raf);
-    };
-  }, [enabled, anchor]);
+  // No rAF re-render loop. v1 of FocusLight ran a requestAnimationFrame
+  // loop because the bands were `position: fixed` and their screen
+  // coordinates had to be recomputed every frame to stay glued to the
+  // text underneath as the user scrolled. The user reported
+  // "perceptible lag — band stays where it was when I scroll." That
+  // was the rAF loop catching up frame-by-frame to the scroll.
+  //
+  // Fix is structural, not throttling: we now `createPortal` the
+  // bands INTO the page's `<div data-page="N">` element, with
+  // `position: absolute` relative to that div. The page scrolls; the
+  // bands inside the page scroll with it natively, no JS bookkeeping.
+  // Re-renders only happen when the pacer state actually changes
+  // (anchor / middleIndex / paused / wpm) — which is the only time
+  // band geometry needs recalculation anyway.
+  void setTick; // reference kept so the existing import survives;
+                // can drop the state declaration below if no other
+                // code path needs it.
 
   // Wheel events suppress mouse-tracked anchoring briefly so two-finger
   // pinches/scrolls aren't mistaken for clicks (event ordering on
@@ -251,76 +306,78 @@ export default function FocusLight({
 
   if (!enabled || !anchor) return null;
 
-  // Compute the per-line rectangles for the 3-word window. If the
-  // window straddles a line break, we render multiple bands so the
-  // highlight stays visually attached to text.
-  const visibleSpans = anchor.spans.slice(anchor.wordIndex, anchor.wordIndex + 3);
-  if (visibleSpans.length === 0) return null;
+  // Look up the page element to portal into. If the page has been
+  // unmounted (rare — virtualization keeps slots in the DOM, but
+  // belt-and-suspenders), bail out cleanly.
+  const pageEl = document.querySelector<HTMLElement>(`[data-page="${anchor.page}"]`);
+  if (!pageEl) return null;
+  const pageRect = pageEl.getBoundingClientRect();
 
-  const lineTolPx = 6;
-  const bands: Array<{ left: number; top: number; width: number; height: number }> = [];
-  let current: { left: number; right: number; top: number; bottom: number } | null = null;
-  for (const span of visibleSpans) {
-    const r = span.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) continue;
-    if (
-      current &&
-      Math.abs(r.top - current.top) < lineTolPx &&
-      Math.abs(r.bottom - current.bottom) < lineTolPx
-    ) {
-      // Same line — extend horizontally.
-      current.left = Math.min(current.left, r.left);
-      current.right = Math.max(current.right, r.right);
-    } else {
-      if (current) {
-        bands.push({
-          left: current.left,
-          top: current.top,
-          width: current.right - current.left,
-          height: current.bottom - current.top,
-        });
-      }
-      current = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-    }
-  }
-  if (current) {
-    bands.push({
-      left: current.left,
-      top: current.top,
-      width: current.right - current.left,
-      height: current.bottom - current.top,
-    });
-  }
-  if (bands.length === 0) return null;
+  // Three slots: prev / middle / next. All three highlighted; the
+  // middle one slightly brighter and with a subtle ring so it reads
+  // as "the pointer right now" without making the sides invisible
+  // (per the user's clarification — the dark-highlighted words are
+  // 3 at a time, moving as a unit).
+  const m = anchor.middleIndex;
+  type Slot = { span: HTMLElement; role: 'prev' | 'middle' | 'next' };
+  const slots: Slot[] = [];
+  if (m - 1 >= 0) slots.push({ span: anchor.spans[m - 1], role: 'prev' });
+  if (anchor.spans[m]) slots.push({ span: anchor.spans[m], role: 'middle' });
+  if (m + 1 < anchor.spans.length) slots.push({ span: anchor.spans[m + 1], role: 'next' });
+  if (slots.length === 0) return null;
 
-  const padX = 3;
+  const padX = 2;
   const padY = 2;
-  return (
+  // Transition duration matches one tick of the WPM cadence (capped
+  // for the very-slow end so a 10-wpm tick doesn't take 6 s to
+  // animate). This is what makes the band feel "continuously
+  // moving" instead of jumping every word.
+  const tickMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
+  const transitionMs = Math.max(80, Math.min(tickMs - 30, 600));
+
+  return createPortal(
     <>
-      {bands.map((b, i) => (
-        <div
-          key={`${anchor.wordIndex}-${i}`}
-          className="fathom-focus-light-band"
-          aria-hidden="true"
-          style={{
-            position: 'fixed',
-            left: b.left - padX,
-            top: b.top - padY,
-            width: b.width + padX * 2,
-            height: b.height + padY * 2,
-            background: 'rgba(255, 232, 100, 0.65)',
-            mixBlendMode: 'multiply',
-            pointerEvents: 'none',
-            borderRadius: 4,
-            boxShadow: '0 0 10px rgba(255, 220, 60, 0.4)',
-            zIndex: 35,
-            // Smooth slide for in-line moves; cross-line jumps land
-            // immediately because both top and left change at once and
-            // the eye reads them as a discrete next-line jump.
-            transition: 'left 110ms ease-out, top 110ms ease-out, width 110ms ease-out',
-          }}
-        />
-      ))}
-    </>
+      {slots.map((slot) => {
+        const r = slot.span.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return null;
+        // Page-relative coordinates. The portal mounts these inside
+        // the `[data-page]` div, so as the page scrolls the bands
+        // scroll natively with it — no JS scroll-tracking required.
+        const left = r.left - pageRect.left - padX;
+        const top = r.top - pageRect.top - padY;
+        const width = r.width + padX * 2;
+        const height = r.height + padY * 2;
+        const isMiddle = slot.role === 'middle';
+        return (
+          <div
+            // Stable key per role — React reuses the same DOM node
+            // across ticks so the CSS transition animates from
+            // "previous word's rect" to "next word's rect" smoothly.
+            // Earlier (key per middleIndex) caused mount/unmount per
+            // tick and killed the transition.
+            key={slot.role}
+            className={`fathom-focus-light-${slot.role}`}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left,
+              top,
+              width,
+              height,
+              background: isMiddle
+                ? 'rgba(255, 210, 50, 0.85)'
+                : 'rgba(255, 220, 80, 0.55)',
+              mixBlendMode: 'multiply',
+              pointerEvents: 'none',
+              borderRadius: 4,
+              boxShadow: isMiddle ? '0 0 8px 1px rgba(220, 160, 30, 0.35)' : 'none',
+              zIndex: 6,
+              transition: `left ${transitionMs}ms linear, top ${transitionMs}ms linear, width ${transitionMs}ms linear`,
+            }}
+          />
+        );
+      })}
+    </>,
+    pageEl,
   );
 }

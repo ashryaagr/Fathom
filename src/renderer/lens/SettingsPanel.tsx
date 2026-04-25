@@ -23,7 +23,16 @@ export interface FathomSettings {
   focusLightWpm?: number;
 }
 
-const DEFAULT_FOCUS_WPM = 300;
+// Focus pacer defaults — research-paper reading is much slower than
+// novel reading. 80 wpm is the default ("thoughtful study" pace), 150
+// is the cap ("can still parse dense math without losing the
+// argument"), 10 is the floor (deliberately almost-stopped, so the
+// user can crawl through a single equation or definition while
+// nothing else moves). The user noted these will be re-calibrated as
+// they get more data on what speeds actually feel right.
+const DEFAULT_FOCUS_WPM = 80;
+const MIN_FOCUS_WPM = 10;
+const MAX_FOCUS_WPM = 150;
 
 export default function SettingsPanel({
   visible,
@@ -52,7 +61,7 @@ export default function SettingsPanel({
         setFocusLightBeta(!!s.focusLightBetaEnabled);
         setFocusLightWpm(
           typeof s.focusLightWpm === 'number' && Number.isFinite(s.focusLightWpm)
-            ? Math.max(80, Math.min(800, s.focusLightWpm))
+            ? Math.max(MIN_FOCUS_WPM, Math.min(MAX_FOCUS_WPM, s.focusLightWpm))
             : DEFAULT_FOCUS_WPM,
         );
       } catch {
@@ -243,12 +252,14 @@ export default function SettingsPanel({
                       Focus Light
                     </span>
                     <span className="mt-0.5 block text-[12px] leading-relaxed text-black/55">
-                      A moving 3-word highlighter that paces your reading. Click any
-                      word to start; the band auto-advances at the speed below until
-                      it reaches the end of the paragraph or column. Click again to
-                      anchor it elsewhere. Pinch and two-finger gestures don't
-                      interrupt it. Toggle on/off from the "Focus Light" button in
-                      the header.
+                      A 3-word reading pacer. The middle word is bright (your
+                      pointer); the words just before and just after are faintly
+                      highlighted as peripheral context. Click any word to start it
+                      there. Move one finger on the trackpad and the pacer slides
+                      forward at the speed below — lift your finger to pause and
+                      think, two-finger gestures don't interrupt it either. Click
+                      another word to re-anchor. Toggle on/off from the "Focus"
+                      button in the header.
                     </span>
                   </span>
                 </label>
@@ -274,18 +285,18 @@ export default function SettingsPanel({
                   </div>
                   <input
                     type="range"
-                    min={80}
-                    max={800}
-                    step={10}
+                    min={MIN_FOCUS_WPM}
+                    max={MAX_FOCUS_WPM}
+                    step={5}
                     value={focusLightWpm}
                     onChange={(e) => setFocusLightWpm(Number(e.target.value))}
                     disabled={!focusLightBeta}
                     className="w-full cursor-pointer accent-[#c9832a] disabled:cursor-not-allowed"
                   />
                   <div className="mt-1 flex justify-between text-[10px] text-black/45 uppercase tracking-wide">
-                    <span>slow · 80</span>
-                    <span>average · 300</span>
-                    <span>fast · 800</span>
+                    <span>crawl · 10</span>
+                    <span>study · 80</span>
+                    <span>brisk · 150</span>
                   </div>
                 </div>
               </section>

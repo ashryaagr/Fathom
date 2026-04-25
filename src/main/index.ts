@@ -630,8 +630,14 @@ ipcMain.handle('settings:update', async (
   }
   if ('focusLightWpm' in patch) {
     const n = patch.focusLightWpm;
+    // Range tuned for research-paper reading. 10 wpm = the deliberate
+    // crawl for parsing a single equation; 150 wpm is the upper bound
+    // for keeping comprehension on dense prose. Default 80 ("study
+    // pace") is set in the renderer. The user noted these will be
+    // re-calibrated as they accumulate data on what speeds actually
+    // feel useful for different paper types.
     allowed.focusLightWpm =
-      typeof n === 'number' && Number.isFinite(n) ? Math.max(80, Math.min(800, Math.round(n))) : undefined;
+      typeof n === 'number' && Number.isFinite(n) ? Math.max(10, Math.min(150, Math.round(n))) : undefined;
   }
   writeSettings(allowed);
 });

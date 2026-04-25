@@ -265,6 +265,50 @@ Possible fixes:
 
 Schedule: v1.0.12.
 
+## 42. Reopen PDF at last reading position — 🔄 PENDING
+User: *"when we re-open a PDF, we should open it right from the
+point where we were last time, not from the very top."*
+Plan: persist scroll-y per paperHash (already keyed in SQLite).
+On paper open, after pages mount, scroll to saved position.
+Tied to #43 below.
+
+## 43. Recent PDFs on the welcome screen — 🔄 PENDING
+User: *"on the initial screen we can also give the option to the
+users to load the previous PDFs that they were viewing, very much
+similar to how cursor or VS Code gives the options for the previous
+projects they had loaded."*
+Plan: track most-recent N papers (paperHash → path → title), show
+a list in EmptyState below the existing Try-sample / Open-yours
+cards. Click to reopen at the saved scroll position (#42).
+
+## 44. Multi-worker pdf.js rendering — 🔄 PENDING
+User: *"start working on the multi-threadable strategy so that
+the rendering becomes faster."*
+Plan: open the PDF N times with N PDFWorker instances; route
+getPage(n) by `n % N` so up to N pages render in parallel. Memory
+cost = N× page-cache; acceptable for typical research papers.
+Default N=3.
+
+## 45. Replace "Rendering…" text with a small spinner — 🔄 PENDING
+User: *"if the rendering does take time, we can show more than
+the word 'rendering', and let's not show the word 'rendering' at
+all. Perhaps just a small cycle that says that it is loading is
+better."*
+PageView's slot placeholder currently shows the literal string
+"Rendering…". Replace with a small CSS-spun ring or progress
+dot, no text.
+
+## 46. Minor principle: visual > text for transient UI — 🔄 PENDING
+User: *"sometimes just text visual effects are better. And maybe
+that is one of the principles to put one of the minority
+principles, not the major."*
+Add a "Minor principles" section to CLAUDE.md (distinct from
+major design principles). First entry: prefer brief visual
+indicators (spinners, pulses, glyphs) over short status text
+("Rendering…", "Loading", "Working") for transient UI states —
+text adds visual weight and reading load that the eye doesn't
+need for a state that resolves in milliseconds.
+
 ## 41. Focus Light + research-backed reading aids — ✅ DONE (Focus Light, opt-in beta) / 🔄 the rest tracked here
 
 User asked for the Focus Light feature *and* a wider brainstorm
