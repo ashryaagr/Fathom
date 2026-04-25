@@ -70,3 +70,39 @@ button {
 ::selection {
   background: rgba(176, 107, 28, 0.18);
 }
+
+/* Lens response font strategy — todo #39.
+ *
+ * The lens used to render the entire answer in handwritten Excalifont,
+ * which the user reported as fatiguing on long answers ("too much of
+ * handwritten font can be unreadable"). New strategy:
+ *
+ *   • Default body type is sans (system stack via --font-sans).
+ *   • The FIRST paragraph (the overview / "person telling you the
+ *     answer") is handwritten.
+ *   • A leading heading, if Claude opens with one, is also handwritten
+ *     so the voiced opener feels coherent.
+ *   • Blockquotes render in handwritten — Claude can use them as a
+ *     closing-voice aside without us inventing a new container.
+ *   • Lists, tables, code, math — plain sans, the most scannable
+ *     option for technical detail.
+ *   • Inline-SVG diagrams (rendered from `language-svg` code blocks)
+ *     keep their own typography and are unaffected by these rules.
+ *
+ * The selector uses :first-of-type + :first-child so it only fires for
+ * the very first content block in a turn body — not the first <p>
+ * inside a list, not the first <p> inside a blockquote.
+ */
+.lens-prose {
+  font-family: var(--font-sans);
+}
+.lens-prose > p:first-child,
+.lens-prose > p:first-of-type:first-child,
+.lens-prose > h1:first-child,
+.lens-prose > h2:first-child,
+.lens-prose > h3:first-child,
+.lens-prose > blockquote {
+  font-family: var(--font-handwritten);
+  letter-spacing: 0.005em;
+  line-height: 1.55;
+}

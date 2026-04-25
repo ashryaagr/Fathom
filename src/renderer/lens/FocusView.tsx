@@ -510,10 +510,16 @@ function TurnBlock({ turn, index, focused }: { turn: Turn; index: number; focuse
       {turn.error ? (
         <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{turn.error}</div>
       ) : (
-        <div
-          className="cursor-text text-[14px] leading-[1.65] text-black/85 select-text"
-          style={{ fontFamily: 'var(--font-handwritten)' }}
-        >
+        // `lens-prose` class drives the font strategy: the FIRST
+        // paragraph (and a leading heading if present) renders in
+        // handwritten Excalifont — that's the overview voice.
+        // Subsequent paragraphs, lists, tables, and code blocks
+        // render in sans for scan-readability. Blockquotes are also
+        // handwritten so Claude can use them as a closing-thought
+        // container. Rules live in src/renderer/index.css.
+        // CLAUDE.md / todo #39 — replaces the blanket
+        // `fontFamily: var(--font-handwritten)` that v1.0.x had.
+        <div className="lens-prose cursor-text text-[14px] leading-[1.65] text-black/85 select-text">
           {turn.body ? (
             <MarkdownBody body={turn.body} streaming={turn.streaming} focused={focused} turnIndex={index} />
           ) : turn.streaming ? (

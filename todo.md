@@ -426,6 +426,57 @@ InstructionInput's input), `fathom:askCurrentViewport` otherwise
 (PdfViewer listens and dives into the viewport). Highlight and
 Preferences already worked at every depth after v1.0.15.
 
+## 38. Multi-PDF support (multiple windows) — 🔄 PENDING
+User instruction: *"Currently, at a time, I can only open one pdf
+in Fathom and want to be able to open multiple."*
+
+The single `let mainWindow` global has 41 reference sites in
+`src/main/index.ts`. Plan:
+- Replace with a window registry helper (`getActiveWindow`,
+  `safeSendToWindow`, `safeBroadcast`, `createWindow(initialPath?)`).
+- Open With from Finder spawns a NEW window for each file (no
+  longer replaces the open document).
+- Add `Cmd+N` for "New Window" via the app menu.
+- Updater + globalShortcut handlers route to the focused window
+  (broadcast for updater news; focused window for QA shortcuts).
+- The existing per-window Zustand stores naturally isolate
+  document/lens/highlights state because each BrowserWindow has
+  its own renderer process.
+
+Defer (for later): tabs inside a window (browser-style), window
+menu listing all open papers.
+
+## 39. Font strategy in lens responses — ✅ DONE in this commit
+User instruction: *"change our font strategy when we are
+responding to a question, instead of using all handwritten font.
+Only for an overview of the answer, we use the handwritten font.
+[…] for the first paragraph that summarizes the answer, or
+perhaps towards the end, we have a handwritten component so that
+it is basically like a person telling the answer. The rest is
+more context elaborated upon […] We can have regular font […]
+just not handwritten, because too much of handwritten font can
+be unreadable."*
+
+Implementation:
+- Removed the blanket `fontFamily: var(--font-handwritten)` from
+  the lens body wrapper in `FocusView.tsx`.
+- Added a `lens-prose` class to MarkdownBody's container.
+- New CSS rules in `index.css` target the FIRST direct paragraph
+  (and any leading h1/h2/h3) in handwritten Excalifont — that's
+  the overview voice. Subsequent paragraphs, lists, tables, code
+  blocks render in the system sans stack for scan-readability.
+- Blockquotes also render in handwritten — Claude can use
+  blockquotes as a closing-thought container if it wants to give
+  the answer a personal-voice ending.
+- Diagrams (inline SVG via `language-svg` code blocks) remain
+  unchanged.
+
+Why first-of-type only: the user's heuristic — "first paragraph
+that summarizes the answer" — is a pure structural rule; we don't
+need Claude to mark anything specially. Rendering the first
+paragraph in handwritten gives every answer a consistent voiced
+opener regardless of how Claude structured the rest.
+
 ## 37. Two-finger swipe back/forward — ⛔ DISABLED in v1.0.18 (beta)
 User pulled the gesture into beta pending UX refinement: *"these
 gestures need more work because it's not intuitive right now how
