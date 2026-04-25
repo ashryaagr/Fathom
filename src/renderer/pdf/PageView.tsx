@@ -197,6 +197,15 @@ function CachedLensMarkers({
   getPageRect: () => DOMRect | null;
 }) {
   const cache = useLensStore((s) => s.cache);
+  // Don't render any markers while a lens is focused. Two problems they
+  // caused otherwise: (a) at z-[100] they could bleed through the lens
+  // overlay and appear on top of the anchor image, looking as though the
+  // markers lived on the zoomed figure itself; (b) they were still
+  // clickable through the lens, which let the user recursively re-open
+  // the same lens in a loop. Markers are only meaningful in the reading
+  // view; the lens has its own navigation.
+  const lensFocused = useLensStore((s) => s.focused !== null);
+  if (lensFocused) return null;
   // Select the Map reference itself — stable when regions haven't changed — and resolve
   // the array inside useMemo. Returning `... ?? []` directly from a selector would allocate
   // a new empty array each render and cause an infinite useSyncExternalStore update loop.

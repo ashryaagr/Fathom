@@ -272,7 +272,7 @@ export default function App() {
   // reach this handler regardless of cursor position.
   useEffect(() => {
     let accum = 0;
-    let lastTime = 0;
+    let lastActive = 0; // last non-trivial wheel event
     let committed = false;
     const handler = (e: WheelEvent) => {
       if (e.ctrlKey) return; // pinch-zoom owns ctrlKey-wheels
@@ -286,17 +286,24 @@ export default function App() {
         return;
       }
       const now = Date.now();
-      if (now - lastTime > 350) {
-        accum = 0;
-        committed = false;
+
+      // A swipe "ends" when the trackpad stops producing horizontal motion
+      // for ~180ms. Reset on that quiet gap so rapid back-to-back swipes
+      // each get a fresh threshold window. Previously we gated only on
+      // 350ms since the *last* wheel event of any kind — macOS keeps
+      // emitting tiny residual wheel ticks from inertia long after the
+      // user lifted their fingers, which kept `committed` stuck on and
+      // made every second swipe feel dead.
+      const horiz = Math.abs(e.deltaX);
+      if (horiz > 0.5) lastActive = now;
+      if (now - lastActive > 180 || horiz < 0.5) {
+        if (committed || Math.abs(accum) > 10) {
+          accum = 0;
+          committed = false;
+        }
       }
-      lastTime = now;
-      // Only horizontal-dominant wheels concern us. Once we've decided it's
-      // a swipe, preventDefault immediately so (a) the PDF scroller
-      // doesn't scroll horizontally, (b) Chromium's window-edge back/forward
-      // doesn't intercept. Both were causing the asymmetric "only works on
-      // one side of the PDF" regression users reported.
-      if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.4) return;
+
+      if (horiz < Math.abs(e.deltaY) * 1.4) return;
       e.preventDefault();
       accum += e.deltaX;
       if (committed) return;
@@ -304,6 +311,7 @@ export default function App() {
       if (accum <= -threshold) {
         // Natural-scroll: fingers swipe RIGHT → deltaX negative → go BACK.
         committed = true;
+        accum = 0; // fresh baseline for the next swipe
         useLensStore.getState().back();
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'back' } }));
         if (useTourStore.getState().step === 'swipe') {
@@ -311,6 +319,7 @@ export default function App() {
         }
       } else if (accum >= threshold) {
         committed = true;
+        accum = 0;
         useLensStore.getState().forward();
         window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
       }
