@@ -19,6 +19,7 @@ export interface FathomSettings {
   tourCompletedAt?: string;
   extraDirectories?: string[];
   customInstructions?: string;
+  focusLightBetaEnabled?: boolean;
 }
 
 export default function SettingsPanel({
@@ -31,6 +32,7 @@ export default function SettingsPanel({
   const [dirs, setDirs] = useState<string[]>([]);
   const [newDir, setNewDir] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
+  const [focusLightBeta, setFocusLightBeta] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Load current settings when the panel opens.
@@ -43,6 +45,7 @@ export default function SettingsPanel({
         if (cancelled) return;
         setDirs(s.extraDirectories ?? []);
         setCustomInstructions(s.customInstructions ?? '');
+        setFocusLightBeta(!!s.focusLightBetaEnabled);
       } catch {
         // settings unreadable — start with defaults; saves will recreate the file
       }
@@ -84,7 +87,11 @@ export default function SettingsPanel({
       await window.lens.updateSettings({
         extraDirectories: dirs,
         customInstructions: customInstructions.trim() || undefined,
+        focusLightBetaEnabled: focusLightBeta,
       });
+      // Notify the rest of the app — the header listens for this so the
+      // Focus Light icon appears/disappears without needing a reload.
+      window.dispatchEvent(new CustomEvent('fathom:settingsUpdated'));
       onClose();
     } finally {
       setSaving(false);
@@ -205,6 +212,36 @@ export default function SettingsPanel({
                   placeholder="(Optional) Add a standing instruction Fathom should apply to every explain…"
                   className="w-full resize-none rounded-md border border-black/10 bg-white/70 px-3 py-2 text-[13px] leading-relaxed text-[#2a2420] outline-none focus:border-[#c9832a]"
                 />
+              </section>
+
+              <section>
+                <h3 className="mb-1 text-[13px] font-medium tracking-tight text-[#1a1614]">
+                  Beta features
+                </h3>
+                <p className="mb-3 text-[12px] leading-relaxed text-black/55">
+                  Experimental reading aids. Off by default; enable individually.
+                </p>
+                <label className="flex cursor-pointer items-start gap-3 rounded-md border border-black/10 bg-white/70 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={focusLightBeta}
+                    onChange={(e) => setFocusLightBeta(e.target.checked)}
+                    className="mt-[3px] h-4 w-4 cursor-pointer accent-[#c9832a]"
+                  />
+                  <span>
+                    <span className="block text-[13px] font-medium text-[#2a2420]">
+                      Focus Light
+                    </span>
+                    <span className="mt-0.5 block text-[12px] leading-relaxed text-black/55">
+                      A yellow highlighter band that follows your cursor across one
+                      column of text — a digital reading ruler. Click on a paragraph to
+                      anchor it; the band tracks your cursor's vertical position within
+                      that column. Pinch and two-finger gestures don't move it. Click
+                      the "Focus Light" button in the header to turn the band on/off
+                      while you read.
+                    </span>
+                  </span>
+                </label>
               </section>
             </div>
 

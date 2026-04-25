@@ -46,6 +46,10 @@ interface FathomSettings {
   extraDirectories?: string[];
   /** Free-form instruction appended to every explain prompt. */
   customInstructions?: string;
+  /** Beta feature toggle: when true, the header gets a "Focus Light"
+   * button that lets the user spotlight the column they're reading.
+   * Off by default — must be explicitly enabled in Preferences. */
+  focusLightBetaEnabled?: boolean;
 }
 
 function settingsPath(): string {
@@ -612,6 +616,12 @@ ipcMain.handle('settings:update', async (
     allowed.customInstructions =
       typeof patch.customInstructions === 'string'
         ? patch.customInstructions
+        : undefined;
+  }
+  if ('focusLightBetaEnabled' in patch) {
+    allowed.focusLightBetaEnabled =
+      typeof patch.focusLightBetaEnabled === 'boolean'
+        ? patch.focusLightBetaEnabled
         : undefined;
   }
   writeSettings(allowed);

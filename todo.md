@@ -265,43 +265,124 @@ Possible fixes:
 
 Schedule: v1.0.12.
 
-## 27. Pluggable AI backend (Claude / Gemini / Codex CLI) — 🔄 PENDING
-User: "be able to configure the backend whether we are using Claude
-or we are using Gemini or codecs. The only requirement is that the
-CLI should be there."
+## 41. Focus Light + research-backed reading aids — ✅ DONE (Focus Light, opt-in beta) / 🔄 the rest tracked here
 
-Design sketch:
-- Settings panel gains a `backend` choice: `claude` (default),
-  `gemini`, `codex`. Stored in `~/Library/Application
-  Support/Fathom/settings.json` alongside the existing
-  `extraDirectories` / `customInstructions`.
-- `src/main/ai/client.ts` becomes a switch on the configured
-  backend. Each backend has the same shape: a CLI on $PATH that
-  takes a prompt + tools + auth, streams text deltas, exposes a
-  session-id we can resume. Today this is hard-wired to the
-  Anthropic Agent SDK (`pathToClaudeCodeExecutable`); we'd add
-  parallel adapters for the Gemini CLI (`gemini`) and the OpenAI
-  Codex CLI (`codex`).
-- The "Claude Code installed?" startup check generalises to
-  "<configured-backend> CLI installed?" — if a user picks Gemini
-  in prefs but doesn't have `gemini` on PATH, surface the same
-  install-instruction dialog the Claude path uses today.
-- README / docs / `fathom-qa.md` get matrix-style coverage for
-  all three backends. The QA missing-deps scenarios (S1/S2/S3)
-  multiply per backend — one set per choice.
+User asked for the Focus Light feature *and* a wider brainstorm
+of "scientific approaches to helping me read faster." Quick
+research summary first (to ground future work in this area),
+then the spec for what shipped.
 
-Open questions for the author:
-- Tool-use parity. Claude's Agent SDK gives Read/Grep/Glob out
-  of the box. Gemini and Codex CLIs may not. If the chosen
-  backend can't ground via tools, do we degrade to "send the
-  whole content.md as a prompt prefix"? Acceptable?
-- Auth. Claude Code uses browser sign-in. Gemini CLI uses
-  Google API keys. Codex needs OpenAI credentials. We don't
-  store credentials in Fathom — we ride on whatever the CLI
-  itself has cached. Document this clearly.
+### Reading-aid research summary
 
-Schedule: v1.1.0 (it's a meaningful product surface change, not
-a point release).
+- **Visual pacers / reading rulers** — moving the eye with a
+  finger, pen, cursor, or horizontal band. Long literature
+  going back to Carver's reading-rate work; Schneps et al.
+  (2013) showed measurable gains for dyslexic readers using
+  small-text presentations and line-trackers. Fits Fathom's
+  trackpad-driven UX cleanly. **This is what the Focus Light
+  implements.**
+- **Bionic Reading** (bolding word prefixes). Mixed evidence —
+  some studies find no comprehension or speed gain; others
+  report subjective focus improvement. Low cost to ship as an
+  opt-in toggle if there's demand.
+- **Density gradient / typography contrast** — colouring
+  paragraphs by jargon density so the reader can route attention
+  to the heaviest passages. Speculative — would need cognitive-
+  load proxies (math symbol density, term-novelty score).
+- **Vocabulary preload / glossary panel** — surface unfamiliar
+  terms before the user hits them. The paper digest already
+  extracts a glossary; we could expose it as a hover panel.
+- **Active reading affordances** (highlighting, asking,
+  annotating). Strong evidence from cognitive science. Fathom
+  already does this via the lens (semantic zoom = active asking)
+  and the highlighter. The Focus Light complements rather than
+  replaces.
+- **Reading-position memory across sessions** — small but real
+  win. We persist lens markers but not "where the user last
+  scrolled to." Easy follow-up.
+- **Read-aloud / TTS for the focused line** — macOS has built-in
+  TTS; could speak the band's current sentence on a key combo.
+- **Eye-rest reminders (20-20-20 rule)** — every 20 min, prompt
+  to look 20 ft away for 20 s. Cheap to add; opt-in.
+- **Skim mode** — render the paper at a high zoom with topic
+  sentences emphasized so the user can scan structure. Different
+  surface area; defer.
+- **Spaced repetition for highlighted phrases** — terms the user
+  highlights become a flashcard set. Out of scope of "reader",
+  more of a "learner" feature.
+
+### Focus Light spec — what shipped
+
+Beta opt-in only. Two layers of activation:
+
+1. **Preferences → Beta features → "Focus Light".** Off by
+   default. When checked, the header gets a button.
+2. **Header → "Focus Light" button.** Click to toggle the band
+   on/off for the current session. Off by default at launch
+   even when the beta is enabled — so the user opts in
+   deliberately each session.
+
+Behaviour while on:
+
+- **Manual placement** (per the user's refined spec): nothing
+  happens until the user clicks a paragraph. Clicking on text
+  anchors the band to that paragraph's column.
+- **Column-aware**: the band's WIDTH = the clicked region's
+  bbox width. Two-column papers get a per-column band; one-
+  column papers get a wide band. Clicking a different column
+  re-anchors and resizes.
+- **Figure-aware**: when the cursor moves over a region that
+  isn't the anchored region (a figure, the other column, a
+  caption), the band stays put — we just don't update its Y.
+  No flinging across figures.
+- **Vertical tracking inside the column**: cursor Y inside the
+  anchored region → band Y follows. Clamped to the region's
+  bbox so the band can't escape the paragraph.
+- **Two-finger gestures don't move the band**. A wheel event
+  (scroll or pinch) suspends mouse-tracking for 200 ms — that's
+  the tail-window of trackpad wheel events, beyond which it's
+  safe to assume the user is back to one-finger pointing.
+- **Click outside any text region** clears the anchor.
+- **Visuals**: yellow band (rgba(255,232,100,0.55)) with
+  `mix-blend-mode: multiply` so it darkens text rather than
+  washing it out; soft glow shadow; rounded corners; eased
+  transitions on top/left/width so re-anchoring feels natural.
+- **Pointer-events: none** — the band never intercepts clicks,
+  so highlight-selecting and marker-clicks underneath still
+  work.
+- **z-index 35** — above the PDF (z-10) and armed-overlay
+  (z-20), below the lens overlay (z-30) … wait no, must be
+  above the lens too — but currently set to 35, which is above
+  z-30. Lens shows over the focus light when both are open;
+  closing the lens reveals the band again. Acceptable.
+
+Files added/changed:
+- `src/renderer/pdf/FocusLight.tsx` — new component, ~190 lines
+  including the design-rule comments.
+- `src/renderer/lens/SettingsPanel.tsx` — new "Beta features"
+  section with the toggle.
+- `src/renderer/App.tsx` — header button (only when beta is
+  enabled), state, settings load + reload-on-save.
+- `src/main/index.ts` + `src/preload/index.ts` — the new
+  `focusLightBetaEnabled` settings field.
+
+### Follow-ups (open)
+
+- **Per-line snapping** — instead of band Y = cursor Y, snap
+  the band to actual text-line baselines via the text layer.
+  More precise; defer.
+- **Bionic Reading** — opt-in toggle; defer until/if asked.
+- **Reading-position memory** across sessions — easy win, defer.
+- **TTS for the band's current sentence** — defer.
+- **20-20-20 eye-rest reminders** — defer.
+
+## 27. Pluggable AI backend — ⛔ DROPPED
+User asked why we even need this. Reasoned: the product is
+Claude-shaped (filesystem-as-index needs Read/Grep/Glob; prompt
+caching is the cost story; session-resume is the lens-as-one-
+conversation model; system prompts are tuned to Claude's style).
+Pluggable would be either a half-measure or a major dilution.
+Removed from scope. README's "Powered by Claude" stands.
 
 ## 28. QA agent should not steal cursor / Space focus — ✅ DONE in v1.0.13
 User: "When the QA agent is working on my system, it directly pulls

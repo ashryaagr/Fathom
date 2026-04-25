@@ -16,6 +16,7 @@ import GestureFeedback from './lens/GestureFeedback';
 import UpdateToast from './lens/UpdateToast';
 import { useTourStore } from './lens/tourStore';
 import { createHighlightFromSelection } from './pdf/highlightFromSelection';
+import FocusLight from './pdf/FocusLight';
 import ErrorBoundary from './ErrorBoundary';
 
 type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
@@ -23,6 +24,7 @@ type IndexState = 'idle' | 'running' | 'done' | 'cached' | 'error';
 export default function App() {
   const setDocument = useDocumentStore((s) => s.setDocument);
   const docState = useDocumentStore((s) => s.document);
+  const docZoom = useDocumentStore((s) => s.zoom);
   const focused = useLensStore((s) => s.focused);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,16 @@ export default function App() {
   const [showIndexToast, setShowIndexToast] = useState(false);
   const [showTour, setShowTour] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Focus Light beta — two layers (todo #41):
+  //   • `focusLightBetaEnabled` — the user's persistent preference,
+  //     loaded from settings.json. When false, the header button is
+  //     hidden entirely; when true, the button appears as a toggle.
+  //   • `focusLightActive` — the in-session on/off state, controlled
+  //     by clicking the header button. Off by default each session so
+  //     the user opts in deliberately rather than having a yellow band
+  //     pop up the moment they open Fathom.
+  const [focusLightBetaEnabled, setFocusLightBetaEnabled] = useState(false);
+  const [focusLightActive, setFocusLightActive] = useState(false);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setFlash = useCallback((msg: string) => {
@@ -435,6 +447,38 @@ export default function App() {
   // First time a PDF is opened (sample or user's own), show the guided tour
   // unless it's already been completed. Fires on docState transition from
   // null → non-null, then settles in for the session.
+  // Focus Light preference loader. Runs at mount AND on the
+  // `fathom:settingsUpdated` event the SettingsPanel dispatches when
+  // the user saves changes — so toggling the beta in Preferences shows
+  // the header button without needing a relaunch.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const s = await window.lens.getSettings();
+        if (!cancelled) setFocusLightBetaEnabled(!!s.focusLightBetaEnabled);
+      } catch {
+        /* settings unreadable — leave default */
+      }
+    };
+    void refresh();
+    const onUpdated = () => void refresh();
+    window.addEventListener('fathom:settingsUpdated', onUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('fathom:settingsUpdated', onUpdated);
+    };
+  }, []);
+
+  // If the user disables the beta in Preferences, also turn off any
+  // currently-active focus light — otherwise we'd leave a yellow band
+  // floating with no UI to remove it.
+  useEffect(() => {
+    if (!focusLightBetaEnabled && focusLightActive) {
+      setFocusLightActive(false);
+    }
+  }, [focusLightBetaEnabled, focusLightActive]);
+
   useEffect(() => {
     if (!docState) return;
     let cancelled = false;
@@ -799,6 +843,45 @@ export default function App() {
               </svg>
             </HeaderIcon>
           )}
+          {/* Focus Light beta — shows ONLY when the user has enabled
+              the beta in Preferences. Click to toggle the band on/off
+              for the current session. The label text "Focus Light" is
+              the user's exact ask: a clearly-named opt-in reading aid,
+              not a hidden gesture. */}
+          {docState && focusLightBetaEnabled && (
+            <button
+              onClick={() => setFocusLightActive((on) => !on)}
+              title={
+                focusLightActive
+                  ? 'Focus Light is on — click to turn off'
+                  : 'Focus Light is off — click to turn on, then click on a paragraph to anchor it'
+              }
+              aria-label="Toggle Focus Light"
+              aria-pressed={focusLightActive}
+              className={
+                'flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium transition select-none ' +
+                (focusLightActive
+                  ? 'bg-[#fff3b0] text-[#7a5300] shadow-[inset_0_0_0_1px_rgba(201,131,42,0.4)]'
+                  : 'text-black/60 hover:bg-black/5')
+              }
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="8" cy="8" r="2.5" fill={focusLightActive ? '#c9832a' : 'none'} />
+                <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.4 3.6l-1.4 1.4M5 11l-1.4 1.4M12.4 12.4 11 11M5 5 3.6 3.6" />
+              </svg>
+              Focus Light
+            </button>
+          )}
           <HeaderIcon
             tip="Preferences (⌘,)"
             aria-label="Preferences"
@@ -834,6 +917,22 @@ export default function App() {
           </ErrorBoundary>
         )}
       </main>
+
+      {/* Focus Light beta. Renders nothing unless the user has both
+          enabled the beta in Preferences AND turned the band on via
+          the header button. The component handles its own click /
+          mousemove / wheel listeners; we just pass it the current
+          paper hash and zoom so it can map cursor positions back to
+          regions. Sits below the lens overlay (z-30) and below the
+          header (z-50) — band shows on the PDF, doesn't bleed over
+          the lens or the controls. */}
+      {docState && focusLightActive && (
+        <FocusLight
+          enabled={focusLightActive}
+          paperHash={docState.contentHash}
+          zoom={docZoom}
+        />
+      )}
 
       {/* Focus view overlays everything when active. Its own boundary so
           a lens-render crash doesn't blank the whole document behind. */}
