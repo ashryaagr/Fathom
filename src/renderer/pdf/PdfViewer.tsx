@@ -7,6 +7,7 @@ import { useTourStore } from '../lens/tourStore';
 import { useRegionsStore } from '../state/regions';
 import type { Region } from './extractRegions';
 import { captureScrollerViewport, captureCanvasRect } from './captureViewport';
+import PdfContextMenu from './PdfContextMenu';
 
 /** Synchronous (async IPC) zoom-image save — awaited by the commit path so the saved
  * path is guaranteed to be on the lens before any downstream explain call reads it. */
@@ -36,6 +37,9 @@ export default function PdfViewer() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [pageBaseSizes, setPageBaseSizes] = useState<Array<{ width: number; height: number }>>([]);
   const [armed, setArmed] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<
+    { x: number; y: number; selection: string } | null
+  >(null);
 
   // Progressively fill in each page's base dimensions so the layout settles one page at a
   // time rather than showing a forest of 612×792 placeholders until the whole doc is measured.
@@ -200,6 +204,24 @@ export default function PdfViewer() {
     return () => window.removeEventListener('fathom:askCurrentViewport', handler);
   }, [docState, pageBaseSizes]);
 
+  // Right-click menu: "Dive in here" (or "Dive into <selection>"). Same
+  // commitSemanticFocus path as the pinch gesture; exists so users who'd
+  // rather click than pinch have a first-class alternative.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const handler = (e: MouseEvent) => {
+      // Don't hijack right-click in inputs / textareas.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+      const sel = window.getSelection()?.toString().trim() ?? '';
+      setCtxMenu({ x: e.clientX, y: e.clientY, selection: sel });
+    };
+    el.addEventListener('contextmenu', handler);
+    return () => el.removeEventListener('contextmenu', handler);
+  }, []);
+
   const pages = useMemo(() => {
     if (!docState) return [] as number[];
     return Array.from({ length: docState.numPages }, (_, i) => i + 1);
@@ -249,6 +271,26 @@ export default function PdfViewer() {
           );
         })}
       </div>
+      {ctxMenu && (
+        <PdfContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          selection={ctxMenu.selection}
+          onDiveIn={() => {
+            const el = scrollerRef.current;
+            if (el && docState) {
+              void commitSemanticFocus(
+                el,
+                docState.contentHash,
+                pageBaseSizes,
+                useDocumentStore.getState().zoom,
+                { x: ctxMenu.x, y: ctxMenu.y },
+              );
+            }
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 }

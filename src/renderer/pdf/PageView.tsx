@@ -272,15 +272,18 @@ function CachedLensMarkers({
       {cachedRegions.map((r) => {
         const topCss = (pageHeight - r.bbox.y - r.bbox.height) * zoom;
         const rightEdge = (r.bbox.x + r.bbox.width) * zoom;
+        // Place the marker INSIDE the top-right corner of the region, not
+        // outside it. For text regions the outside-the-column position was
+        // fine, but for full-width figure regions the marker ended up
+        // beyond the page edge and was clipped / hidden. Inside + a white
+        // ring + a generous z-index keeps it visible on top of any figure
+        // pixel color, always.
         return (
           <button
             key={r.id}
             onClick={() => openCached(r)}
-            className="absolute z-[5] flex h-3 w-3 items-center justify-center rounded-full bg-[color:var(--color-lens)]/65 shadow hover:scale-125 hover:bg-[color:var(--color-lens)] focus:outline-none"
-            // Anchor the marker to the paragraph it belongs to: top-right just outside the
-            // column. Works for single- and multi-column layouts since each region's bbox is
-            // column-scoped.
-            style={{ left: rightEdge + 4, top: topCss + 2 }}
+            className="absolute z-[100] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[color:var(--color-lens)] shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_2px_4px_rgba(0,0,0,0.25)] transition-transform hover:scale-125 focus:outline-none"
+            style={{ left: rightEdge - 14, top: topCss + 4 }}
             title="Re-open lens (cached)"
             aria-label="Re-open cached lens"
           />

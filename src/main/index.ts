@@ -633,7 +633,28 @@ async function openSamplePaper(): Promise<void> {
 
 function buildAppMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    // Custom Fathom app menu (replaces the default appMenu role) so we can
+    // put Preferences… in the macOS-canonical location under the app name.
+    {
+      label: 'Fathom',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        {
+          label: 'Preferences…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => mainWindow?.webContents.send('settings:show'),
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'File',
       submenu: [
@@ -651,6 +672,15 @@ function buildAppMenu(): void {
           },
         },
         { type: 'separator' },
+        // Users who expect macOS-convention look here first (File is the
+        // most-read menu); keep the accelerator the same as the app-menu
+        // one so `⌘,` always works.
+        {
+          label: 'Preferences…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => mainWindow?.webContents.send('settings:show'),
+        },
+        { type: 'separator' },
         { role: 'close' },
       ],
     },
@@ -660,12 +690,6 @@ function buildAppMenu(): void {
     {
       role: 'help',
       submenu: [
-        {
-          label: 'Preferences…',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => mainWindow?.webContents.send('settings:show'),
-        },
-        { type: 'separator' },
         {
           label: 'Show Welcome Tour',
           click: () => {
