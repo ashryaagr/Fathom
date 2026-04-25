@@ -28,7 +28,7 @@ Inside a lens, while Claude is streaming, the coach should update to
 "Claude is reading the paper for you. Ask any follow-up in the box below
 any time." — narrative, not instructional.
 
-## 4. Better sample PDF
+## 4. Better sample PDF — ✅ DONE
 Current sample is a hand-written 2-pager. User asked for a real short
 workshop paper with figures (real research-looking content). Find a
 redistributable short paper or generate a richer synthetic one with
