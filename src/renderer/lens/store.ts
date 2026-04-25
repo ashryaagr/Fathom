@@ -147,11 +147,24 @@ export const useLensStore = create<LensState>((set, get) => ({
     if (!focused) return null;
     const selection = args.selection.trim().slice(0, 1000);
     if (!selection) return null;
-    // Parent body for a drill = combined bodies of the current focus's turns.
-    const parentBody = focused.turns
+    // Parent body for a drill is the RECURSIVE ancestor chain, not just the
+    // immediate parent. If the current focused lens is itself a drill, its
+    // own parentBody already encodes grandparent context; we append this
+    // lens's turns underneath so Claude sees the full lineage:
+    //
+    //   <root explanation>
+    //     → <drill level 1 explanation>
+    //       → <drill level 2 explanation>   ← new lens drills from this
+    //
+    // Gives "recursive context of where its parent was" that the user
+    // asked for explicitly.
+    const thisLensTurns = focused.turns
       .filter((t) => t.body.length > 0)
       .map((t) => (t.question ? `[Q: ${t.question}]\n${t.body}` : t.body))
       .join('\n\n');
+    const parentBody = focused.parentBody
+      ? `${focused.parentBody}\n\n--- The reader then zoomed into a phrase inside that explanation, which produced: ---\n\n${thisLensTurns}`
+      : thisLensTurns;
     const focusPhrase = shorten(selection, 64);
     const id = drillId(focused.id, selection);
     const newLens: FocusedLens = {

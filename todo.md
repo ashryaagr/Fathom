@@ -14,7 +14,7 @@ top-to-bottom until the list is empty.
 - Hint when Esc is pressed inside a lens (Esc intentionally doesn't close
   anymore; show the user what DOES close).
 
-## 2. Visual-only coach redesign
+## 2. Visual-only coach redesign — ✅ DONE
 The current CoachHint is text-heavy. User's explicit principle: *"no one
 reads words to learn how to set up."*
 - Replace each step's headline+body with a pictogram + one short label.
@@ -23,7 +23,7 @@ reads words to learn how to set up."*
 - Skip-with-confirmation: first skip press shows a warning that Fathom has
   controls that aren't discoverable by word; second press confirms.
 
-## 3. Streaming-narrative coach copy
+## 3. Streaming-narrative coach copy — ✅ DONE
 Inside a lens, while Claude is streaming, the coach should update to
 "Claude is reading the paper for you. Ask any follow-up in the box below
 any time." — narrative, not instructional.
@@ -34,13 +34,13 @@ workshop paper with figures (real research-looking content). Find a
 redistributable short paper or generate a richer synthetic one with
 SVG-rendered figures.
 
-## 5. Mid-stream drill safety
+## 5. Mid-stream drill safety — ✅ DONE
 When a lens is streaming, selecting text and ⌘-pinching sometimes doesn't
 drill (selection cleared by DOM re-render, or Range disconnected). Guard
 `getBoundingClientRect()` on the snapshot; fall back to a viewport-center
 rect; log why the capture failed when it does.
 
-## 6. Recursive drill context
+## 6. Recursive drill context — ✅ DONE
 When drilling, pass not just the parent body but the full parent chain
 (parent's parent, etc.) as context so Claude can trace the lineage
 of what the reader is diving into.

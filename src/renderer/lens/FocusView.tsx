@@ -160,9 +160,32 @@ function FocusPane({
       if (isExplicitZoomOut) {
         back();
       } else if (capturedSelection) {
-        const rect = capturedSelection.range.getBoundingClientRect();
+        // Compute the source rect defensively. When Claude is mid-stream
+        // and react-markdown re-renders the body, the DOM nodes under the
+        // snapshotted Range can be replaced — getBoundingClientRect on a
+        // disconnected Range returns zero-size, and Safari/WebKit can even
+        // throw. Fall back to a viewport-center rect so the drill still
+        // fires at a sensible position, and log which path we took.
+        let rect: { x: number; y: number; width: number; height: number };
+        try {
+          const r = capturedSelection.range.getBoundingClientRect();
+          if (r.width > 2 && r.height > 2) {
+            rect = { x: r.left, y: r.top, width: r.width, height: r.height };
+            console.log(`[LensGesture ${logId}] drill rect from range: ${r.width.toFixed(0)}×${r.height.toFixed(0)}`);
+          } else {
+            console.log(`[LensGesture ${logId}] range has no box (mid-stream re-render); using viewport center`);
+            const cx = window.innerWidth / 2;
+            const cy = window.innerHeight / 2;
+            rect = { x: cx - 80, y: cy - 12, width: 160, height: 24 };
+          }
+        } catch (err) {
+          console.warn(`[LensGesture ${logId}] getBoundingClientRect threw; falling back`, err);
+          const cx = window.innerWidth / 2;
+          const cy = window.innerHeight / 2;
+          rect = { x: cx - 80, y: cy - 12, width: 160, height: 24 };
+        }
         drillOn({
-          sourceRect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          sourceRect: rect,
           selection: capturedSelection.text,
         });
         window.getSelection()?.removeAllRanges();

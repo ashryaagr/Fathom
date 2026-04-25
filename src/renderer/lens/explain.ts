@@ -176,12 +176,21 @@ function buildPassagePrompt(focused: FocusedLens, paperText: string | undefined)
 }
 
 function buildDrillPrompt(focused: FocusedLens, paperText: string | undefined) {
+  // focused.parentBody already encodes the full ancestor chain (root
+  // explanation → drill 1 → drill 2 → …) built by drillOn(). Flatten it
+  // into one block Claude sees up front so the new explanation is
+  // anchored not just in the paper, but in the reader's own trail of
+  // clarifications that got them here.
   const priorExplanations: Array<{ depth: number; body: string; focusPhrase: string | null }> =
     focused.parentBody
       ? [
           {
             depth: 0,
-            body: `The reader was reading this clarification when they selected the phrase:\n${focused.parentBody}`,
+            body:
+              `Here is the chain of clarifications the reader has followed ` +
+              `to arrive at this drill. Treat this as context — do not ` +
+              `repeat any of it; extend it by explaining the selected ` +
+              `phrase in depth.\n\n${focused.parentBody}`,
             focusPhrase: null,
           },
         ]
