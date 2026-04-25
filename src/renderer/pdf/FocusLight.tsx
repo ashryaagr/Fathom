@@ -64,25 +64,37 @@ export default function FocusLight({
   // sees the current scroll position. Cheap — only when active.
   const [, setTick] = useState(0);
 
-  // Pause state — explicit, controlled by SPACEBAR. Earlier versions
-  // tried to detect "is one finger resting on the trackpad" via the
-  // mousemove timestamp, on the theory that mousemove fires when the
-  // user's reading finger moves. That heuristic broke down because
-  // macOS doesn't surface "finger touching trackpad without moving"
-  // to JS at all — when the user rests their finger to think, NO
-  // event fires, so the pacer would freeze even though the finger
-  // was right there. The result was the inconsistent "sometimes
-  // doesn't move" / "sometimes runs away" behaviour the user
-  // reported. Dropped the heuristic entirely; spacebar is the
-  // explicit pause/resume now.
+  // Pause state — explicit, toggled by SPACEBAR. Used in addition
+  // to (not instead of) the mousemove-activity gate below.
   const [paused, setPaused] = useState(false);
 
-  // Wheel-event lockout still applies. A two-finger pinch or scroll
-  // suspends the pacer for 250 ms so the user can zoom or scroll
-  // without the band marching forward underneath the in-flight
+  // Wheel-event lockout. Two-finger pinch or scroll suspends the
+  // pacer for 250 ms so it doesn't march forward under the user's
   // gesture.
   const lastWheelRef = useRef(0);
   const WHEEL_LOCKOUT_MS = 250;
+
+  // Mousemove-activity gate — best-effort approximation for "is the
+  // user's finger active on the trackpad?" macOS does NOT expose
+  // touch-without-movement events; when a finger rests perfectly
+  // still on the trackpad, no event fires and the OS state is
+  // indistinguishable from "no finger." This is an upstream limit.
+  // Best we can do: while the cursor is moving (even tiny micro-
+  // drifts), assume the user is engaged; after FINGER_IDLE_MS of
+  // zero motion, assume the finger is off and pause.
+  //
+  // Threshold history:
+  //   • 150 ms (v1)  — too aggressive, killed the pacer between
+  //                    natural micro-pauses.
+  //   • removed (v2) — pacer ran forever, user reported "moves
+  //                    even when finger off trackpad."
+  //   • 400 ms (v3)  — current. Lenient enough to bridge natural
+  //                    pauses, tight enough to feel like the pacer
+  //                    "follows the finger."
+  // Spacebar remains the explicit pause for the genuinely-still
+  // case (finger resting deliberately).
+  const lastMouseMoveRef = useRef(Date.now());
+  const FINGER_IDLE_MS = 400;
 
   // Find which region (paragraph) is under a screen point, and the
   // page element + page number that owns it. Reused by the click
@@ -219,6 +231,18 @@ export default function FocusLight({
     return () => window.removeEventListener('mousedown', onMouseDown);
   }, [enabled, byPage, paperHash, zoom]);
 
+  // Track every mousemove so the auto-advance can gate on "did the
+  // user move the cursor recently?" — best-effort proxy for "one
+  // finger on the trackpad, engaged."
+  useEffect(() => {
+    if (!enabled) return;
+    const onMove = () => {
+      lastMouseMoveRef.current = Date.now();
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [enabled]);
+
   // Spacebar toggles pause/resume. Standard pacer convention. We
   // only intercept Space when the user isn't typing in an input —
   // the lens's Ask box, search fields, etc. need Space to mean
@@ -262,7 +286,13 @@ export default function FocusLight({
     if (paused) return;
     const intervalMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
     const id = window.setInterval(() => {
-      if (Date.now() - lastWheelRef.current < WHEEL_LOCKOUT_MS) return;
+      const now = Date.now();
+      // Two-finger gesture in progress?
+      if (now - lastWheelRef.current < WHEEL_LOCKOUT_MS) return;
+      // Finger off the trackpad? (no recent cursor movement)
+      if (now - lastMouseMoveRef.current > FINGER_IDLE_MS) return;
+      // Selecting text? Working WITH a selection — pacing forward
+      // would yank focus from the selection.
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
       setAnchor((current) => {
@@ -313,17 +343,29 @@ export default function FocusLight({
   if (!pageEl) return null;
   const pageRect = pageEl.getBoundingClientRect();
 
-  // Three slots: prev / middle / next. All three highlighted; the
-  // middle one slightly brighter and with a subtle ring so it reads
-  // as "the pointer right now" without making the sides invisible
-  // (per the user's clarification — the dark-highlighted words are
-  // 3 at a time, moving as a unit).
+  // FIVE-word window with Gaussian opacity falloff (per user spec —
+  // "five words at a time", "the middle word should be brighter",
+  // "Gaussian pyramid style"). Slots, in reading order:
+  //   m-2 : outer left   (faint   — opacity 0.20)
+  //   m-1 : inner left   (medium  — opacity 0.45)
+  //   m   : middle       (bright  — opacity 0.85, plus glow)
+  //   m+1 : inner right  (medium  — opacity 0.45)
+  //   m+2 : outer right  (faint   — opacity 0.20)
+  // Edge cases: at start/end of region, missing slots are simply
+  // skipped — the user gets a smaller window for the first/last
+  // few words. Acceptable per "less is okay, but not more."
   const m = anchor.middleIndex;
-  type Slot = { span: HTMLElement; role: 'prev' | 'middle' | 'next' };
+  type Slot = { span: HTMLElement; role: 'outer' | 'inner' | 'middle'; offset: -2 | -1 | 0 | 1 | 2 };
   const slots: Slot[] = [];
-  if (m - 1 >= 0) slots.push({ span: anchor.spans[m - 1], role: 'prev' });
-  if (anchor.spans[m]) slots.push({ span: anchor.spans[m], role: 'middle' });
-  if (m + 1 < anchor.spans.length) slots.push({ span: anchor.spans[m + 1], role: 'next' });
+  for (const off of [-2, -1, 0, 1, 2] as const) {
+    const idx = m + off;
+    if (idx < 0 || idx >= anchor.spans.length) continue;
+    const span = anchor.spans[idx];
+    if (!span) continue;
+    if (off === 0) slots.push({ span, role: 'middle', offset: off });
+    else if (off === -1 || off === 1) slots.push({ span, role: 'inner', offset: off });
+    else slots.push({ span, role: 'outer', offset: off });
+  }
   if (slots.length === 0) return null;
 
   const padX = 2;
@@ -340,22 +382,19 @@ export default function FocusLight({
       {slots.map((slot) => {
         const r = slot.span.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) return null;
-        // Page-relative coordinates. The portal mounts these inside
-        // the `[data-page]` div, so as the page scrolls the bands
-        // scroll natively with it — no JS scroll-tracking required.
         const left = r.left - pageRect.left - padX;
         const top = r.top - pageRect.top - padY;
         const width = r.width + padX * 2;
         const height = r.height + padY * 2;
+        const opacity =
+          slot.role === 'middle' ? 0.85 : slot.role === 'inner' ? 0.45 : 0.20;
         const isMiddle = slot.role === 'middle';
         return (
           <div
-            // Stable key per role — React reuses the same DOM node
-            // across ticks so the CSS transition animates from
-            // "previous word's rect" to "next word's rect" smoothly.
-            // Earlier (key per middleIndex) caused mount/unmount per
-            // tick and killed the transition.
-            key={slot.role}
+            // Stable key per offset (NOT per middleIndex) so React
+            // reuses the same DOM node across ticks → CSS transition
+            // animates the slide from word N to word N+1 smoothly.
+            key={`offset-${slot.offset}`}
             className={`fathom-focus-light-${slot.role}`}
             aria-hidden="true"
             style={{
@@ -364,9 +403,7 @@ export default function FocusLight({
               top,
               width,
               height,
-              background: isMiddle
-                ? 'rgba(255, 210, 50, 0.85)'
-                : 'rgba(255, 220, 80, 0.55)',
+              background: `rgba(255, 215, 60, ${opacity})`,
               mixBlendMode: 'multiply',
               pointerEvents: 'none',
               borderRadius: 4,
