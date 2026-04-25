@@ -124,16 +124,48 @@ async function ensureIndexDir(pdfPath: string, contentHash: string): Promise<str
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Multi-window support — todo #38.
+//
+// Pre-v1.0.21 Fathom maintained a single `mainWindow` global, so opening
+// a second PDF replaced the first. The user requested macOS-native
+// multi-window: each PDF opens in its own BrowserWindow, switchable via
+// the system Window menu, ⌘` (next-window), and the dock.
+//
+// `mainWindow` is preserved as a backwards-compat alias that points at
+// the most-recently-created window — many existing call sites just want
+// "any" window for safe sends and dialog parents, and rebinding 41
+// reference sites at once would be brittle. New code should prefer:
+//   • activeWindow()        → focused window, or fallback to any
+//   • safeSendActive()      → dispatch IPC to the focused window
+//   • safeBroadcast()       → dispatch IPC to all open windows
+//   • createWindow(path?)   → spawn a new window, optionally pre-loaded
+//                             with a PDF
+const allWindows = new Set<BrowserWindow>();
 let mainWindow: BrowserWindow | null = null;
 const activeExplains = new Map<string, AbortController>();
+
+/** The window the user is most likely interacting with: focused, else
+ * any alive window in the registry, else null. Used for dialog parents
+ * and as the default target for global shortcut deliveries. */
+function activeWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && allWindows.has(focused) && !focused.isDestroyed()) {
+    return focused;
+  }
+  for (const w of allWindows) {
+    if (!w.isDestroyed()) return w;
+  }
+  return null;
+}
 
 /**
  * Send a message to the renderer only if the window AND its webContents
  * are still alive. Electron destroys webContents when the window closes,
  * and calling `send()` on a destroyed webContents throws
  * "Object has been destroyed" — which bubbles up as an uncaught exception
- * in main and can take the app down. All menu / timer / event-driven
- * sends should use this helper instead of `mainWindow?.webContents.send`.
+ * in main and can take the app down. Uses the most-recent mainWindow
+ * pointer for back-compat with v1.0.x sites; new code should prefer
+ * safeSendActive (focused-window-aware) or safeBroadcast (all windows).
  */
 function safeSend(channel: string, ...args: unknown[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -142,8 +174,36 @@ function safeSend(channel: string, ...args: unknown[]): void {
   wc.send(channel, ...args);
 }
 
-async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+/** Send an IPC message to the user's currently-focused Fathom window
+ * (or any alive window if nothing has focus). Right thing for global
+ * shortcuts and "user wants this in the foreground app" semantics. */
+function safeSendActive(channel: string, ...args: unknown[]): void {
+  const w = activeWindow();
+  if (!w || w.webContents.isDestroyed()) return;
+  w.webContents.send(channel, ...args);
+}
+
+/** Broadcast an IPC message to every alive Fathom window. Used by the
+ * auto-updater so every open window sees the same "update available"
+ * toast — single user, multiple workspaces, one product state. */
+function safeBroadcast(channel: string, ...args: unknown[]): void {
+  for (const w of allWindows) {
+    if (w.isDestroyed()) continue;
+    if (w.webContents.isDestroyed()) continue;
+    w.webContents.send(channel, ...args);
+  }
+}
+
+let autoUpdaterInitialized = false;
+
+/** Open a new Fathom window. Pass `initialPdfPath` to pre-load a PDF
+ * — used by the open-file event (drag onto dock, Open With → Fathom)
+ * so each external file opens in its own window without disturbing
+ * any existing windows. The path goes through the same
+ * `pdf:openExternal` channel a fresh user-driven open uses, so the
+ * preload buffer + onOpenExternal hydration race is already handled. */
+async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
+  const win = new BrowserWindow({
     width: 1280,
     height: 880,
     minWidth: 760,
@@ -160,24 +220,71 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   });
-
-  mainWindow.on('ready-to-show', () => {
-    mainWindow?.show();
-    if (process.env.ELECTRON_RENDERER_URL) mainWindow?.webContents.openDevTools({ mode: 'right' });
-    if (mainWindow) initAutoUpdater(mainWindow);
+  allWindows.add(win);
+  mainWindow = win;
+  win.on('closed', () => {
+    allWindows.delete(win);
+    if (mainWindow === win) {
+      // Re-point the back-compat alias at any other alive window.
+      mainWindow = null;
+      for (const other of allWindows) {
+        if (!other.isDestroyed()) {
+          mainWindow = other;
+          break;
+        }
+      }
+    }
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.on('ready-to-show', () => {
+    win.show();
+    if (process.env.ELECTRON_RENDERER_URL) win.webContents.openDevTools({ mode: 'right' });
+    // Init the auto-updater exactly once across the whole app lifetime.
+    // Multi-window means many windows can be alive simultaneously; we
+    // want one updater poll loop, not N. Updater events still need to
+    // reach EVERY window, so we wrap the original window-targeted
+    // initAutoUpdater in a thin BroadcastBrowserWindow that fans every
+    // webContents.send to the registry.
+    if (!autoUpdaterInitialized) {
+      autoUpdaterInitialized = true;
+      initAutoUpdater(broadcastBrowserWindow);
+    }
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+    await win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    await mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    await win.loadFile(join(__dirname, '../renderer/index.html'));
   }
+
+  // Initial PDF: send through the same channel as Open-With, so the
+  // preload buffer (which holds messages until React mounts) catches
+  // it and the renderer's onOpenExternal handler opens the file.
+  if (initialPdfPath) {
+    win.webContents.send('pdf:openExternal', initialPdfPath);
+  }
+
+  return win;
 }
+
+/** Tiny BrowserWindow-shaped object the auto-updater can target without
+ * knowing about the registry. Forwards `webContents.send` to all alive
+ * windows; the rest of the BrowserWindow surface is unused by the
+ * updater so we can leave it minimal. Cast through `unknown` because
+ * BrowserWindow's interface is large; the updater only touches
+ * webContents.send. */
+const broadcastBrowserWindow = {
+  webContents: {
+    send: (channel: string, ...args: unknown[]) => safeBroadcast(channel, ...args),
+    isDestroyed: () => allWindows.size === 0,
+  },
+  isDestroyed: () => allWindows.size === 0,
+} as unknown as BrowserWindow;
 
 /**
  * Shared "prepare this PDF path for the renderer" flow. Used by:
@@ -201,16 +308,17 @@ async function prepareOpenedPdf(filePath: string) {
   };
 }
 
-ipcMain.handle('pdf:open', async () => {
-  if (!mainWindow) return null;
-  // First-time openers get pointed at ~/Downloads (where almost all papers
-  // land). After that, remember the folder they last used so they don't
-  // have to re-navigate every time.
+ipcMain.handle('pdf:open', async (event) => {
+  // Use the WINDOW that called this IPC as the dialog parent — modal
+  // sheets attach to that window, which is the right macOS behaviour
+  // when multiple Fathom windows are open.
+  const callerWindow = BrowserWindow.fromWebContents(event.sender) ?? activeWindow();
+  if (!callerWindow) return null;
   const settings = readSettings();
   const defaultDir = settings.lastOpenDir && existsSync(settings.lastOpenDir)
     ? settings.lastOpenDir
     : app.getPath('downloads');
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(callerWindow, {
     title: 'Open PDF',
     defaultPath: defaultDir,
     properties: ['openFile'],
@@ -415,9 +523,14 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
 // apps aren't disrupted by flashes or focus steals. Only available
 // in packaged builds where BrowserWindow is real.
 ipcMain.handle('qa:capture', async (_e, destPath?: string): Promise<string> => {
-  if (!mainWindow || mainWindow.isDestroyed()) return '';
+  // Capture from the focused window when multiple are open — that's the
+  // one the user (or QA agent) cares about. activeWindow() falls back
+  // to any alive window if nothing is focused, which is also fine for
+  // the headless QA case.
+  const target = activeWindow();
+  if (!target) return '';
   try {
-    const image = await mainWindow.webContents.capturePage();
+    const image = await target.webContents.capturePage();
     // /tmp (not os.tmpdir(), which on macOS resolves to a per-user
     // /var/folders path) so the bash QA harness — which polls a
     // predictable shared location — can find what we wrote without
@@ -438,11 +551,11 @@ ipcMain.handle('qa:capture', async (_e, destPath?: string): Promise<string> => {
 // Fires the sample-paper flow without needing the renderer's DOM
 // button to be clickable. Used by the QA harness to bypass the
 // accessibility-layer brittleness of osascript `click button "..."`.
+// Targets the focused window so the QA agent doesn't disturb other
+// open papers.
 ipcMain.handle('qa:openSample', async (): Promise<string> => {
   try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('qa:triggerSample');
-    }
+    safeSendActive('qa:triggerSample');
     return 'dispatched';
   } catch (err) {
     console.warn('[QA] openSample failed', err);
@@ -503,9 +616,12 @@ ipcMain.handle('settings:update', async (
   }
   writeSettings(allowed);
 });
-ipcMain.handle('settings:pickDirectory', async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('settings:pickDirectory', async (event) => {
+  // Anchor the directory picker to the calling window so the modal
+  // sheet attaches to the right Fathom window in multi-window mode.
+  const callerWindow = BrowserWindow.fromWebContents(event.sender) ?? activeWindow();
+  if (!callerWindow) return null;
+  const result = await dialog.showOpenDialog(callerWindow, {
     title: 'Choose a folder Fathom can search',
     properties: ['openDirectory', 'createDirectory'],
   });
@@ -841,7 +957,11 @@ ipcMain.handle(
  * exactly where the file was sourced and written.
  */
 async function openSamplePaper(): Promise<void> {
-  if (!mainWindow) return;
+  // Targets the user's currently-focused window. If no window is open
+  // (rare — dock-click on macOS recreates one), spawn a new one with
+  // the sample as its initial PDF. The previous code returned early
+  // here, which silently no-op'd if the user had closed all windows.
+  const target = activeWindow();
   // Source: in production under Resources/ next to the .app; in dev the same
   // relative path resolves into the repo's resources/ folder.
   const sourcePath = app.isPackaged
@@ -849,12 +969,14 @@ async function openSamplePaper(): Promise<void> {
     : join(__dirname, '../../resources/sample-paper.pdf');
   console.log(`[sample] source=${sourcePath}`);
   if (!existsSync(sourcePath)) {
-    void dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      message: 'Sample paper missing',
-      detail: `Expected at ${sourcePath}. This is a build problem — please open an issue.`,
-      buttons: ['OK'],
-    });
+    if (target) {
+      void dialog.showMessageBox(target, {
+        type: 'info',
+        message: 'Sample paper missing',
+        detail: `Expected at ${sourcePath}. This is a build problem — please open an issue.`,
+        buttons: ['OK'],
+      });
+    }
     return;
   }
 
@@ -875,15 +997,23 @@ async function openSamplePaper(): Promise<void> {
     }
   } catch (err) {
     console.error('[sample] copy failed:', err);
-    void dialog.showMessageBox(mainWindow, {
-      type: 'error',
-      message: "Couldn't open the sample paper",
-      detail: `${err instanceof Error ? err.message : String(err)}\n\nIf the problem persists, Help → Reveal Log File and share the log.`,
-      buttons: ['OK'],
-    });
+    if (target) {
+      void dialog.showMessageBox(target, {
+        type: 'error',
+        message: "Couldn't open the sample paper",
+        detail: `${err instanceof Error ? err.message : String(err)}\n\nIf the problem persists, Help → Reveal Log File and share the log.`,
+        buttons: ['OK'],
+      });
+    }
     return;
   }
-  safeSend('pdf:openExternal', destPath);
+  // If a window is already in front, deliver the path to it; otherwise
+  // open a new window pre-loaded with the sample.
+  if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
+    target.webContents.send('pdf:openExternal', destPath);
+  } else {
+    void createWindow(destPath);
+  }
 }
 
 function buildAppMenu(): void {
@@ -898,7 +1028,7 @@ function buildAppMenu(): void {
         {
           label: 'Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click: () => safeSend('settings:show'),
+          click: () => safeSendActive('settings:show'),
         },
         { type: 'separator' },
         { role: 'services' },
@@ -914,10 +1044,22 @@ function buildAppMenu(): void {
       label: 'File',
       submenu: [
         {
+          // todo #38 — Cmd+N opens a fresh empty Fathom window. Each
+          // window has its own document/lens/highlight state because
+          // each BrowserWindow gets its own renderer process and
+          // therefore its own Zustand stores. macOS Window menu lists
+          // the open windows; Cmd+` cycles between them.
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => {
+            void createWindow();
+          },
+        },
+        {
           label: 'Open PDF…',
           accelerator: 'CmdOrCtrl+O',
           click: () => {
-            safeSend('pdf:openRequest');
+            safeSendActive('pdf:openRequest');
           },
         },
         {
@@ -933,7 +1075,7 @@ function buildAppMenu(): void {
         {
           label: 'Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click: () => safeSend('settings:show'),
+          click: () => safeSendActive('settings:show'),
         },
         { type: 'separator' },
         { role: 'close' },
@@ -948,13 +1090,14 @@ function buildAppMenu(): void {
         {
           label: 'Show Welcome Tour',
           click: () => {
-            safeSend('tour:show');
+            safeSendActive('tour:show');
           },
         },
         {
           label: 'Check for Updates…',
           click: async () => {
-            if (!mainWindow || mainWindow.isDestroyed()) return;
+            const target = activeWindow();
+            if (!target) return;
             const status = await manualCheckForUpdates();
             // Re-check after the await — the user could have closed the
             // window while the check was in flight, and
@@ -962,7 +1105,8 @@ function buildAppMenu(): void {
             // "Object has been destroyed" which bubbles up as a fatal
             // uncaught exception (this was the root cause of the
             // "whole screen went white" crash the user reported).
-            if (!mainWindow || mainWindow.isDestroyed()) return;
+            const stillTarget = activeWindow();
+            if (!stillTarget) return;
             const { dialog } = require('electron') as typeof import('electron');
             // Turn the updater state into a one-sentence summary the user can
             // read and dismiss — no need for a toast system here.
@@ -978,7 +1122,7 @@ function buildAppMenu(): void {
                       : status.state === 'error'
                         ? `Update check failed: ${status.message ?? 'unknown error'}`
                         : 'Checking…';
-            void dialog.showMessageBox(mainWindow, {
+            void dialog.showMessageBox(stillTarget, {
               type: 'none',
               message: headline,
               buttons: ['OK'],
@@ -1065,8 +1209,13 @@ function recordOpenFile(filePath: string, source: string): void {
 }
 function handleExternalPdf(filePath: string, source: string): void {
   recordOpenFile(filePath, source);
-  if (mainWindow) {
-    safeSend('pdf:openExternal', filePath);
+  // Multi-window semantic (todo #38): each external file opens in its
+  // own NEW window, never replacing what's already open. If the app
+  // hasn't reached `whenReady` yet, queue and let the whenReady
+  // handler create one window per queued path. If `app.isReady` is
+  // already true (warm Open-With on a running app), spawn directly.
+  if (app.isReady()) {
+    void createWindow(filePath);
   } else {
     openFileQueue.push(filePath);
   }
@@ -1140,19 +1289,29 @@ app.whenReady().then(async () => {
   buildAppMenu();
   // Eagerly initialize DB so a missing migration surfaces at startup, not on first explain.
   getDb();
-  await createWindow();
-  if (mainWindow) {
+
+  // Multi-window startup (todo #38). If the user launched Fathom with
+  // one or more PDFs (Open With, drag-onto-dock, argv), open one window
+  // PER queued path. If they launched empty, open a single empty
+  // window so the welcome card shows.
+  if (openFileQueue.length === 0) {
+    await createWindow();
+  } else {
+    const queued = openFileQueue.splice(0);
+    await createWindow(queued.shift());
+    for (const p of queued) {
+      void createWindow(p);
+    }
+  }
+
+  // Health checks anchor to whichever window came up first. Subsequent
+  // windows skip these (they're per-app concerns, not per-window).
+  const first = activeWindow();
+  if (first) {
     // If Claude isn't usable, tell the user on arrival — no point waiting for
     // them to hit the failure through a pinch gesture 3 minutes in.
-    await showClaudeHealthDialog(mainWindow);
-    await maybeShowFirstRunWelcome(mainWindow);
-
-    // Replay any PDFs the user dragged onto the dock icon / Open-With'd before
-    // the window was ready.
-    while (openFileQueue.length > 0) {
-      const p = openFileQueue.shift()!;
-      safeSend('pdf:openExternal', p);
-    }
+    await showClaudeHealthDialog(first);
+    await maybeShowFirstRunWelcome(first);
 
     // QA harness entry points. Global shortcuts fire regardless of
     // which app is frontmost, so the harness can drive a hidden
@@ -1160,18 +1319,20 @@ app.whenReady().then(async () => {
     // other work on the same machine. F9 / F10 are free on stock
     // macOS — the Function-key chassis apps (volume, brightness)
     // use F11 / F12 / media glyphs.
+    //
+    // Each shortcut targets the FOCUSED window (via safeSendActive)
+    // because in multi-window mode the user could have multiple papers
+    // open and only wants the action to apply to the one in front.
     globalShortcut.register('CommandOrControl+Shift+F9', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('qa:triggerSample');
-      }
+      safeSendActive('qa:triggerSample');
     });
     globalShortcut.register('CommandOrControl+Shift+F10', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      // /tmp, not tmpdir() — see qa:capture above for rationale.
+      const target = activeWindow();
+      if (!target) return;
       const destPath = join('/tmp', 'fathom-shots', `${Date.now()}-qa.png`);
       void (async () => {
         try {
-          const img = await mainWindow.webContents.capturePage();
+          const img = await target.webContents.capturePage();
           await mkdir(dirname(destPath), { recursive: true });
           await writeFile(destPath, img.toPNG());
           console.log('[QA] offscreen capture →', destPath);
@@ -1189,22 +1350,16 @@ app.whenReady().then(async () => {
     // collisions with common app shortcuts. Human users keep using
     // the window-level shortcuts; these are agent-only.
     globalShortcut.register('CommandOrControl+Shift+F8', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('qa:triggerDive');
-      }
+      safeSendActive('qa:triggerDive');
     });
     globalShortcut.register('CommandOrControl+Shift+F7', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('qa:triggerBack');
-      }
+      safeSendActive('qa:triggerBack');
     });
     globalShortcut.register('CommandOrControl+Shift+F6', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('qa:triggerForward');
-      }
+      safeSendActive('qa:triggerForward');
     });
     globalShortcut.register('CommandOrControl+Shift+F5', () => {
-      safeSend('settings:show');
+      safeSendActive('settings:show');
     });
   }
   app.on('activate', async () => {

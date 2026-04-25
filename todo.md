@@ -446,6 +446,13 @@ The single `let mainWindow` global has 41 reference sites in
 Defer (for later): tabs inside a window (browser-style), window
 menu listing all open papers.
 
+## 40. README — link to the docs site — ✅ DONE in this commit
+The README's nav line linked to individual docs pages (`./docs/INSTALL.md`,
+`./docs/PRINCIPLES.md`) but never to the rendered docs site at
+`https://ashryaagr.github.io/Fathom/` (built from `/docs` on `main`
+via GitHub Pages). Added it as the first link in the nav row so
+the docs-site landing is the primary discovery path.
+
 ## 39. Font strategy in lens responses — ✅ DONE in this commit
 User instruction: *"change our font strategy when we are
 responding to a question, instead of using all handwritten font.

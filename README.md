@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/ashryaagr/Fathom/main/install.sh | 
 
 Prefer drag-to-Applications? [Get the Mac DMG →](./docs/INSTALL.md#option-b--dmg)
 
-[Install guide](./docs/INSTALL.md) · [Distribution](./docs/DISTRIBUTION.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
+[Documentation](https://ashryaagr.github.io/Fathom/) · [Install guide](./docs/INSTALL.md) · [Distribution](./docs/DISTRIBUTION.md) · [How it works](#how-it-works) · [Principles](./docs/PRINCIPLES.md) · [Build from source](#build-from-source) · [All releases](https://github.com/ashryaagr/Fathom/releases)
 
 </div>
 
