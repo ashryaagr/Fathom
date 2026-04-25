@@ -164,11 +164,12 @@ The data model is now lens-id-keyed for everything that's lens-
 specific, and region-id-keyed only for genuinely region-bound
 data (regions, explanations). No more ad-hoc spreads.
 
-## 22. Animated thinking indicator inside the lens — 🔄 PENDING
-"Working…" / "thinking" text in the lens body during stream is
-static. Should animate (pulsing dots, or a typewriter cursor on
-the in-progress sentence) so the user feels progress, not stuck.
-Schedule: v1.0.12 alongside the audit above.
+## 22. Animated thinking indicator inside the lens — ✅ DONE in v1.0.12
+ThinkingIndicator component (FocusView.tsx) renders three
+pulsing dots plus cycling phrasing ("reading the paper",
+"looking at figures", "checking citations", "pulling the right
+context", "thinking it through") that rotate every ~2 seconds.
+Visible the moment a turn starts streaming with empty body.
 
 ## 23. Phase 3 — inline drill markers — ✅ DONE in v1.0.15
 The Phase 2 implementation (chip row at top of body) was a
@@ -302,7 +303,7 @@ Open questions for the author:
 Schedule: v1.1.0 (it's a meaningful product surface change, not
 a point release).
 
-## 28. QA agent should not steal cursor / Space focus — 🔄 PENDING
+## 28. QA agent should not steal cursor / Space focus — ✅ DONE in v1.0.13
 User: "When the QA agent is working on my system, it directly pulls
 me back to the screen where it's working. It should isolate itself
 there. If I want to work on a different screen, I should not be
@@ -426,25 +427,19 @@ InstructionInput's input), `fathom:askCurrentViewport` otherwise
 (PdfViewer listens and dives into the viewport). Highlight and
 Preferences already worked at every depth after v1.0.15.
 
-## 38. Multi-PDF support (multiple windows) — 🔄 PENDING
-User instruction: *"Currently, at a time, I can only open one pdf
-in Fathom and want to be able to open multiple."*
+## 38. Multi-PDF support (multiple windows) — ✅ DONE
+Shipped: registry helpers (`activeWindow`, `safeSendActive`,
+`safeBroadcast`, `createWindow(initialPath?)`); Open With spawns
+a new window per file; `Cmd+N` opens a fresh window;
+globalShortcuts target the focused window; auto-updater inits
+once and broadcasts to all windows; Help → Check for Updates
+dialog anchors to the active window.
 
-The single `let mainWindow` global has 41 reference sites in
-`src/main/index.ts`. Plan:
-- Replace with a window registry helper (`getActiveWindow`,
-  `safeSendToWindow`, `safeBroadcast`, `createWindow(initialPath?)`).
-- Open With from Finder spawns a NEW window for each file (no
-  longer replaces the open document).
-- Add `Cmd+N` for "New Window" via the app menu.
-- Updater + globalShortcut handlers route to the focused window
-  (broadcast for updater news; focused window for QA shortcuts).
-- The existing per-window Zustand stores naturally isolate
-  document/lens/highlights state because each BrowserWindow has
-  its own renderer process.
+Per-window Zustand store isolation works automatically since
+Electron gives each BrowserWindow its own renderer process.
 
-Defer (for later): tabs inside a window (browser-style), window
-menu listing all open papers.
+Defer (later): browser-style tabs inside a single window, a
+custom Window menu listing open papers by title.
 
 ## 40. README — link to the docs site — ✅ DONE in this commit
 The README's nav line linked to individual docs pages (`./docs/INSTALL.md`,
