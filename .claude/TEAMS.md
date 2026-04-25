@@ -229,6 +229,87 @@ before the orchestrator declares the work done. This catches the
 "lost in translation" failure mode where a team builds 80% of
 the spec because the harder 20% wasn't called out crisply.
 
+## The AI scientist
+
+Added because the AI's behaviour IS the product's substance, not
+just instrumentation around it. Prompt phrasing, the choice of
+what to put in the cached prefix, the system-prompt length
+budget, the decision to use `Read` over `Grep` for a particular
+class of question — these are not UX choices and not engineering
+choices. They are scientific choices about how to elicit the best
+grounded answer from Claude on dense academic text.
+
+**Scope**: `src/main/ai/`, every literal system-prompt string in
+the codebase, the digest schema (`PaperDigest` in `decompose.ts`),
+the per-call explain prompt assembly, prompt-caching prefix
+contents, tool-use guidance in system prompts, decisions about
+when to feed `content.md` vs the digest.
+
+**Brief**: Treat the AI as an experimental subject. Each
+non-trivial prompt change gets a small eval — at minimum, a
+before/after on the bundled sample paper covering: (a) does the
+answer still cite the right page? (b) does it still avoid
+preamble? (c) does cost change materially? (d) does it still use
+tools rather than guess? Don't ship "feels better" prompt edits.
+
+**Evidence bar**: Any system-prompt change carries either a
+diff-grade with at least three Q/A pairs from the sample paper
+showing the new prompt is at least as good as the old, OR an
+explicit "rolled back if eval regresses" flag in the commit
+message. Cost-per-call deltas are reported to the nearest cent
+when they exceed 10% in either direction.
+
+**Relationship to the cognitive-psychology reviewer**: The cog
+reviewer ensures the *user* can think clearly. The AI scientist
+ensures *Claude* can think clearly about the paper. Both can
+veto independently within their domain; conflicts escalate to
+the user with both perspectives named.
+
+## The software engineer (architect)
+
+Added because the product teams each have vertical scope. Nobody
+holds the horizontal view: how the data model evolves across
+teams, where tech debt is accumulating, when an IPC contract is
+about to ossify into a back-compat trap, when a refactor today
+saves a month of pain.
+
+**Scope**: Architecture-level decisions that span two or more
+team scopes. Type contracts between main and renderer
+(`src/preload/index.ts` interfaces). The shape of new IPCs
+before they ship. The `out/` build pipeline (electron-vite +
+electron-builder configuration). The schema-evolution story
+(additive migrations, when to deprecate vs delete). Performance
+beyond rendering — IPC overhead, SQLite query patterns, memory
+footprint of multi-window state.
+
+**Brief**: Keep the horizontal view. Spot tech debt before it
+becomes load-bearing. Push back on shortcuts that mortgage a
+future team's velocity. Be the only role that's allowed to say
+"this needs to slow down because we're about to commit to a
+contract we'll regret."
+
+**Evidence bar**: Refactor commits include a "what this unlocks"
+paragraph (a future feature that becomes feasible, a bug class
+that becomes impossible). Cross-team API additions get a
+one-paragraph contract description before any team uses them.
+
+**When to engage the SE**:
+
+- Any commit touching files from two or more product teams' scope.
+- Any new IPC channel or settings field — route through SE for
+  the contract, then to the owning team for the implementation.
+- Any schema migration (additive or otherwise).
+- Any change that adds a new top-level dependency.
+- Periodic "architectural smell" audits — pulled by the
+  orchestrator, not on a fixed schedule.
+
+**Relationship to the cog reviewer + AI scientist**: All three
+review independently within their domain. Cog reviewer = is the
+HUMAN load right? AI scientist = is the CLAUDE load right? SE =
+is the SYSTEM load right? A diff that touches all three (e.g. a
+new pluggable backend, a new gesture that adds a Claude tool)
+gets all three reviews.
+
 ## The cognitive-psychology reviewer
 
 Every team commit (or subagent output, before integration) goes

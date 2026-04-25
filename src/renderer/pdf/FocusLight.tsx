@@ -343,17 +343,23 @@ export default function FocusLight({
   if (!pageEl) return null;
   const pageRect = pageEl.getBoundingClientRect();
 
-  // FIVE-word window with Gaussian opacity falloff (per user spec —
-  // "five words at a time", "the middle word should be brighter",
-  // "Gaussian pyramid style"). Slots, in reading order:
-  //   m-2 : outer left   (faint   — opacity 0.20)
-  //   m-1 : inner left   (medium  — opacity 0.45)
-  //   m   : middle       (bright  — opacity 0.85, plus glow)
-  //   m+1 : inner right  (medium  — opacity 0.45)
-  //   m+2 : outer right  (faint   — opacity 0.20)
+  // FIVE-word window with a SHALLOW Gaussian. All five must be
+  // clearly lit — the user explicitly rejected the previous outer-
+  // 0.20 opacity as "tiny bit of focus light around" the central
+  // words; they want the 5-word window to BE the focus light, not a
+  // central core with faint surrounding hints. So all five sit at
+  // ≥ 0.55, gradient is gentle:
+  //   m-2 : outer left   0.60
+  //   m-1 : inner left   0.75
+  //   m   : middle       0.90  (no glow — glow halo bleeds outside
+  //                              the 5 words and reads as
+  //                              "surrounding focus light", which the
+  //                              user explicitly rejected)
+  //   m+1 : inner right  0.75
+  //   m+2 : outer right  0.60
   // Edge cases: at start/end of region, missing slots are simply
-  // skipped — the user gets a smaller window for the first/last
-  // few words. Acceptable per "less is okay, but not more."
+  // skipped — the user gets a smaller window for the first/last few
+  // words. Acceptable per "less is okay, but not more."
   const m = anchor.middleIndex;
   type Slot = { span: HTMLElement; role: 'outer' | 'inner' | 'middle'; offset: -2 | -1 | 0 | 1 | 2 };
   const slots: Slot[] = [];
@@ -370,12 +376,15 @@ export default function FocusLight({
 
   const padX = 2;
   const padY = 2;
-  // Transition duration matches one tick of the WPM cadence (capped
-  // for the very-slow end so a 10-wpm tick doesn't take 6 s to
-  // animate). This is what makes the band feel "continuously
-  // moving" instead of jumping every word.
+  // Continuous motion: transition duration = the FULL tick interval,
+  // so as soon as one slide completes the next begins — no perceived
+  // gap, the band is always in motion. Capped at 1.5 s for the
+  // very-slow end (10 wpm = 6000 ms) so a single advance doesn't
+  // visibly drift forever; faster than that the user sees the
+  // transition complete before the next tick anyway and the band
+  // pauses briefly. Acceptable tradeoff at the slow end.
   const tickMs = Math.max(40, Math.round(60000 / Math.max(10, wpm)));
-  const transitionMs = Math.max(80, Math.min(tickMs - 30, 600));
+  const transitionMs = Math.max(80, Math.min(tickMs, 1500));
 
   return createPortal(
     <>
@@ -387,8 +396,7 @@ export default function FocusLight({
         const width = r.width + padX * 2;
         const height = r.height + padY * 2;
         const opacity =
-          slot.role === 'middle' ? 0.85 : slot.role === 'inner' ? 0.45 : 0.20;
-        const isMiddle = slot.role === 'middle';
+          slot.role === 'middle' ? 0.90 : slot.role === 'inner' ? 0.75 : 0.60;
         return (
           <div
             // Stable key per offset (NOT per middleIndex) so React
@@ -407,7 +415,14 @@ export default function FocusLight({
               mixBlendMode: 'multiply',
               pointerEvents: 'none',
               borderRadius: 4,
-              boxShadow: isMiddle ? '0 0 8px 1px rgba(220, 160, 30, 0.35)' : 'none',
+              // No box-shadow / glow on the middle. Even a soft glow
+              // halo bleeds 8+ px outside the band, lighting the
+              // text immediately around the 5 words — the user calls
+              // this "surrounding focus light" and explicitly
+              // rejected it. The opacity contrast alone (0.90 vs
+              // 0.75 vs 0.60) does the "this is the middle word"
+              // signalling without any out-of-band visual.
+              boxShadow: 'none',
               zIndex: 6,
               transition: `left ${transitionMs}ms linear, top ${transitionMs}ms linear, width ${transitionMs}ms linear`,
             }}
