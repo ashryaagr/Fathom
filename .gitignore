@@ -27,3 +27,14 @@ resources/icon.iconset/
 
 # Pre-pivot whiteboard pipeline — kept locally for reference, not committed.
 old/
+
+# Build artifacts at repo root (Vite/esbuild output dropped in cwd).
+/index.js
+/index-*.js
+
+# Local reference clone of excalidraw-mcp (the real vendor lives in
+# fathom-whiteboard/vendor/, not here).
+.vendor/
+
+# Runtime lock file written by the agent harness.
+.claude/scheduled_tasks.lock
