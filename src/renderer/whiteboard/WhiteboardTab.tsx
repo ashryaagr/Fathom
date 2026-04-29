@@ -59,6 +59,12 @@ export default function WhiteboardTab({ document }: Props) {
       saveScene: async (scene) => {
         await lens.whiteboardSaveScene(paperHash, serializeScene(scene));
       },
+      loadViewport: async () => {
+        return lens.whiteboardGetViewport(paperHash);
+      },
+      saveViewport: async (viewport) => {
+        await lens.whiteboardSaveViewport(paperHash, viewport);
+      },
       generate: (cb) => {
         setStatus(paperHash, 'pass2');
         return new Promise((resolve, reject) => {

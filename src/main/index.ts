@@ -16,6 +16,7 @@ import {
 // Filenames for the per-paper sidecar. Kept identical to the pre-pivot
 // pipeline so existing user whiteboards survive the upgrade.
 const WB_SCENE_FILE = 'whiteboard.excalidraw';
+const WB_VIEWPORT_FILE = 'whiteboard.viewport.json';
 import { getDb } from './db/schema';
 import {
   Papers,
@@ -1404,6 +1405,60 @@ ipcMain.handle(
   },
 );
 
+// Whiteboard viewport persistence — pan + zoom state. Saved to a
+// sibling sidecar file so the user lands at the same view on reopen.
+// The component fires saveViewport on a 250ms debounce while the
+// user pans/zooms; getViewport runs once on mount alongside loadScene.
+ipcMain.handle(
+  'whiteboard:getViewport',
+  async (
+    _event,
+    paperHash: string,
+  ): Promise<{ scrollX: number; scrollY: number; zoom: number } | null> => {
+    const indexPath = indexDirFor(paperHash);
+    const vpPath = join(indexPath, WB_VIEWPORT_FILE);
+    if (!existsSync(vpPath)) return null;
+    try {
+      const raw = await readFile(vpPath, 'utf-8');
+      const parsed = JSON.parse(raw) as Partial<{
+        scrollX: number;
+        scrollY: number;
+        zoom: number;
+      }>;
+      if (
+        typeof parsed.scrollX !== 'number' ||
+        typeof parsed.scrollY !== 'number' ||
+        typeof parsed.zoom !== 'number'
+      ) {
+        return null;
+      }
+      return { scrollX: parsed.scrollX, scrollY: parsed.scrollY, zoom: parsed.zoom };
+    } catch {
+      return null;
+    }
+  },
+);
+
+ipcMain.handle(
+  'whiteboard:saveViewport',
+  async (
+    _event,
+    req: { paperHash: string; viewport: { scrollX: number; scrollY: number; zoom: number } },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const indexPath = indexDirFor(req.paperHash);
+      await mkdir(indexPath, { recursive: true });
+      const vpPath = join(indexPath, WB_VIEWPORT_FILE);
+      await writeFile(vpPath, JSON.stringify(req.viewport), 'utf-8');
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Whiteboard SaveViewport] failed: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  },
+);
+
 // Helper: read the paper's content.md from the sidecar so we can hand
 // it to the pipeline as a markdown body (kind:'text'). The sidecar is
 // produced by buildPaperIndex during paper:state; if it's missing we
@@ -1609,6 +1664,11 @@ ipcMain.handle(
       if (existsSync(scenePath)) {
         await unlink(scenePath);
         deleted.push(WB_SCENE_FILE);
+      }
+      const viewportPath = join(indexPath, WB_VIEWPORT_FILE);
+      if (existsSync(viewportPath)) {
+        await unlink(viewportPath);
+        deleted.push(WB_VIEWPORT_FILE);
       }
       // Best-effort: nuke any legacy artefacts from the pre-pivot pipeline
       // so a paper that was generated under the old code starts clean.

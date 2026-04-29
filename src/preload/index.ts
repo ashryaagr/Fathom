@@ -585,6 +585,17 @@ const api = {
   ): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('whiteboard:saveScene', { paperHash, scene }),
 
+  whiteboardGetViewport: (
+    paperHash: string,
+  ): Promise<{ scrollX: number; scrollY: number; zoom: number } | null> =>
+    ipcRenderer.invoke('whiteboard:getViewport', paperHash),
+
+  whiteboardSaveViewport: (
+    paperHash: string,
+    viewport: { scrollX: number; scrollY: number; zoom: number },
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('whiteboard:saveViewport', { paperHash, viewport }),
+
   whiteboardClear: (
     paperHash: string,
   ): Promise<{ ok: boolean; deletedFiles: string[]; error?: string }> =>
