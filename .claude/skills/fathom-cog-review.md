@@ -137,13 +137,109 @@ Examples:
   (~80 wpm is the recommended study pace).
 - ✓ Default WPM of 80 with a slider exposing 10–150.
 
+### 9. Components must terminate at the ground problem, not at each other
+
+Established 2026-04-27 (CLAUDE.md §5 "Component-as-answer
+framing"). When an explanation surface — a lens answer, a
+whiteboard render, a drill-in chat, any place Fathom names a
+component / mechanism / equation / sub-system of the paper —
+each named piece MUST be framed as the **answer to a specific
+question** that traces back to the paper's **ground problem**
+(the end goal the paper is solving). Detail-soup explanations
+that interconnect components to other components without
+ground-problem terminus read as overwhelming and unrooted, even
+when each individual fact is correct. This is a content-quality
+rule, not a perception rule — it sits alongside rules 1–8
+because shipped explanations that fail it produce the same
+end-state as a working-memory overflow: the reader cannot hold
+the structure and gives up.
+
+The user's verbatim critique (CLAUDE.md §5):
+> "when we are listing the modules or different components, it
+> might help to understand things in a way that asks what is the
+> answer that each component is answering. … the user is very
+> much focused and oriented towards how everything connects to
+> the ground problem rather than just how these details are
+> interconnected."
+
+The reviewer must flag any of three failure modes:
+
+- **(a) Named component without a question framing.** A node,
+  bullet, callout, or paragraph names a piece of the paper
+  ("Cross-attention to DINOv3 patches", "Sparse self-attention",
+  "Loss term L_recon") but does not state the question it
+  answers. The component is presented as a standalone part.
+- **(b) Question terminates at another component.** The
+  question is present but resolves laterally — *"how does
+  cross-attention interact with the encoder?"* — instead of
+  resolving back to the paper's end goal. Component-to-
+  component questions are detail-soup with extra steps.
+- **(c) Ground problem is invisible.** The explanation contains
+  no thesis line, no end-goal sentence, no statement of what
+  the paper is ultimately trying to do. The reader has no
+  anchor for any of the questions the components allegedly
+  answer.
+
+Examples:
+- ✗ Whiteboard node labelled "Cross-attention to DINOv3 patches"
+  with no subtitle, no question, no annotation. (Failure mode a.)
+- ✗ Lens explanation: *"Cross-attention reads from DINOv3
+  patches. The encoder produces patch embeddings that
+  cross-attention queries. Self-attention then refines …"*
+  Every sentence connects components to other components; the
+  paper's reconstruction goal is never named. (Failure modes b
+  and c together.)
+- ✓ Whiteboard node "Cross-attention to DINOv3 patches" with
+  subtitle "→ what does this 3D point look like in each
+  photo?" and a thesis line at the top of the canvas reading
+  "Goal: reconstruct a 3D scene from sparse input views."
+  Question terminates at the ground problem; ground problem is
+  visible.
+- ✓ Lens explanation that opens with "The paper's goal is to
+  reconstruct a 3D scene from a handful of input views.
+  Cross-attention to DINOv3 patches answers: *what does this
+  3D point look like in each photo?* Sparse self-attention
+  answers: *which views should I trust for this point?* …"
+  Each component carries an explicit question that resolves
+  back to the named end goal.
+
+**This is a HARD review failure, not a soft suggestion.** When
+any of (a) (b) (c) is present, the verdict is REQUEST REVISION
+(or VETO if the surface is a default-shown explanation, since
+defaults affect every reading session per rule §8). The
+reviewer rejects the explanation and asks for a re-write that:
+
+1. Names the paper's ground problem explicitly (one sentence,
+   visible at the top of the surface).
+2. Frames every named component as "→ what question does this
+   answer?" with the question resolving back to the ground
+   problem.
+3. Eliminates pure component-to-component connective tissue, or
+   moves it below the question-as-answer framing as supporting
+   detail.
+
+The reviewer does NOT accept "but each fact is correct" as a
+defence. Correct facts assembled without ground-problem
+terminus is the failure mode this rule exists to catch. The
+ground problem is ascertainable from the paper digest; if
+Claude produced an explanation without using it, the prompt or
+the digest pipeline needs the upstream fix (route via the AI
+scientist per TEAMS.md), not just the artefact.
+
+This rule composes with rule §1 (working-memory ceilings):
+without a ground-problem anchor, every named component is a
+fresh chunk competing for working memory. The anchor lets the
+reader chunk components by "things that answer X" rather than
+holding each as a separate item.
+
 ## The review protocol
 
 For each diff, the reviewer:
 
-1. Identifies which of the 8 rules above are touched. Many
+1. Identifies which of the 9 rules above are touched. Many
    diffs touch only one (a copy change touches §6/§7; a new
-   gesture touches §3/§5).
+   gesture touches §3/§5; an explanation surface — lens
+   answer, whiteboard render — touches §9).
 2. For each touched rule, walks the diff line by line and
    tags one of:
      • ✓ — within the rule's ceiling

@@ -20,23 +20,23 @@ The full design spec lives at [`.claude/specs/whiteboard-diagrams.md`](https://g
        │                                          ▼
        │                                  [Inline consent prompt]
        │                                  "Generate whiteboard?
-       │                                   ~$1.90 · ~70 s"
+       │                                   ~$3 · ~2 min"
        │                                          │ accept
        ▼                                          ▼
 [Pass 1 — UNDERSTAND]                     [Pass 2 — RENDER (Level 1)]
-   Opus 4.7 (1M context)                     Opus 4.7
+   Opus 4.7 (1M context)                     Opus 4.7 + Whiteboard MCP wrapper
    Reads ENTIRE paper                        Cached: Pass 1 output
-   Tools: Grep on content.md                 Tools: Glob on images/
-   Output: Markdown                          Output: WBDiagram JSON
-   "understanding doc"                               for Level 1
+   Tools: Grep on content.md                 Tools: read_diagram_guide,
+   Output: Markdown                                  create_node_with_fitted_text,
+   "understanding doc"                               connect_nodes, describe_scene,
+                                                    export_scene, Read
+                                            Output: .excalidraw scene JSON
+                                                    (authored directly via MCP
+                                                     tools — no DSL middle step)
                                                     │
                                                     ▼
-                                          [ELK.js auto-layout]
-                                                    │
-                                                    ▼
-                                          [Excalidraw scene]
-                                          (rendered in tab —
-                                           figures embedded inline)
+                                          [Renderer mounts via api.updateScene]
+                                          (figures embedded inline)
 
                             ──────────────────────────────────
 
@@ -44,15 +44,15 @@ The full design spec lives at [`.claude/specs/whiteboard-diagrams.md`](https://g
                             │
                             ▼
             [Pass 2 — RENDER (Level 2 × N)]
-               Opus 4.7  ·  Promise.all
+               Opus 4.7 + MCP wrapper · Promise.all
                Cached: Pass 1 output         (each call is independent
-               Output: one WBDiagram JSON     and shares the cached prefix —
-                       per drillable node     parallelism is free)
+               Output: one .excalidraw         and shares the cached prefix —
+                       scene per drillable     parallelism is free)
                             │
                             ▼
-            [ELK.js auto-layout → new Excalidraw frames]
-            (animated zoom in when the user clicks a drillable node;
-             frames are usually already painted by then)
+            [Renderer offsets each L2 by parent.y + parent.h + 200]
+            (vertical drill placement; animated zoom in when the user
+             clicks a drillable node; frames usually already painted)
 ```
 
 ## Pass 1 — Understand
@@ -77,30 +77,35 @@ The full design spec lives at [`.claude/specs/whiteboard-diagrams.md`](https://g
 
 ## Pass 2 — Render (called per diagram)
 
-**What it does.** Takes the cached Pass 1 understanding doc + a render request ("Render Level 1" or "Render Level 2 for the node labelled X") and emits a `WBDiagram` JSON — node/edge list with optional citations, kinds, layout hint, and an optional `figure_ref`. Pass 2 was originally specced as Sonnet 4.6 but shipped on Opus 4.7 (PM update 2026-04-25): "A diagram is the user's mental-model substitute for the paper; quality consistency between Pass 1 (understanding) and Pass 2 (rendering) matters more than the per-call cost saving." Net cost bumps from ~$1.50 to ~$1.90 per paper.
+**What it does (post-2026-04-26 MCP architecture).** Pass 2 drives an SDK-instantiated **Whiteboard MCP wrapper** (`src/main/mcp/whiteboard-mcp.ts::createWhiteboardMcpWithStateAccess`) and authors the `.excalidraw` scene directly via tool calls. No DSL middle step, no ELK layout pass, no `convertToExcalidrawElements` skeleton conversion — the agent emits the Excalidraw shape the renderer loads. Single source of truth.
 
-**The DSL.** Loose schema, all fields except `nodes` and `edges` optional. Renderer is tolerant: missing summaries default; unknown `kind` values fall back to "process"; layout-hint defaults to "lr" (left-to-right); missing or invalid `figure_ref` silently falls back to text-only. Nothing in the DSL is a hard constraint that breaks the model.
+**Why MCP-driven authoring.** The user explicitly wanted *"the agent to have the best tools accessible through the language it understands"* and *"see what they drew."* The wrapper exposes six tools: `read_diagram_guide`, `create_node_with_fitted_text`, `connect_nodes`, `describe_scene`, `export_scene`, `clear_scene`. The agent reads the guide once, creates nodes one at a time, connects edges, calls `describe_scene` as a self-critique step (counts, positions, broken-binding check), then `export_scene`. Caller (`runPass2`) snapshots the state via `getScene()` after the stream finishes — defensive against the agent forgetting `export_scene`.
 
-**Tools.** Pass 2 has read-only `Glob` on the per-paper sidecar — specifically so the model can confirm which `images/page-NNN-fig-K.png` figure files actually exist before committing a `figure_ref`. No `Read`, no `WebSearch`, no `Bash`. Same Chain-of-Verification spirit as Pass 1's grep escape hatch (Dhuliawala et al. 2023).
+**Architecture choice (Option C).** We do **not** spawn the upstream `yctimlin/mcp_excalidraw` Express + stdio pair (the upstream is designed for chat clients with a live shared canvas, which Fathom doesn't need). The vendored upstream lives at `.vendor/mcp_excalidraw-reference/` for reference only. Full design captured in `.claude/specs/whiteboard-mcp-pivot.md` and the `fathom-excalidraw` skill.
 
-**Caching.** Pass 2 reuses the Pass 1 understanding doc as the cached prefix (passed to the Claude Agent SDK). The `[Whiteboard Pass2]` log line reports `cache=HIT` or `cache=miss` — instrument first, escalate later. Pass 2 calls (1 for Level 1, up to 5 for Level 2 expansions) all hit the same prefix; per-call cost ~$0.05 on a hit (Opus pricing).
+**Server-side text fitting.** The wrapper's `create_node_with_fitted_text` measures label + summary using a character-width approximation matching the rendered Excalifont/Helvetica font sizes (10 px/char for 16 px Excalifont labels, 7.5 px/char for 13 px Helvetica summaries — over-estimated so the rect always contains its text). Sizes the rect to fit BEFORE creating; emits rect + bound text element with `containerId` properly set. This is the load-bearing fix for "text overflows the boxes" — the agent doesn't compute geometry; the wrapper does.
 
-**Eager Level 2 pre-warm.** The renderer kicks off all Level 2 expansions in parallel as soon as Level 1 lands (`Promise.all` — each call is independent and shares the cached prefix). This turns the worst-case "user clicks a drillable node → wait 8 s for the L2 to land" into "user clicks → it's already painted, or close to it." Cancellable: if the user closes the tab mid-warm the abort controllers cancel the in-flight calls.
+**Tools.** Pass 2 has the six wrapper MCP tools + `Read` (for citation grounding against `<indexPath>/content.md`). No `Write`, `Bash`, `WebSearch`, or upstream-MCP tools. `maxTurns: 30` leaves headroom for self-correction.
 
-**Rendering.** The DSL is fed into ELK.js (Eclipse Layout Kernel — the same engine Excalidraw's auto-layout uses) for hierarchical placement, then converted to an Excalidraw scene with proper bindings. The model never emits Excalidraw JSON directly because Excalidraw scenes have ~30 fields per element with brittle inter-element bindings; LLMs get them consistently wrong.
+**Model.** Opus 4.7 throughout (Pass 1 + Pass 2). User override 2026-04-25: *"You should have been using Opus 4.7"* — quality consistency matters more than per-call cost.
 
-**Visual continuity rules** (from the Visual Abstraction researcher):
+**Caching.** Pass 2 reuses the Pass 1 understanding doc as the cached prefix (passed to the Claude Agent SDK). The `[Whiteboard Pass2]` log line reports `cache=HIT` or `cache=miss`. Cache HIT cuts input cost by 90% — measured ~$0.40 per L1 + ~$0.30 per L2 in the 2026-04-26 close-the-loop run.
 
-- ≤ 5 nodes per diagram (Cowan 4±1 working memory cap).
+**Eager Level 2 pre-warm.** The renderer kicks off all Level 2 expansions in parallel as soon as Level 1 lands (`Promise.all` — each call is independent and shares the cached prefix). Click feels instant because the L2 frame is usually already painted. Cancellable: if the user closes the tab mid-warm the abort controllers cancel the in-flight calls.
+
+**Visual continuity rules** (encoded in the wrapper's `DIAGRAM_GUIDE` constant):
+
+- ≤ 5 nodes per diagram (Cowan 4±1 working memory cap). Wrapper enforces via `describe_scene`'s overflow flag.
 - Same Excalifont, same hand-drawn stroke, same palette across all levels.
-- Level 2 diagrams render inside a parent-frame outline labeled with the parent node's name; sibling Level 1 nodes ghost to ~20% opacity at the canvas edges so the user knows where they are.
-- Drillable nodes carry a `⌖` glyph + dashed inner border; leaf nodes carry no glyph + solid border; generating nodes carry a spinning `⌖` + dashed border. Three non-color signals (color-blind safe).
-- Citation markers (small amber square in node's top-right) follow the same grammar as PDF lens markers — one unified marker language across the product.
-- **Bound text inside containers**: each node's label and (optional) summary live inside ONE bound text element with `containerId` set to the rectangle. Excalidraw centers + word-wraps it inside the container, which is the only way to keep text from spilling outside the rect at varying summary lengths. Free-positioned summary text (the v1 attempt) is forbidden — it overflowed the boxes and overlapped neighbors.
+- Level 2 diagrams sit BELOW the parent L1 node (renderer offsets every element by `parent.y + parent.h + 200`).
+- Drillable nodes carry a `⌖` glyph + dashed inner border; leaf nodes carry solid border + no glyph.
+- Citation markers (small amber square in node's top-right) follow the same grammar as PDF lens markers.
+- One node per diagram is `kind: "model"` (the novel contribution) — renderer fills with warm beige (#fef4d8).
+- Embedded paper figures: `figure_ref: {page, figure}` on a node → renderer embeds `<sidecarDir>/images/page-NNN-fig-K.png` next to the rect. Falls back silently if the file doesn't exist.
 
-**Embedded paper figures.** When the understanding doc references a figure for a node (e.g. "see Figure 2"), Pass 2 may set `figure_ref: {page: N, figure: K}` on that node. The renderer composes the path `<sidecarDir>/images/page-NNN-fig-K.png`, registers the PNG with Excalidraw's `addFiles`, and embeds it as an `image` element to the right of the node's rectangle. Single highest-leverage UX win — readers recognise their own paper's figures instantly. Falls back silently to text-only if the file doesn't exist (no crash). The lookup is a deterministic path computation, not retrieval — preserves CLAUDE.md §6's no-RAG rule.
+**What to look for in logs.** `[Whiteboard Pass2] BEGIN paper=… level=N` per call. The agent's tool calls show as `🔧 read_diagram_guide`, `🔧 create_node_with_fitted_text`, etc. on the `onProgress` stream. `[Whiteboard Pass2] END paper=… level=N elements=N tools=N tokens(…) cache=HIT|miss cost=$… t=…ms`. `[Whiteboard UI] L1 mounted` and `[Whiteboard UI] L2 mounted parent=…` for the renderer-side mount events.
 
-**What to look for in logs.** `[Whiteboard Pass2]` lines. Per render: target frame (`level=1` or `level=2 parent=L1.X`), token counts, cache hit/miss (`cache=HIT` or `cache=miss`), USD cost, latency. `[Whiteboard Render]` lines for the ELK layout pass include node + edge counts and the resulting bounding box. `[Whiteboard UI]` lines from the renderer mark each end-to-end pipeline transition (`generate begin`, `pass1 done`, `pass2 done`, `expand begin`, `generation complete`).
+**Smoke testing without Electron.** Run `npx tsx scripts/runpass2-smoke.mts` to drive the MCP-driven Pass 2 against a cached Pass 1 doc — ~$0.40 per L1 iteration, no Electron, no UI. Output `.excalidraw` lands in `/tmp`; inspect with `node scripts/inspect-scene.mjs <path>.excalidraw`. See the `fathom-excalidraw` skill for the full smoke-test playbook.
 
 ## Anti-hallucination — soft verifier
 
@@ -142,10 +147,12 @@ For a typical 10-page paper:
 | Stage | Cost (first run) | Latency |
 |---|---|---|
 | Pass 1 (Opus 4.7) | ~$1.35 | ~50 s |
-| Pass 2 — Level 1 (Opus 4.7, cached) | ~$0.05 | ~5–8 s |
-| Pass 2 — Level 2 ×5 (Opus 4.7, cached, parallel) | ~$0.50 | ~5–8 s wall-clock (parallel) |
-| **Total first-time generation** | **~$1.90** | **~60 s to L1 paint, ~70 s to L1+L2 fully expanded** |
+| Pass 2 — Level 1 (Opus 4.7, MCP-driven, cache HIT) | ~$0.40 | ~80 s |
+| Pass 2 — Level 2 ×5 (Opus 4.7, MCP, cache HIT, parallel) | ~$1.40 (5 × ~$0.28) | ~80 s wall-clock (parallel) |
+| **Total first-time generation** | **~$3.15** | **~130 s to L1 paint, ~140 s to L1+L2 fully expanded** |
 | Per side-chat patch | ~$0.05 | ~3 s |
+
+Verified via `npx tsx scripts/runpass2-smoke.mts` runs on 2026-04-26 against the bundled sample paper (ReconViaGen). Cache HIT confirmed on every Pass 2 call against the same paper.
 
 The user's Claude CLI auth pays for this — so consent is required per paper. First Whiteboard-tab click for a paper shows an inline button: *"Generate whiteboard for this paper? · ~$1.90 · ~70 s"*. After accept, the pipeline runs. A Preferences toggle "auto-generate on index" can flip default behavior.
 
@@ -177,32 +184,194 @@ Because Level 2 expansions are pre-warmed in parallel as soon as Level 1 lands (
 
 To drill back out: click the breadcrumb's "Paper" segment, or two-finger swipe right (matches existing lens history navigation).
 
-## Pass 2.5 — visual critique loop ("AI agents that produce visual artefacts must see-and-iterate")
+## Self-critique loop (now intra-Pass-2, was a separate Pass 2.5)
 
-After Pass 2 emits a `WBDiagram` and the renderer rasterises it via Excalidraw's `exportToCanvas`, an Opus 4.7 critique pass LOOKS at the rendered PNG against a small set of layout rules:
+Pre-2026-04-26 the architecture had a separate Pass 2.5 critique stage that rasterised the WBDiagram to a PNG and asked Opus to review it. **That stage is gone.** The MCP-driven Pass 2 self-critiques inside the same tool-use loop via `describe_scene`:
 
-- text inside boxes (no overflow)
-- arrows don't cross node geometry
-- no orphan dashed placeholders (skeleton was torn down)
-- drillable nodes carry the ⌖ glyph + dashed inner border
-- figure embeds resolve (no broken-image placeholders)
-- ≤ 5 nodes per diagram
+- The wrapper's `describe_scene` returns a structured text dump (counts by element kind, per-node positions, broken-binding check, ≤5-nodes flag).
+- The system prompt instructs the agent to call `describe_scene` BEFORE `export_scene` as the explicit verification step.
+- If `describe_scene` reports problems, the agent fixes via more tool calls (or `clear_scene` + retry).
+- No separate Opus call, no PNG round-trip, no patch-vs-replace ops list.
 
-The critic emits one of:
+This is the "AI agents that produce visual artefacts must see-and-iterate" principle (CLAUDE.md §0), implemented at the right level: the agent sees state during authoring, not after rendering.
 
-- `{ "ok": true }` — diagram passes; ship to canvas
-- `{ "fix": "patch", "ops": [...] }` — typed ops to apply locally (`shorten_summary`, `rename_label`, `drop_node`, `drop_edge`, `set_drillable`, `set_figure_ref`)
-- `{ "fix": "replace", "diagram": {...} }` — emit a fresh WBDiagram
+Cost vs. old Pass 2.5: net ~$0.15 saved per paper (no separate critique calls), and ~30s of latency removed (no PNG export + Read round-trip).
 
-The renderer applies the fix, re-renders to PNG via the same `exportToCanvas` path, re-submits, and ships whatever the final iteration produced. Loop caps at 3 iterations. The PNG path is `<sidecar>/whiteboard-render-iter-N.png` and the model `Read`s it via the standard tool — same pattern as the lens reads the zoom image (CLAUDE.md §6 — "Claude's Read tool handles PNG natively"). No headless Puppeteer needed: `exportToCanvas` runs against the live renderer's Excalidraw bundle and returns a Canvas which we serialise via `.toDataURL('image/png')`.
+## Pass 2.5 — visual self-critique (re-introduced 2026-04-27, after intra-Pass-2 alone proved insufficient)
 
-Cost: ~$0.05 per critique iteration on Opus 4.7. Worst case (3 iterations) adds ~$0.15 to a paper's first-time generation, bringing total to ~$2.05/paper. The critique cost is rolled into the per-paper Pass 2 cost counter so the bottom-left cost pill shows a true total.
+The intra-Pass-2 `describe_scene` self-critique is necessary but not sufficient. Round-9 user critique surfaced three structural defects (zone-vs-zone overlap, text-vs-container overflow, arrow-path-vs-text crossing) that `describe_scene`'s element-bbox math read as clean while the *rendered pixels* were visibly broken. The agent that authored the scene cannot trust the scene without seeing the render — same close-the-loop principle (CLAUDE.md §0) that applies to human implementers, applied in-product.
 
-Logs:
+**Pass 2.5 is a separate vision call that runs after Pass 2 emits a WBDiagram and the renderer rasterises it to PNG.** It does NOT replace `describe_scene` — both run; `describe_scene` catches scene-graph bugs cheaply during authoring, Pass 2.5 catches pixel-level layout bugs the scene-graph cannot.
 
-- `[Whiteboard Pass2.5] BEGIN paper=… iter=N png=…` per iteration
-- `[Whiteboard Pass2.5] END paper=… iter=N verdict=OK|patch|replace cost=$… t=…ms`
-- `[Whiteboard UI] Pass2.5 iter=N verdict=… cost=$…` from the renderer side
+### Where it sits in the pipeline
+
+```
+Pass 2 (Opus 4.7 + MCP) → emits .excalidraw scene
+                  │
+                  ▼
+Renderer rasterises → exportToCanvas → PNG (in renderer process)
+                  │
+                  ▼
+whiteboard:writeRenderPng IPC → main writes <sidecar>/wb-iter-<n>.png
+                  │
+                  ▼
+whiteboard:critique IPC → runCritique (src/main/ai/whiteboard-critique.ts)
+                  │   • Loads PNG bytes from disk
+                  │   • Spawns SDK MCP server exposing look_at_render tool
+                  │   • Calls Opus 4.7 (vision) with the rubric system prompt
+                  │   • Agent calls look_at_render → sees PNG inline
+                  │   • Agent emits structured-JSON verdict
+                  ▼
+verdict { pass: bool, defects: [{ kind, stage_attribution, location, fix_suggestion, severity }] }
+                  │
+                  ▼
+Renderer's runCritiqueLoop decides:
+  • verdict.pass === true (or unparseable) → ship to live scene
+  • verdict.pass === false + verdict.fix === 'patch' → applyOpsToDiagram + re-loop
+  • verdict.fix === 'replace' → swap diagram + re-loop
+  • iter >= 3 → ship best-we-have (never block the user)
+```
+
+### What the critique prompt evaluates
+
+The system prompt in `src/main/ai/whiteboard-critique.ts` embeds the rubric in-line (the file `.claude/critics/whiteboard.md` is in the source tree, not the shipped Electron app, so embedding is mandatory). Two checklist tiers:
+
+**Tier 1 — Geometric checklist (mandatory, pixel-level):**
+1. Zone-vs-zone overlap (zones obscuring each other's content).
+2. Text-vs-container overflow (text past a node/callout/zone-label edge).
+3. Arrow-path-vs-text crossing (the path, not just the label, crossing a text element).
+4. Element-vs-element overlap (nodes/callouts overlapping in rendered pixels — bbox math can read clean while padding/stroke makes pixels collide).
+
+Any geometric defect is `severity: "fail"` regardless of how good the content is — unreadable diagrams are higher-priority failures than content-quality nuances.
+
+**Tier 2 — Rubric axes (semantic):**
+- Zones present and meaningful.
+- Color roles correct (blue=input, green=output, amber=notes, red=error, purple=processing).
+- Modality matches content (sequential → flow, math → big-text-with-box-no-shapes, etc.).
+- Component-as-answer framing (every node visibly answers a question that traces back to the paper's ground problem).
+- Section numbering sequential.
+- Equations decomposed (name + intent + per-symbol explanation).
+- Container fit (no oversized empty boxes).
+
+### Stage attribution — the load-bearing addition
+
+Every defect carries `stage_attribution` naming which pipeline stage produced it:
+
+| `stage_attribution` | What this means | Re-run cost |
+|---|---|---|
+| `pass1_narrative` | The understanding doc didn't surface a fact or question the diagram needed (ground problem missing, component questions missing, term wrong) | ~$1.35 (full Pass 1) |
+| `pass_a_planning` | The layout intent was wrong (no zones, sections out of order, modality mismatched, component framing not as question-as-answer) | ~$0.40 (Pass 2 with cached prefix) |
+| `pass_b_placement` | Elements placed in wrong positions (overlapping, wrong colors picked from the palette, narrative ordering broken, arrow endpoints poorly chosen) | ~$0.40 (Pass 2 with cached prefix) |
+| `wrapper_geometry` | MCP tool wrapper failed to enforce size / collision (text overflows, callout body too big for callout, zone/zone overlap not rejected) | ~$0 (code fix in `src/main/mcp/whiteboard-mcp.ts`) |
+| `renderer_layout` | Bug in render-side ELK / `convertToExcalidrawElements` / `exportToCanvas` (image embed didn't resolve, stroke width off) | ~$0 (code fix in `src/renderer/whiteboard/`) |
+
+The critique prompt instructs the agent: when in doubt between adjacent stages, attribute to the EARLIEST stage that could have prevented the defect — the isolation principle wants the fix as far upstream as possible.
+
+The per-stage CLI tooling (todo #64 Track C, owned by `isolation-impl`) keys off `stage_attribution`: when verdict says `wrapper_geometry`, the loop runs only the wrapper-geometry CLI to re-emit the affected nodes with no upstream re-execution.
+
+### Cost & latency budget
+
+Each Pass 2.5 round costs roughly $0.005–$0.015 at Opus 4.7 vision pricing (input is one ~700KB PNG ≈ ~1.5K tokens + a few hundred tokens of scene JSON; output is the JSON verdict, ≤ 500 tokens). Latency ~5–8 seconds per round. The renderer's `runCritiqueLoop` caps at 3 iterations (`CRITIQUE_MAX_ITERATIONS` in `WhiteboardTab.tsx`), so worst-case Pass 2.5 spend per paper is ~$0.045 + ~24 s wall-clock. After 3 iterations, the loop ships the latest diagram regardless — the user never sees a permanent stall on a critique disagreement.
+
+### Verdict shape — strict JSON
+
+The IPC returns `{ verdict: CritiqueVerdict | null, costUsd: number }` to the renderer. The verdict shape:
+
+```typescript
+{
+  pass: boolean,
+  defects: Array<{
+    kind: string,                                     // short snake_case tag
+    stage_attribution: 'pass1_narrative' | 'pass_a_planning' |
+                       'pass_b_placement' | 'wrapper_geometry' |
+                       'renderer_layout',
+    location: { x: number, y: number, width: number, height: number },
+    fix_suggestion: string,                           // tool-layer fix preferred
+    severity: 'fail' | 'warn'
+  }>
+}
+```
+
+`pass` is `true` only if every defect is `severity: "warn"` (or the array is empty). `verdict: null` from the IPC means the agent's reply failed to parse — `runCritiqueLoop` treats that as "approved" so a single parse bug never blocks the user from seeing their diagram.
+
+### What to look for in logs
+
+- `[Whiteboard Pass2.5] writeRenderPng paper=… iter=N bytes=… → <sidecar>/wb-iter-N.png` — the renderer-side PNG persisted.
+- `[Whiteboard Pass2.5] BEGIN paper=… iter=N png=… scene=…ch` — the vision call started.
+- `[Whiteboard Pass2.5] END paper=… iter=N body=…ch tools=… tokens(in=…, out=…) cost=$… t=…ms verdict=pass=true|false defects=N | unparseable` — the result.
+- `[Whiteboard UI] Pass2.5 iter=N verdict=… cost=$…` — renderer-side; the loop's per-round trace.
+
+### Where to look when the critique seems wrong
+
+1. **The critique APPROVED a render with a visible defect.** Check the geometric-checklist tier: did the agent miss the four mandatory checks? If so, the system prompt's checklist needs sharper language. The critic-rubric file `.claude/critics/whiteboard.md` is the long-form home; embed concise versions of any updated rule into the system prompt in `src/main/ai/whiteboard-critique.ts`.
+2. **The critique REJECTED a render that looked fine.** Check the agent's `fix_suggestion` and `kind` — often a false-positive is the agent flagging acceptable whitespace as overflow. Tighten the rubric's "container fit" thresholds (currently >50% whitespace = warn).
+3. **The verdict is `null` (unparseable).** The agent didn't return clean JSON. Check if `body` (logged at END) starts with prose or a markdown fence — `parseVerdict` strips a single ```json fence but not embedded prose. The system prompt's "NO PROSE BEFORE OR AFTER" instruction may need re-emphasis.
+4. **The critique ran but the loop never re-ran the broken stage.** That's the renderer-side `runCritiqueLoop`'s job (and isolation-impl's per-stage CLIs). Pass 2.5 emits the verdict; downstream consumption is on the loop driver. The current loop only handles `verdict.fix === 'patch' | 'replace'`; it does NOT yet route on `stage_attribution` — that wiring lands when the per-stage CLIs ship.
+
+## Per-stage isolation — re-run the broken stage, not the whole pipeline
+
+Per CLAUDE.md §0 ("Isolation and investigation") and §8 ("The in-product agent must close its own visual loop with per-stage isolation"). When Pass 2.5 attributes a defect to one stage, the team — and eventually the in-product agent — re-runs ONLY that stage, NOT the whole $1.90/paper Pass 1+2 chain. Each stage has a dedicated CLI under `scripts/` that consumes the prior stage's saved output and produces just its own output.
+
+### The five stages
+
+| Stage | What it does | CLI | Input format | Output format | Runtime | API spend |
+|---|---|---|---|---|---|---|
+| 1 | Pass 1 narrative — Opus reads the indexed paper, writes the understanding doc | `scripts/wb-stage1-pass1.mts` | sidecar dir (must contain `content.md`) | `whiteboard-understanding.md` | ~50 s | ~$1.35 |
+| 2 | Pass A planning — Opus produces a JSON plan (sections, zones, elements, edges, ground-problem sentence, per-node questions) with NO MCP tool calls | `scripts/wb-stage2-passA.mts` | `whiteboard-understanding.md` | `whiteboard-plan.json` | ~30 s | ~$0.20 |
+| 3 | Pass B placement — Opus drives the same MCP wrapper prod uses, executing the plan as tool calls | `scripts/wb-stage3-passB.mts` | `whiteboard-plan.json` (+ optional understanding for citation Read) | `<scene>.excalidraw` | ~80 s | ~$0.40 (cache HIT) |
+| 4 | Wrapper geometry — re-validate a saved scene against AC predicates + structural geometric audit (zone/zone overlap, text/container overflow, arrow/text crossing, content overlap) | `scripts/wb-stage4-wrapper.mts` | `<scene>.excalidraw` (+ optional understanding for AC hints) | stdout defect report; exit 0 = pass, 1 = fail | ~1 s | $0 |
+| 5 | Renderer / ELK layout — convert scene JSON to PNG via the live Excalidraw mount | `scripts/render-real.mjs` (existing) | `<scene>.excalidraw` | `<out>.canvas.png` + `<out>.page.png` | ~3 s | $0 |
+
+### Worked example — Pass 2.5 attributes a defect to Stage 4
+
+Critic verdict says: `defects: [{ kind: "text_overflow", stage_attribution: "wrapper_geometry", ... }]`. The team's response is NOT to regenerate the whole diagram. Instead:
+
+```bash
+# Step 1: confirm the defect from the saved scene with no API spend.
+npx tsx scripts/wb-stage4-wrapper.mts \
+  --scene /tmp/wb-pass2-smoke-1777264745822.excalidraw \
+  --understanding "$HOME/Library/Application Support/fathom/sidecars/<HASH>/whiteboard-understanding.md"
+
+# Stage 4 prints the per-element defect list; verifies the critic's attribution.
+# If the report has zero FAILs but the user reported a visible defect, the
+# attribution was wrong — re-route to Stage 5 (renderer bug) instead.
+
+# Step 2: fix the wrapper rejection logic in src/main/mcp/whiteboard-mcp.ts.
+# Add the missing accept/reject check (compute-then-reject per CLAUDE.md §8).
+
+# Step 3: re-run Stage 3 only — same plan, same understanding, $0.40 not $1.90.
+npx tsx scripts/wb-stage3-passB.mts \
+  --plan "$HOME/.../whiteboard-plan.json" \
+  --understanding "$HOME/.../whiteboard-understanding.md" \
+  --out /tmp/wb-stage3-fixed.excalidraw
+
+# Step 4: re-validate.
+npx tsx scripts/wb-stage4-wrapper.mts --scene /tmp/wb-stage3-fixed.excalidraw
+
+# Step 5: render to confirm the visible fix.
+node scripts/render-real.mjs /tmp/wb-stage3-fixed.excalidraw /tmp/wb-stage3-fixed
+```
+
+Total cost of this fix loop: ~$0.40 (one Stage 3 re-run). Compare to the naive "regenerate the whiteboard" path: $1.35 (Stage 1) + $0.20 (Stage 2) + $0.40 (Stage 3) = $1.95. Per-stage isolation saves the prior $1.55 of cached Stage 1 + Stage 2 work.
+
+### How the in-product Pass 2.5 hook consumes these CLIs
+
+The in-product Pass 2.5 verdict (`whiteboard:critique` IPC) returns each defect with a `stage_attribution`. The renderer-side `runCritiqueLoop` (in `WhiteboardTab.tsx`) is the consumer:
+
+- `stage_attribution: "pass1_narrative"` → re-run Stage 1 (rare; usually means the paper indexing missed content). Triggered via the `whiteboard:generate` IPC's regenerate path, NOT a separate stage hook in the renderer.
+- `stage_attribution: "pass_a_planning"` → re-run Stage 2 with a focused fix prompt (e.g. "the prior plan missed sub-question N for node X — re-plan with that included"). The Stage 2 CLI is the substrate; the IPC path lands when the renderer's Pass 2.5 loop is wired to route by attribution.
+- `stage_attribution: "pass_b_placement"` → re-run Stage 3 with the SAME plan and a focused critique-feedback addition. Most defects land here.
+- `stage_attribution: "wrapper_geometry"` → NO Claude re-run. Code fix in `src/main/mcp/whiteboard-mcp.ts` (the wrapper itself), then re-run Stage 3 once to re-emit the affected nodes through the corrected wrapper.
+- `stage_attribution: "renderer_layout"` → NO Claude re-run. Code fix in `src/renderer/whiteboard/` (or `scripts/render-real-entry.jsx` if the bug is in the harness), then re-run Stage 5.
+
+The Stage 2 / Stage 3 / Stage 4 CLIs share the same input/output format that the in-product pipeline uses (single source of truth for prompts via `src/main/ai/whiteboard-pass2-system.ts`, single source of truth for the MCP wrapper via `src/main/mcp/whiteboard-mcp.ts`), so when the renderer's loop is wired to route by attribution, it can call the same code paths the CLIs do.
+
+### When to use the CLIs vs the in-product loop
+
+- **In-product loop (Pass 2.5 inside the running app):** the user is reading a paper; the loop self-heals up to 3 times before showing the diagram. Bounded cost per paper, bounded latency.
+- **CLI loop (this section):** the team is debugging a defect class — the user reports something the in-product loop missed (or shipped with), and the team needs fast iteration without rebuilding the Electron app. CLI iteration is ~30 s per round, $0.40 for Stage 3, $0 for Stages 4–5.
+
+The CLIs were built first because they are lighter to iterate on; the in-product Pass 2.5 hook (the consumer) is built in parallel by `pass25-impl`. Both share the same stage definitions, the same prompts, the same wrapper.
 
 ## Doherty acknowledgement contract
 

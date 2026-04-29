@@ -1,7 +1,7 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import { homedir } from 'node:os';
 import { existsSync, statSync } from 'node:fs';
 import { resolveClaudeExecutablePath } from '../claudeCheck';
+import { runAgentSession } from './_agent-runner';
 
 /**
  * Build a structured digest of the paper from the on-disk index we've already
@@ -107,42 +107,35 @@ Be faithful — only include items that actually appear in the paper. If a secti
     `[Lens Decompose] indexPath=${indexPath} cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'}`,
   );
 
-  const q = query({
+  // `includePartialMessages: false` — same as the original. The runner
+  // accumulates text from the assistant message's content blocks under
+  // this mode (it accumulates from stream_event deltas under `true`);
+  // either way `responseText` carries the agent's final output.
+  const session = await runAgentSession({
     prompt,
-    options: {
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: DECOMPOSE_SYSTEM },
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      additionalDirectories: [indexPath],
-      includePartialMessages: false,
-      permissionMode: 'bypassPermissions',
-      abortController,
-      cwd,
-      pathToClaudeCodeExecutable,
-      // One Read of content.md + ~a handful of figure PNGs + one JSON turn.
-      // Large papers with many figures may need more; 16 is a comfortable ceiling.
-      maxTurns: 16,
+    systemPrompt: DECOMPOSE_SYSTEM,
+    allowedTools: ['Read', 'Grep', 'Glob'],
+    additionalDirectories: [indexPath],
+    includePartialMessages: false,
+    abortController,
+    cwd,
+    pathToClaudeCodeExecutable,
+    maxTurns: 16,
+    onToolUse: (name, input) => {
+      console.log(`[Lens Decompose] tool_use: ${name}`, input);
     },
   });
 
-  let body = '';
-  for await (const msg of q) {
-    if (msg.type === 'assistant') {
-      for (const block of msg.message.content ?? []) {
-        if (block.type === 'text') body += block.text;
-        if (block.type === 'tool_use') {
-          console.log(`[Lens Decompose] tool_use: ${block.name}`, block.input);
-        }
-      }
-    } else if (msg.type === 'result') {
-      console.log(`[Lens Decompose] result:`, msg.subtype);
-      if (msg.subtype === 'error_max_turns' || msg.subtype === 'error_during_execution') {
-        throw new Error(`Agent SDK decompose error: ${msg.subtype}`);
-      }
-    }
+  console.log(`[Lens Decompose] result:`, session.resultSubtype);
+  if (
+    session.resultSubtype === 'error_max_turns' ||
+    session.resultSubtype === 'error_during_execution'
+  ) {
+    throw new Error(`Agent SDK decompose error: ${session.resultSubtype}`);
   }
 
-  console.log(`[Lens Decompose] body length: ${body.length}`);
-  return parseDigest(body);
+  console.log(`[Lens Decompose] body length: ${session.responseText.length}`);
+  return parseDigest(session.responseText);
 }
 
 function parseDigest(body: string): PaperDigest {

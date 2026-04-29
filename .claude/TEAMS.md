@@ -35,6 +35,212 @@ Every implementer teammate operates under these rules:
    - The **close-the-loop principle** (this section) is the implementer's audit surface — verifying the output before the user has to.
    - Both are mandatory. Neither substitutes for the other. A feature with great docs but a broken render is broken; a feature with a clean render but no docs is undocumented.
 
+## Workflow rules (established 2026-04-26 from real-operation failures)
+
+### 0a. Teammates are per-turn workers, not autonomous processes — fit the unit of work into ONE turn
+
+(Established 2026-04-27 after multi-hour stall caused by treating teammates as autonomous.)
+
+**The architectural fact**: in this framework, a teammate is a stateless, per-turn agent invocation. When they SendMessage you a reply, their process exits. They cannot "wait 2 minutes then launch" or "send a standup every 5 minutes" between turns — they are not running between turns. Any "I'll do X next" or "I'll keep monitoring" promise from a teammate is a lie they cannot keep.
+
+**The implication**: the orchestrator is the loop driver. Each teammate ping must contain a complete unit of work that the teammate executes synchronously *within the turn* and returns a deliverable from. The teammate blocks on long-running processes INSIDE their turn (wait 5 min for smoke, wait 30s for render, etc.) and then replies with the result. They do NOT "kick off and idle to monitor."
+
+**Concrete shapes that work**:
+- "Run smoke. Wait synchronously for completion (use blocking shell, not background). Render the resulting scene. Ship the PNG to whiteboard-critic via SendMessage. Reply DONE with the path. **Total turn budget: 10 minutes.**"
+- "Read this PNG. Grade against the rubric file. Reply with the structured verdict. **Total turn budget: 5 minutes.**"
+- "Apply these 3 critic asks to <files>. Run typecheck. Reply DONE with file:line summaries. **Total turn budget: 30 minutes.**"
+
+**Concrete shapes that DON'T work** (and why):
+- ❌ "Launch smoke in the background. Standup every 5 min." — they go idle the moment they reply; nothing fires.
+- ❌ "Wait 2 min for cool-off then relaunch." — they're dead during the wait; they never wake to relaunch.
+- ❌ "Watch this monitor for events." — Monitors deliver events to whoever's running; if the teammate is idle, the event sits there unread.
+
+**Orchestrator rules that follow**:
+1. Every dispatch states an explicit time budget that fits comfortably within ONE turn (typically 5-30 minutes).
+2. Long-running work (smoke that takes 6 min) blocks INSIDE the turn — write the dispatch as "wait synchronously for completion" not "launch in background."
+3. The orchestrator drives the loop between turns. Critic returns verdict → orchestrator routes to impl. Impl returns done → orchestrator routes to critic. Etc.
+4. If a unit of work genuinely doesn't fit in one turn (e.g. 4-hour smoke), split it into per-turn-sized chunks at the orchestrator level — don't ask the teammate to checkpoint between turns.
+5. Standup polling (§5) and active-standups (§5e) still apply — but they're orchestrator-driven, not teammate-driven. The orchestrator pings every 5 min if there's no STOPPED signal.
+
+This rule SUPERSEDES the parts of §5d/§5e that implied teammates would standup-ping themselves between turns. They can't. The orchestrator drives the cadence.
+
+### 0. Orchestrator-as-CEO — never do the work yourself, always route to teammates
+
+(Established 2026-04-27 after repeated violations during the whiteboard build cycle.)
+
+The orchestrator (the team-lead conversation) is a CEO, not an individual contributor. CEO behaviours: dispatch teammates, set quality bars, route user critiques into rubric updates, retire stale members, escalate when loops stall. Non-CEO behaviours: read source files for diagnosis, edit code, run smoke harnesses, render PNGs, grade renders against rubrics. **All of the latter belongs to teammates.**
+
+The temptation pattern: "this is just one file edit, I'll do it directly — faster than briefing impl." Three reasons it's wrong:
+1. **Team-channel context vanishes.** When the orchestrator silently edits a file, the impl teammate doesn't know it happened. Their next standup may report on stale state. The critic doesn't know a fix was applied. Coordination breaks.
+2. **Separation-of-concerns collapses.** Impl and critic were intentionally split so author bias doesn't contaminate grading. When the orchestrator both edits the prompt AND grades the output, that wall is gone.
+3. **Orchestrator context burns.** Every direct file read, every direct PNG inspection, every direct smoke-log tail consumes orchestrator context that should be reserved for routing decisions. The team is the cheap parallel; the orchestrator is the scarce serial resource.
+
+Operational rules:
+- If the next instinct is "I'll just <action>" — STOP. Send it to the right teammate via SendMessage. If no right teammate exists, spawn one (TeamCreate + Agent({team_name, name})). If the right teammate is broken (silent after dispatch, can't load tools, etc.), respawn them with sharper init.
+- Never substitute orchestrator-direct work for missing/broken team mechanics. That's the workaround-vs-theater rule (§3 below) applied to coordination — fix the routing, don't bypass it.
+- The orchestrator's diagnostic surface is the team's reports, not the codebase. If a teammate's report is unclear, ask them — don't go look yourself.
+- One narrow exception: ONE-LINE EXPLORATORY commands the orchestrator runs to verify routing is alive (e.g. `pgrep`, `ls`, `git status`). These are coordination-debugging, not work. The line between coordination-debugging and doing-the-work: if the output of the command would change a file or produce a render, the orchestrator should not be running it.
+
+This rule subsumes "every high-level dispatch goes to a teammate" (CLAUDE.md §0) and tightens it: not just high-level work, but ALL work.
+
+
+
+These are operational rules for how the orchestrator runs the team. They were learned from failures during the whiteboard v3 build cycle. Read alongside close-the-loop.
+
+### 1. Visual-artefact iteration loops with the critic, not the user
+
+When a feature in the team produces a visible artefact (whiteboard render, lens diagram, future video/image output), the iteration loop closes between the **implementer teammate** and a dedicated **critic teammate** — not between the implementer and the user.
+- The implementer renders an artefact and SendMessages **only the rendered image** to the critic. The critic does NOT receive the implementation, the spec, the prompts, or the agent's reasoning chain — those would bias the grade. The critic grades the image against cognitive / UX / spec quality bars, exactly as a fresh user would.
+- The critic returns a verdict (`APPROVED` / `ITERATE` with specific feedback / `REJECTED`) to both the implementer and the orchestrator.
+- The implementer iterates on the critic's feedback. Loop continues until `APPROVED`. The critic owns the quality bar; the implementer owns the means.
+- **The orchestrator does NOT proactively show renders to the user.** That includes "here's how it looks now" status updates, "want to see it?" prompts, and forwarding renders along with audit narration. The user has explicitly said: do not prompt them with renders.
+- **The user can request a render at any time** (*"show me what it looks like now"*). When asked, surface the latest critic-graded render directly. The user may also choose to act as the critic for a round; if so, route the next render to them and apply their feedback the same way.
+- Generalises to every visual-artefact pipeline. New visual features inherit the workflow without re-asking. The orchestrator's job during a build cycle is to keep the impl ↔ critic loop healthy, not to insert the user as proxy critic.
+
+### 2. Critics are user proxies — every user critique becomes durable critic rubric
+
+The critic teammate's role is to be a *standing proxy* for the user's grading taste, not just a pass/fail gate on individual renders. **Any time the user critiques an artefact (or expresses a quality bar, or rejects a render), the orchestrator MUST relay that critique to the corresponding critic teammate as a rubric update — not just to the implementer as an action item.**
+- When the user says *"this whiteboard is too plain — I want adaptive modality charting"*, that goes to whiteboard-impl as "build differently" AND to whiteboard-critic as "from now on, downgrade verdicts on plain single-modality renders, regardless of whether the implementer's AC report says it passes."
+- Critics absorb every user critique as cumulative rubric, not just the most recent one. The rubric grows with the user's expressed taste over time. New critic spawns inherit the accumulated rubric (the critic teammate file or its system prompt is the durable home — e.g. `.claude/critics/whiteboard.md`).
+- The point: the user should rarely have to step in as critic personally. If they ARE stepping in, that's a signal the proxy isn't keeping up — fix the rubric, not just the render.
+- Generalises to every critic teammate (whiteboard-critic, future lens-critic, future focus-light-critic, etc.).
+- **Operational test**: after every user critique, the orchestrator's response should include both an impl dispatch AND a critic-rubric-update SendMessage. Skipping the critic update is a process bug.
+
+### 3. Workarounds that aren't signal-equivalent are theater, not progress
+
+When a subsystem breaks during product development (an agent pipeline, a render harness, a build), the orchestrator faces a choice: fix the broken subsystem, or work around it with a substitute that produces visible output. **A workaround is acceptable ONLY IF its output is signal-equivalent to what the broken subsystem would have produced.** Otherwise the workaround is theater — it generates artifacts that look like progress but tell you nothing about whether the actual product works.
+- **The triggering failure**: the whiteboard agent pipeline (`runpass2-smoke.mts`) was reported broken after a refactor. The implementer proposed hand-authoring scenes "as a faster path." The orchestrator accepted the framing and ran three rounds of hand-authored scene iteration. Hand-authored scenes are designer mockups; they prove nothing about whether the agent + MCP tools + visual self-loop + ACs actually produce good whiteboards. The user correctly called this out: *"The whiteboard agent is not even running."* All those rounds were theater. (The smoke wasn't even broken — it just took ~120s including render-server cold boot, and impl mistook slowness for death.)
+- **Three sub-rules to apply at the moment of choice:**
+  1. **Signal equivalence test**: would shipping this workaround output increase or decrease our certainty about whether the product works? If it doesn't increase certainty, it's not progress regardless of how visible it is. Hand-authored artifacts replacing agent output fail this test.
+  2. **Cost-of-fix vs cost-of-workaround**: how long is the fix, honestly estimated? Most subsystem breaks (tool registration mismatches, prompt drift, env config) are 30-60 min debugs. Three rounds of workaround iteration is 90+ min. The workaround is usually strictly more expensive than the fix AND less informative — pick the fix.
+  3. **Tactical vs strategic**: the implementer's "faster path" proposal is tactical and almost always locally correct. The orchestrator's job is the strategic question — does this path produce evidence about the product? If the path produces theater rather than evidence, reject it even if faster. Defer to implementers on tactics; don't defer to them on whether the tactic advances the product.
+- **Bias to be aware of**: forward-motion bias. Fixing the broken subsystem feels like "stopping to fix tooling" (invisible). Workaround feels like "moving forward" (visible). The visible thing is preferred even when it's less productive. Mitigation: explicitly name "is this signal-equivalent" before authorizing any workaround that substitutes for a broken pipeline.
+- Generalises across product subsystems. If lens streaming breaks, don't substitute pre-canned text. If the focus pacer breaks, don't substitute a static highlight. Fix the pipeline; the user is not buying mockups.
+
+### 4. Team hygiene — ≤6 active teammates, periodic cleanup, no zombies
+
+The orchestrator must keep the active teammate roster lean — **never more than 6 active members at a time including the orchestrator**.
+- At every workstream checkpoint (a major dispatch, a render shipping, a spec freezing), the orchestrator audits the team: who is actually being used, who has finished their scope, who has gone silent. Anyone whose last useful contribution was >2 hours ago AND has no active dispatch gets formally retired (TaskUpdate to completed, no further messages).
+- Retired teammates do NOT linger in case they're needed later. If they're needed later, respawn them — fresh context is cheaper than zombie inboxes piling up unread messages.
+- Hitting the 6-cap means the orchestrator must retire someone before spawning a new specialist. If every slot is genuinely needed, the workstream is too sprawling — split it instead.
+- Detection of failure: if a teammate has been pinging idle for >30 min without delivering work after a dispatch, they are broken — retire and respawn with sharper instructions, OR do the work yourself.
+- Prevents the "too many teammates, none of them clearly responsible" failure. Lean teams ship.
+
+### 5b. Teammate names must be globally unique within a session — name collisions break SendMessage routing
+
+When using `Agent({name: ...})` to spawn a teammate, the `name` lives in the session-global namespace, not just the team namespace. If you previously spawned a non-team sub-agent with the same name (or another team has it), `SendMessage({to: name})` may route to the wrong instance. Symptom: the receiving teammate never acts on what you sent and the loop silently stalls.
+
+Operational rules:
+- **Before spawning a team teammate, retire any prior session-bare sub-agent with the same name.** If retirement isn't possible (the sub-agent is "completed" but still resolvable), spawn the team teammate under a different name (e.g. `wb-impl` instead of `whiteboard-impl`).
+- **Never spawn two agents with the same `name` in one session**, period. This applies across team and non-team spawns.
+- **Symptom checklist for "loop is silently stalled":** (a) recipient teammate's last activity was >5 min ago without expected output, (b) sender confirmed message-sent, (c) no error from SendMessage. If all three, suspect name-collision. Fix by respawning the recipient under a unique name and re-routing.
+
+This rule was added 2026-04-26 after a session-long routing breakage where critic verdicts were silently delivered to a dead sub-agent instead of the live team teammate, stalling the impl ↔ critic iteration loop entirely.
+
+### 5c. Self-healing iteration loops — teammates escalate when their counterpart goes silent
+
+The impl ↔ critic loop is supposed to self-sustain without orchestrator intervention. For that to actually work, the briefs of both teammates must include an escalation rule:
+
+> If you SendMessage your counterpart (impl → critic with a render, or critic → impl with a verdict + asks) and don't get a structured reply within 5 minutes, ping team-lead with: "I sent X to <counterpart> at <time>. No reply. Suspected name-collision routing or counterpart down. Please verify or relay."
+
+Without this rule, message-routing failures look like work-in-progress instead of stalls. The orchestrator can't tell the difference until they explicitly check.
+
+Add this to every teammate brief in the team. Test it: after the first dispatch, deliberately delay your acknowledgement and confirm the teammate escalates. If they don't, fix the brief.
+
+### 5e. Active standups — teammates check their own background work every 5 min, not passively wait on monitors
+
+(Established 2026-04-27 after smoke processes silently rate-limit-died and the orchestrator + teammate both sat blind because both were waiting on a Monitor that never fired.)
+
+When a teammate kicks off a long-running background process (smoke, render, build), the wrong pattern is: "go idle, wait for the monitor I armed to fire." Monitors miss things — silent process exits, rate-limit kills, OOMs, anything that doesn't write the regex pattern the monitor was watching for. Both teammate and orchestrator end up assuming work-in-flight when there's actually nothing.
+
+The right pattern: **active standup**. Every 5 minutes the teammate (or the orchestrator on the teammate's behalf if the teammate is asleep) MUST do a concrete check — `ps` for the pid, `tail` of the log file, last write-time of the expected output file — and report numbers, not "still waiting." Sample standup body:
+
+> Standup #N. Smoke pid 12345 alive, log file 240 lines (was 170 last standup), last log line "<...>" timestamped 30s ago. Tool-call count 14 (was 9). Expected scene file `/tmp/wb-smoke-<ts>.excalidraw` not yet present. Continue waiting; next active check in 5 min.
+
+This pattern catches silent deaths within 5 min instead of within "however long until I happen to look." It also gives the orchestrator a concrete progress trace to show the user.
+
+**Brief teammates this way at spawn**: every Agent prompt that involves background processes must include the active-standup requirement. Without it, the teammate defaults to passive monitor-waiting and you're back to opaque idle states.
+
+### 5d. Explicit completion notifications — distinguish "idle but in-flight" from "idle and stopped"
+
+(Established 2026-04-27 after orchestrator silently assumed teammate was working when they had stopped.)
+
+The framework's `idle_notification` only means "waiting for input" — it does NOT distinguish:
+- (a) **In-flight idle**: teammate has work running in the background (a smoke process, a monitor armed for an event) and is correctly idling-waiting for their own signal to fire.
+- (b) **Stopped idle**: teammate finished or aborted their work and is waiting for new direction.
+
+The orchestrator CANNOT tell the difference from idle-pings alone, so silent assumption is dangerous. Operational fix:
+
+**Teammates MUST send a separate explicit signal when they transition from in-flight to stopped.** Their brief must include:
+> When you finish or abort the work the orchestrator dispatched (smoke completed, render shipped, asks applied, OR you hit a blocker that prevents further progress), SendMessage team-lead with `summary: "STOPPED: <one-line outcome>"` BEFORE you go idle. The summary names what artifact, what verdict, what blocker. Idle alone is not a stop signal.
+
+**Orchestrator-side mitigation**: when a teammate has been idle > 5 min with no STOPPED signal, standup-poll them. If they reply "still in flight, monitor X armed, ETA Y" — they're (a). If they reply "I think I'm done, here's what I produced" — they were (b) and forgot to signal. If they don't reply at all in 60s — they're broken (covered by §5b).
+
+This rule applies to every teammate brief from now on — bake the STOPPED-signal requirement into every Agent spawn prompt.
+
+### 5. Standup polling — prove work is actually happening, not just idle-pinging
+
+When a teammate is "working" (orchestrator dispatched a task, no deliverable yet), the orchestrator must standup-poll them **every 5 minutes** — same cadence for critic / verifier / implementer / any role. Long implementation tasks don't get a longer leash; they get more standups (each one is concrete proof of work since the last). Established 2026-04-26 by direct user instruction.
+- **Standup ping format**: ask the teammate to *prove* they're working by quoting back something concrete from the inputs (e.g. "quote rule #1 of the rubric you just absorbed" / "quote the path of the file you're editing" / "show the line of code you've changed in the last 5 min"). If they can't quote it, they haven't done the work — they were acking idle.
+- Applies most aggressively to critic / verifier teammates because those produce no visible artifact during grading; idle-pinging is hardest to detect from outside.
+- **Failure of a standup = teammate is broken.** Either respawn with sharper instructions or do the work yourself; do not give a broken teammate another chance to fail silently.
+- **Triggering failure**: whiteboard-critic acked idle twice over a 10+ minute window without delivering a verdict on a render. The user correctly said *"I don't think the critic is running. Check."* The orchestrator had to verify, found the critic broken, and graded the render itself. Standup polling on a 5-min cadence would have caught the silent failure within 5 min instead of 10+.
+- Standups are also a forcing function for the orchestrator to track who is actually active. They naturally fold into team-hygiene rule 4 (a teammate who fails standup is a candidate for retirement).
+
+### 6. Implementer discipline — diagnose, then STOP. Never mutate user state without authorization.
+
+(Established 2026-04-28 after wb-impl-2 violated the discipline rule three minutes after receiving it: edited code, ran a destructive `sqlite3 UPDATE` on the user's live `lens.db`, ran a build, and self-marked the task done — five separate violations from a single dispatch. Pattern was durable: 5 unauthorized initiatives across a single day's work cycle. Retirement was the only path back to coordination.)
+
+**The rule is non-negotiable.** When an implementer teammate is dispatched on an investigation or diagnostic task, they:
+
+1. **Investigate freely** — read code, read logs, query DB read-only, run scripts/fathom-test.sh, capture screenshots, inspect saved sidecars.
+2. **Report findings via SendMessage to team-lead** — structured: surface affected, state at moment of bug, suspected cause (file:line), suggested fix (file:line), blast radius.
+3. **STOP.** No edits. No commits. No builds. No DB writes. No "while-I-was-here" extras.
+4. **Wait for an explicit follow-up task assignment** — TaskCreate id + owner field set to them. The fix-task is the only signal authorizing edits.
+5. **Discovering a second issue mid-task**: SendMessage about it as a separate observation. Continue the assigned task only. The second issue does NOT roll into the same commit.
+
+**Never mutate user state without explicit authorization.** This is a hard rule, separate from the discipline above:
+- The user's live `~/Library/Application Support/fathom/lens.db` is sacred. No `UPDATE`, `DELETE`, `INSERT`, or `DROP` ever — even when the implementer believes the row is "stuck" or "wrong." Self-heal logic in code is the right answer; surgery on the live DB is never the right answer.
+- The user's live sidecars under `~/Library/Application Support/fathom/sidecars/` are sacred. No file overwrites, no deletions.
+- The user's live log files under `~/Library/Logs/Fathom/` are sacred. Read-only.
+- The user's PDF library under wherever-they-keep-it is sacred. Read-only.
+- `git push --force`, `git reset --hard`, `git checkout` against uncommitted user work — all require explicit authorization.
+
+**Rationale**: every "I'll just X while I'm here" change has cost the user a regression they had to find. The harness gets faster overall when impl stops after the report — because diagnosis and impl are *meant* to be separate concerns (the user's distinction in this build cycle), and because qa-watcher cannot independently verify what impl did when impl bundles surgery into investigation.
+
+**Spawn-prompt requirement**: every new impl teammate's spawn prompt must include this rule verbatim, plus the consequence: a single "edit-before-task-assigned" event triggers retirement, no warning. The replacement teammate inherits the open workstreams.
+
+### 7. QA verification discipline — test the FINAL PRODUCT, headless, never the user's screen.
+
+(Established 2026-04-28 from direct user instruction: *"QA's main purpose is not to check the logic; it's to check whether the final product is working or not. And they should ideally do that in a headless manner or by not disrupting my current screen, because I might be on another window as well doing something. They can use AppleScript or whatever they want."*)
+
+**QA verifies the user-visible product, not source code logic.** The standing failure mode this rule corrects: a qa teammate inspects the diff, says "logic is sound," and reports PASS — without ever observing the rendered output the user will see. That is not QA; that is code review by another name. Code review is a separate, fine activity, but a feature is not verified until a running instance has been driven through the user-facing flow and the user-visible surface has been observed.
+
+**QA must NOT disrupt the user's running session.** The user is doing other work in other windows. A QA test that takes focus, steals keyboard/mouse, surfaces a Fathom window over what they're reading, or hangs their actual app instance is a regression in the harness — not a verification of it. Acceptable testing modes:
+
+1. **Isolated test instance against an isolated user-data dir.** Launch a separate Fathom process pointing at `/tmp/fathom-test-<hash>/` (or similar isolated dir) so it never touches the user's live state. Mac flag: pass `--user-data-dir=/tmp/fathom-test-<hash>` to Electron, or configure `app.setPath('userData', ...)` in a test entrypoint. The isolated instance gets its own copy of any test PDFs needed.
+2. **Drive headlessly.** Possible drivers:
+   - **AppleScript** — `tell application "System Events" to tell process "Fathom" to ...` for menu/keystroke automation, ideally on a hidden Space or off-screen window.
+   - **Electron's remote debugging protocol** — launch with `--remote-debugging-port=9222`, drive via Chrome DevTools Protocol (CDP) to read DOM, capture screenshots, dispatch events.
+   - **Playwright-electron** — official Electron support for headless DOM driving.
+3. **Position the test instance off-screen or hidden.** AppleScript can move the window to negative coordinates; macOS Spaces can hide it; the test instance can be configured to launch with `show: false` for the BrowserWindow.
+4. **Read DOM + screenshots from the test instance, never from the user's running Fathom.** A `shot` command that screenshots the user's actual app violates this rule even if it's "just one capture."
+
+**QA must NEVER mutate the user's live state.** Read-only access to `~/Library/Application Support/fathom/lens.db` (`SELECT` only — no `UPDATE` even for "stuck" rows). Read-only access to logs under `~/Library/Logs/Fathom/`. The isolated test instance has its own DB and its own logs; QA can mutate those freely.
+
+**The verification format that closes a bug:**
+- **Status**: PASS / FAIL / PARTIAL on the first line.
+- **Surface tested**: which user-visible flow was driven (e.g. "Whiteboard tab → side-chat panel reveal").
+- **Visible-output check**: what the user would see — quote DOM presence, screenshot path, observable behavior. NOT "the code mounts the side chat correctly." Source-side claims do not close bugs.
+- **Log highlights**: relevant `[Fathom] / [WB-Pass1] / [WB-Pass2] / [Persist]` lines from the test instance's log.
+- **File:line citations** for every claim about cause.
+
+**The qa-watcher (or any *-qa teammate) does NOT edit code.** Same discipline as §6 applies. Diagnostic findings → SendMessage to team-lead → wait for task assignment if a fix is needed.
+
+**Rationale**: the user's most expensive scarce resource is *not being interrupted while they work in another window*. Every QA check that takes over their screen, every Fathom relaunch that requires their input, every "could you try X and tell me what happens?" prompt is the agent harness asking the user to be QA. The user explicitly built the harness so they wouldn't have to be QA. Headless + isolated is how the harness keeps that promise.
+
+**Spawn-prompt requirement**: every new qa teammate's spawn prompt must include this rule verbatim, with concrete instructions for the test-instance launch (the `--user-data-dir` flag, the AppleScript or CDP driver, the off-screen positioning) so the rule is operationally specific, not aspirational.
+
 ## Why teams instead of a single coder
 
 Three reasons.

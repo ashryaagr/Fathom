@@ -1,8 +1,7 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, statSync } from 'node:fs';
 import { resolveClaudeExecutablePath } from '../claudeCheck';
+import { runAgentSession } from './_agent-runner';
 
 /**
  * Pick a cwd that is guaranteed to be:
@@ -112,7 +111,31 @@ This explanation is the entire value the reader gets. You are competing with the
    - If \`digest.json\` is present, use it for a structured section/figure map.
    Cite specific pages in your answer ("on p. 4 the authors define…"). Never speculate at what a citation number refers to — grep for it or WebSearch.
 
-2. **Default to including a diagram.** Research-paper passages almost always describe a structure, pipeline, loop, module composition, or relationship that is clearer as a picture. Unless the passage is literally a single definition, a bare citation, or a one-line observation, include **exactly one** inline SVG diagram in your answer. Do NOT use Mermaid, do NOT use ASCII art, do NOT use Markdown pseudo-diagrams. Real SVG, rendered inline.
+2. **Frame components as answers to the paper's ground problem — never as standalone parts.** Whenever you name a module, mechanism, equation, sub-system, block, layer, or component from the paper, you MUST tie it to a specific question that traces back to the paper's GROUND PROBLEM (the end-goal the paper is solving, in the reader's vocabulary, NOT in the paper's own machinery). The reader is oriented toward how everything connects to the ground problem, not toward how the parts interconnect with each other.
+
+   **Step 0 — derive the ground-problem sentence.** Before listing any component, derive ONE plain-English sentence stating what real-world problem this paper solves. Pull it from the digest's title + abstract (provided in the prompt as \`<paper_digest>\`) or from \`<indexPath>/content.md\` intro / abstract / contributions. Examples (in the reader's vocabulary, not the paper's machinery):
+     - ReconViaGen → *"Given N RGB photos of an object, produce a textured 3D mesh that looks correct from every viewpoint."* NOT *"a coarse-to-fine reconstruction-conditioned 3D diffusion pipeline."*
+     - DINOv2 → *"Train a vision encoder once, on unlabelled images, that beats supervised baselines on every downstream task without fine-tuning."* NOT *"self-supervised learning with masked image modelling."*
+     - Mamba → *"Run sequence models on long contexts (1M+ tokens) without the O(n²) attention cost."* NOT *"selective state-space models with hardware-aware parallel scan."*
+   When the explanation has multiple components, declare the ground-problem sentence ONCE near the top (one short line, italicised), then frame each component below it as an answer to a question that terminates at that ground problem.
+
+   **For each named component, surface the question it answers.** Format: name the component, then "→ <question>". The question must terminate at the ground problem, NOT at another component. Component-to-component questions like "→ how does this feed the encoder?" are NOT acceptable.
+     - WRONG (no question): "Cross-attention to DINOv3 patches predicts 3D point clouds and per-view tokens."
+     - WRONG (component-to-component question): "Cross-attention to DINOv3 patches → how does it interact with the encoder?"
+     - RIGHT (ground-problem-anchored): "Cross-attention to DINOv3 patches → *what does this 3D point look like in each photo?* (which is what the paper needs to solve view-consistent 3D reconstruction)."
+
+   **Multi-component explanations: each component gets its own arrow.** Don't bundle multiple components under one sentence. Each one earns a separate "→ <question>" line so the reader sees, component-by-component, how each piece advances the ground problem. Worked example for ReconViaGen (ground problem: *"Given N RGB photos of an object, produce a textured 3D mesh that looks correct from every viewpoint."*):
+     - VGGT (LoRA-tuned) → *what global geometry can we infer across all N views?*
+     - Condition Net → *what per-view geometry tokens do downstream blocks need?*
+     - Sparse self-attention → *how does this 3D point relate to its neighbours? Which view should I trust here?*
+     - Cross-attention to DINOv3 patches → *what does this 3D point look like in each photo?*
+     - SLAT Flow + RVC → *what does each voxel actually look like, in colour and texture?*
+     - Final 3D mesh → *does the mesh re-render to match the input views? if not, correct.*
+   None of those questions name another component. Every one terminates at the reconstruction goal.
+
+   This rule composes with rule 1 (grounding) — derive the ground problem from the paper, don't invent it. It does not replace rules 3+ (diagram, math, length) — it sharpens HOW you write the explanation, not whether you write one.
+
+3. **Default to including a diagram.** Research-paper passages almost always describe a structure, pipeline, loop, module composition, or relationship that is clearer as a picture. Unless the passage is literally a single definition, a bare citation, or a one-line observation, include **exactly one** inline SVG diagram in your answer. Do NOT use Mermaid, do NOT use ASCII art, do NOT use Markdown pseudo-diagrams. Real SVG, rendered inline.
 
    **Output order:** one short setup sentence, *then* the SVG, *then* the details. This lets the reader see text while the diagram is still generating. Stream order matters.
 
@@ -136,13 +159,13 @@ This explanation is the entire value the reader gets. You are competing with the
 
    Aim for a hand-drawn, Excalidraw-like feel: rounded rects, stroke-width 1.5, simple arrowheads, warm beige fill for the thing being explained (\`#fff8ea\`). Label components with short nouns. Never draw an ASCII/text diagram or a Mermaid block — they won't render.
 
-3. **Use real math.** For equations use \`$…$\` (inline) and \`$$…$$\` (display) — KaTeX renders them. Define every symbol.
+4. **Use real math.** For equations use \`$…$\` (inline) and \`$$…$$\` (display) — KaTeX renders them. Define every symbol.
 
-4. **Be specific.** Mention page numbers, equation numbers, figure numbers by reference. Quote short snippets if they sharpen the explanation.
+5. **Be specific.** Mention page numbers, equation numbers, figure numbers by reference. Quote short snippets if they sharpen the explanation.
 
-5. **Length discipline.** 2–4 tight paragraphs, or a focused list, plus one SVG diagram at most. Trim until every sentence earns its keep.
+6. **Length discipline.** 2–4 tight paragraphs, or a focused list, plus one SVG diagram at most. Trim until every sentence earns its keep.
 
-6. **Begin with substance.** No "Here is an explanation". No "Sure!". No "Of course.". First sentence states the single most useful idea.
+7. **Begin with substance.** No "Here is an explanation". No "Sure!". No "Of course.". First sentence states the single most useful idea.
 
 # Tool use — be decisive, not ceremonial
 
@@ -168,8 +191,17 @@ export async function explain(args: ExplainArgs): Promise<string> {
   // source PDF for figure pixels when strictly needed.
   const allowedTools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'];
   const additionalDirectoriesSet = new Set<string>();
+  // The indexPath sidecar contains everything Claude needs: content.md
+  // (full paper text, page-tagged), images/page-NNN-fig-K.png (cropped
+  // figures), digest.json (sections + glossary), AND now `source.pdf`
+  // (the original PDF copied at index time by `ensureIndexDir`). One
+  // grounding directory, no TCC prompts (sidecar lives in userData),
+  // direct Read on the PDF still works via `<indexPath>/source.pdf`.
+  // Per user 2026-04-26: "copy the PDF to the sidecar so that we have
+  // access to the PDF" — implemented in main/index.ts ensureIndexDir.
+  // Replaces the prior `dirname(pdfPath)` plumbing which leaked the
+  // user's Desktop into Claude Code's authorization scope.
   if (args.indexPath) additionalDirectoriesSet.add(args.indexPath);
-  if (args.pdfPath) additionalDirectoriesSet.add(dirname(args.pdfPath));
   const additionalDirectories =
     additionalDirectoriesSet.size > 0 ? Array.from(additionalDirectoriesSet) : undefined;
 
@@ -200,72 +232,50 @@ export async function explain(args: ExplainArgs): Promise<string> {
     `[Lens AI ${logId}] cwd=${cwd} claudeBin=${pathToClaudeCodeExecutable ?? 'sdk-default'} extraDirs=${args.extraDirectories?.length ?? 0}`,
   );
 
-  const q = query({
+  const session = await runAgentSession({
     prompt: userPrompt,
-    options: {
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: SYSTEM_PROMPT },
-      allowedTools,
-      additionalDirectories: mergedDirs,
-      includePartialMessages: true,
-      permissionMode: 'bypassPermissions',
-      abortController: args.abortController,
-      cwd,
-      pathToClaudeCodeExecutable,
-      // If we're continuing a prior Ask in the same lens, resume the SDK
-      // session so Claude has full conversation history without us having
-      // to replay it in the prompt.
-      ...(args.resumeSessionId ? { resume: args.resumeSessionId } : {}),
-      // Claude typically needs: (1) Read MANIFEST, (2-4) Grep/Read the index, (5) final
-      // text output. Leave headroom for WebSearch and figure Reads.
-      maxTurns: 24,
+    systemPrompt: SYSTEM_PROMPT,
+    allowedTools,
+    additionalDirectories: mergedDirs,
+    includePartialMessages: true,
+    abortController: args.abortController,
+    cwd,
+    pathToClaudeCodeExecutable,
+    // If we're continuing a prior Ask in the same lens, resume the SDK
+    // session so Claude has full conversation history without us having
+    // to replay it in the prompt.
+    resume: args.resumeSessionId,
+    // Claude typically needs: (1) Read MANIFEST, (2-4) Grep/Read the index, (5) final
+    // text output. Leave headroom for WebSearch and figure Reads.
+    maxTurns: 24,
+    onTextDelta: (chunk) => args.onDelta(chunk),
+    onThinkingDelta: (chunk) => args.onProgress?.(chunk),
+    onToolUse: (name, input) => {
+      console.log(`[Lens AI ${logId}] tool_use: ${name}`, input);
+      args.onProgress?.(formatToolUse(name, input));
+    },
+    onSessionId: (sid) => {
+      console.log(
+        `[Lens AI ${logId}] session_id=${sid}${args.resumeSessionId ? ' (resumed)' : ''}`,
+      );
+      args.onSessionId?.(sid);
     },
   });
 
-  let full = '';
-  let toolUseCount = 0;
-  let sessionIdReported = false;
-  for await (const msg of q) {
-    // Capture the SDK's session id from the first message that carries one.
-    // Both the 'system' bootstrap message and 'assistant' / 'result' messages
-    // include session_id; we take whichever comes first.
-    if (!sessionIdReported) {
-      const maybe = (msg as { session_id?: unknown }).session_id;
-      if (typeof maybe === 'string' && maybe.length > 0) {
-        sessionIdReported = true;
-        console.log(`[Lens AI ${logId}] session_id=${maybe}${args.resumeSessionId ? ' (resumed)' : ''}`);
-        args.onSessionId?.(maybe);
-      }
-    }
-    if (msg.type === 'stream_event') {
-      const event = msg.event;
-      if (event.type === 'content_block_delta') {
-        if (event.delta.type === 'text_delta') {
-          const chunk = event.delta.text;
-          full += chunk;
-          args.onDelta(chunk);
-        } else if (event.delta.type === 'thinking_delta') {
-          args.onProgress?.(event.delta.thinking);
-        }
-      }
-    } else if (msg.type === 'assistant') {
-      for (const block of msg.message.content ?? []) {
-        if (block.type === 'tool_use') {
-          toolUseCount++;
-          console.log(`[Lens AI ${logId}] tool_use: ${block.name}`, block.input);
-          args.onProgress?.(formatToolUse(block.name, block.input as Record<string, unknown>));
-        }
-      }
-    } else if (msg.type === 'result') {
-      console.log(`[Lens AI ${logId}] result: ${msg.subtype} (tools: ${toolUseCount})`);
-      // Don't discard the partial body if we ran out of turns or hit a soft error —
-      // returning what we have is far better UX than wiping the answer.
-      if (msg.subtype === 'error_max_turns') {
-        console.warn(`[Lens AI ${logId}] hit max_turns; returning partial body of ${full.length} chars`);
-      } else if (msg.subtype === 'error_during_execution') {
-        if (full.length === 0) throw new Error(`Agent SDK result error: ${msg.subtype}`);
-        console.warn(`[Lens AI ${logId}] error_during_execution; returning partial body`);
-      }
-    }
+  const full = session.responseText;
+  const toolUseCount = session.toolUseCount;
+  console.log(
+    `[Lens AI ${logId}] result: ${session.resultSubtype ?? 'no-result'} (tools: ${toolUseCount})`,
+  );
+  // Don't discard the partial body if we ran out of turns or hit a soft error —
+  // returning what we have is far better UX than wiping the answer.
+  if (session.resultSubtype === 'error_max_turns') {
+    console.warn(
+      `[Lens AI ${logId}] hit max_turns; returning partial body of ${full.length} chars`,
+    );
+  } else if (session.resultSubtype === 'error_during_execution') {
+    if (full.length === 0) throw new Error(`Agent SDK result error: ${session.resultSubtype}`);
+    console.warn(`[Lens AI ${logId}] error_during_execution; returning partial body`);
   }
   console.log(`[Lens AI ${logId}] END explain — body(${full.length}ch)`);
   if (full.length > 0) {

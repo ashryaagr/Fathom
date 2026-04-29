@@ -52,6 +52,12 @@ npm run typecheck
 Free, seconds, catches half of all regressions before they even
 ship to the harness. **Never commit without a clean typecheck.**
 
+> **In dev-mode**: typecheck is only step 1 of pre-flight. Step 2
+> is the bundle-mtime gate (see "Pre-claim verification" below).
+> A typecheck-clean main-side edit is NOT live in the running
+> Electron app until `out/main/index.js`'s mtime is newer than the
+> source you edited.
+
 ### Tier 2 — state + log
 
 Two substrates:
@@ -115,6 +121,101 @@ in the right order (armed → committing → lens open).
 If a bug is "feels bad" or "something's off" and the structural
 checks all pass, escalate to CUA-style manual driving. Reserve
 for novel UX judgement, not routine regression.
+
+## Pre-claim verification: `out/main/index.js` mtime check
+
+(Established 2026-04-27 after a string of "the fix is live, but still
+broken" reports. Multiple agent claims of "main edit landed" were
+factually wrong — the running dev Electron was executing a fossilized
+bundle from session start.)
+
+When ANY agent claims a main-process or preload edit is live in dev,
+the QA harness MUST verify by reading `out/main/index.js` (or the
+relevant preload bundle) mtime via:
+
+```bash
+stat -f '%Sm %N' out/main/index.js src/main/<edited-file>.ts
+# or for a preload edit:
+stat -f '%Sm %N' out/preload/index.mjs src/preload/<edited-file>.ts
+```
+
+The bundle's mtime MUST be **newer** than the source file's mtime. If
+the bundle is older — or has the same mtime as it had at dev launch —
+the edit is NOT live regardless of any agent's confidence.
+
+### Why this happens
+
+`package.json`'s `dev` script SHOULD include the `--watch` flag (per
+`electron-vite dev --watch`), which rebuilds main + preload on source
+edits. As of 2026-04-27 it does. But this fix is recent — older
+checkouts, branches that pre-date it, or any session that launched
+dev manually without `--watch` will silently fossilize main+preload at
+launch time.
+
+Per `node_modules/electron-vite/dist/cli.js:39`: *"-w, --watch:
+rebuilds when main process or preload script modules have changed on
+disk"*. Without it, only the renderer is HMR'd; main + preload are
+built ONCE at startup and never re-built. Renderer-only edits
+(`src/renderer/**`) are immune — the Vite dev server HMRs them
+directly into the running window.
+
+### Scope of the rule
+
+This mtime check applies to changes in:
+
+- `src/main/**` — the main Electron process
+- `src/preload/**` — the contextBridge IPC surface
+- `src/main/mcp/**` — the in-MCP tools (`whiteboard-mcp.ts` and friends)
+- `src/main/ai/**` — the AI orchestration (`whiteboard.ts`,
+  `whiteboard-chat.ts`, `whiteboard-critique.ts`)
+- `src/main/db/**` — the SQLite layer
+
+**Renderer-only edits** (`src/renderer/**`) DO NOT require the mtime
+check — Vite HMR delivers them within seconds of save and the dev
+log will print `hmr update /path/file.tsx` as confirmation.
+
+### Adding the check to the canonical flow
+
+Before declaring a main-side fix verified — i.e. before running any
+Tier 2-5 grade against the running app — execute the mtime check.
+The bundle-newer-than-source assertion is binary: pass / fail. If
+fail:
+
+1. The agent's claim is false; do not accept the verification.
+2. Investigate why `--watch` didn't rebuild — check `package.json`
+   for the flag, check the dev process for crashes, check the file
+   watcher (macOS fsevents quirks).
+3. Restart dev with `./node_modules/.bin/electron-vite dev --watch`
+   if `package.json`'s script lacks the flag.
+4. Re-run the mtime check after the restart's main-build cycle
+   completes (~3-5s post-launch). Only then proceed to Tier 2-5.
+
+### Concrete pattern
+
+```bash
+# 1. Pre-flight: bundle is newer than every recently-edited main file
+SOURCE_MTIME=$(stat -f '%m' src/main/mcp/whiteboard-mcp.ts)
+BUNDLE_MTIME=$(stat -f '%m' out/main/index.js)
+if [ "$BUNDLE_MTIME" -lt "$SOURCE_MTIME" ]; then
+  echo "FAIL: bundle older than source; main fix NOT live"
+  exit 1
+fi
+# 2. Now safe to run Tier 2-5 grading.
+```
+
+### History this rule is meant to catch
+
+- **2026-04-27, round-11 `serverScriptPath()` fix**: agent claimed
+  "render-server path bug fixed, visual self-loop now firing." Bundle
+  was actually from session-start; the fix never ran. Same module-not-
+  found error recurred for hours.
+- **2026-04-27, chat-frame skeleton fix**: agent claimed the v0.18
+  frame fields were live in main. Bundle was fossilized; the user's
+  next chat turn produced another invisible frame.
+
+Both were caught only when a teammate explicitly ran `stat` on the
+bundle and noticed the mtime was hours old. Bake the check into every
+post-edit dispatch.
 
 ## The canonical pre-release flow
 

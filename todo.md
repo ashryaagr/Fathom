@@ -895,3 +895,200 @@ Pick this up the first time a user reports a degraded
 understanding doc on a long paper. The chunking surface is
 the digest.json's section index — same plumbing the lens
 uses for figure references, no new index work needed.
+
+## 58. Fix preload type for whiteboardWriteRenderPng + whiteboardCritique — RESPECCED 2026-04-27
+~~Currently TS-erroring in `src/renderer/whiteboard/WhiteboardTab.tsx` (lines ~1050 and ~1061). The two methods exist on the runtime preload bridge but are missing from the `Window['api']` type declaration.~~ **Premise was wrong** — preload-fix-impl audited and found the runtime methods don't exist anywhere on the preload bridge; only call sites + comments reference them. The original todo was a type-only fix; the actual gap is implementation.
+
+Two paths (user picks):
+- **(A) Implement Pass 2.5 critique loop IPC.** Add `ipcMain.handle('whiteboard:writeRenderPng', ...)` (main-side, writes base64 PNG to per-paper sidecar) + `ipcMain.handle('whiteboard:critique', ...)` (main-side, vision Claude call returning typed verdict). Add matching `whiteboardWriteRenderPng` + `whiteboardCritique` methods to `src/preload/index.ts`'s `api` object. Real implementation — needs AI scientist (critique prompt + model choice + cost), SE (IPC contract), implementer (`src/main/ai/` + `src/main/index.ts` + `src/preload/index.ts`).
+- **(B) Comment out the call site.** Guard `runCritiqueLoop` invocation in WhiteboardTab.tsx with a feature flag (or comment out). TS errors disappear; the in-app Pass 2.5 critique loop is dropped until the IPC ships. Cheap.
+
+## 59. Component-as-answer framing — universal explanation principle (added 2026-04-27) — ✅ DONE (4 of 4 surfaces)
+User instruction (verbatim): *"when we are listing the modules or different components, it might help to understand things in a way that asks what is the answer that each component is answering. For example… cross-attention to dyno v3 patches helps us answer: what does the 3D point look like in each photo? Sparse self-attention can help answer in this specific problem… how does this point relate to its neighbors? Which view should I trust here? … the user is very much focused and oriented towards how everything connects to the ground problem rather than just how these details are interconnected."*
+
+The principle: every component, module, equation, or sub-system mentioned in an explanation must be framed as **the answer to a specific question**, where that question traces back to **the ground problem the paper is solving**.
+
+Status of the 4 surfaces (parallel-dispatched 2026-04-27):
+1. ✅ **Whiteboard PASS2_SYSTEM** — done by wb-impl-2 round 8. Added PASS A steps 0 (ground-problem sentence) and 6 (per-node question-as-answer) at `src/main/ai/whiteboard-pass2-system.ts:32-65` with WRONG/RIGHT examples + 5 worked ReconViaGen cases. MCP wrapper extended with `question` param; AC-COMPONENT-HAS-QUESTION enforces.
+2. ✅ **Whiteboard critic rubric** — done by orchestrator. New rule at `.claude/critics/whiteboard.md:254-289` with the canonical DINOv3 cross-attention example.
+3. ✅ **Lens explainer prompt** — done by lens-prompt-impl. New rule #2 in `src/main/ai/client.ts` SYSTEM_PROMPT (~lines 114-136) with three modality examples (ReconViaGen/DINOv2/Mamba) + per-component arrow framing. Existing rules renumbered (3-7).
+4. ✅ **Cog-review check** — done by cog-review-impl. New §9 in `.claude/skills/fathom-cog-review.md`: "Components must terminate at the ground problem, not at each other." Three failure modes; REQUEST REVISION default, VETO for default-shown surfaces.
+
+## 60. Digest field for ground problem (added 2026-04-27, flagged by lens-prompt-impl)
+Currently both lens prompt + whiteboard PASS2_SYSTEM derive the ground-problem sentence each call from `digest.title` + `digest.abstract` + content.md grep. This works but is redundant — the same one-sentence end-goal is computed N times across all lens calls + every whiteboard regen.
+
+Cleaner: add `groundProblem: string` to the digest schema, derive it ONCE during paper segmentation (`src/main/ai/segmentPaper.ts`), persist in `papers.digest_json`. Then whiteboard PASS A step 0 + lens prompt rule 2 both consume the same field — guaranteed consistency, fewer tokens per call.
+
+Cost: one re-decompose of all indexed papers (cache miss). Schema migration: trivial — add field with fallback to derive-on-the-fly if absent (so old digests still work).
+
+## 61. AC-PARAGRAPH-WIDTH-FIT vs wb-node-question wrap mismatch (added 2026-04-27, surfaced by wb-impl-2 round 8)
+Real residual FAIL on round-8 render: `wb-question-034` ("→ what is each voxel's colour, and does it re-render to match the photos?", 73 chars) sized to node width 320 px. Wrapper's `wrapToWidth` correctly wraps to 2 visual lines for height computation, but the element's `text` field still contains the full single-line string. AC-PARAGRAPH-WIDTH-FIT predicts width from raw `text` × char-width and FAILs because 73×7.5 = 548 > 320.
+
+Fix: wrapper should re-flow the original `text` field with explicit `\n` line breaks matching the wrap layout, so AC's per-line width prediction matches what the renderer draws. One-file change in `src/main/mcp/whiteboard-mcp.ts` (the `create_node_with_fitted_text` wrapper's question-emission block, ~70 lines added in round 8).
+
+Also: AC-FREE-TEXT-CLEAR doesn't whitelist wb-node-question (one-line whitelist add). AC-CONTAINER-TEXT-FIT zone-label rounding artifact (overflow by 2px — widen zone height by 4px or relax bottom-edge tolerance from 1 to 4).
+
+All non-load-bearing for the round-8 structural ask but worth a hardening round.
+
+## 65. Whiteboard persists across sessions — load on PDF reopen, only explicit clear deletes (added 2026-04-27, user instruction)
+User instruction (verbatim): *"Once I have generated the whiteboard, the whiteboard should be there even the next time when I open it. I shouldn't have to remake it. We should save the whiteboard, and unless the user clears the whiteboard, we should not delete that whiteboard. We should see that the next time I open it or close it."*
+
+Extends CLAUDE.md §1 "Zooming persists" product principle from lens to whiteboard. Per CLAUDE.md §9 the existing persistence pattern uses `~/Library/Application Support/Fathom/sidecars/<contentHash>/` + SQLite. The whiteboard scene should follow the same pattern.
+
+Audit + implementation for round 13 (after round-12 side-chat fix lands):
+1. **Audit save**: when `whiteboard:generate` completes, is the scene JSON persisted? Where? Same for `whiteboard:chat-send` after chat refinement.
+2. **Audit load**: when a PDF is reopened, does the renderer query for an existing whiteboard scene? If present, hydrate `wb.status = 'ready'` + `wb.elements = saved` skipping regeneration.
+3. **Add missing pieces**: scene JSON + cost + status + last-modified timestamp to per-paper sidecar (`<sidecar>/whiteboard.scene.json`); atomic write; on tab mount, check sidecar and hydrate.
+4. **"Clear whiteboard" affordance**: the only path to deletion. Wire to existing regenerate OR add dedicated menu item.
+5. **End-to-end verify**: generate → quit → relaunch → reopen PDF → whiteboard appears without regenerating. Test cross-PDF isolation. Test clear deletes from in-memory + disk.
+
+Possible coupling with the in-flight round-12 side-chat invisibility fix: if `wb.status` gets stuck in 'pass2' after generation, save-on-completion likely also doesn't fire (same root cause). If the round-12 fix is a transition fix, persistence may partially-work as side effect.
+
+## 64. Round-9 critic-missed structural defects + harness rebuild (added 2026-04-27, user critique)
+User critique (verbatim, partial — sentence cut off mid-thought; this is what landed): *"The whiteboard is still not good. Also, I'm hoping that we are improving the AI agent pipeline entirely and not just optimizing for this one case. We need to think fundamentally about how we can reshape our tools so that we never get problems like these that I see. Wrong is that the inputs box, the light purple box that is there, only covers part of the multi-view blue box. Also, part of the text in the multi-view box is going outside the box, and the arrow for the 3D mesh from slat flow plus RVC overlaps with the text that is written below. These all things should have been caught by the AI agent when it sees the screenshot. The AI agent that is actually generating the whiteboard isolates the different steps in the whiteboarding process and sees which one is performing wrongly. This should be one of your methods for building the product and the isolating principle that I have already mentioned and that is already there in your instructions or document. One of these isolating principles is also to isolate within the isolated components to see which individual part is performing wrongly and, in order to diagnose"*
+
+Three specific defects on `/tmp/wb-render-r9-1777264183.canvas.png` that critic APPROVED through:
+1. INPUTS (light purple) zone only covers PART of the multi-view (blue) zone — zone-vs-zone partial overlap.
+2. Multi-view box body text overflows outside the box — text-vs-container.
+3. Arrow from SLAT Flow + RVC → 3D mesh crosses text written below — arrow-path-vs-text crossing.
+
+CLAUDE.md §8 has been updated with the new core principle "The in-product agent must close its own visual loop with per-stage isolation — and a critic APPROVED is not a substitute." Critic rubric updated with mandatory geometric checklist (zone-overlap, text-overflow, arrow-path-cross, element-overlap) + the requirement that any structural defect verdict must include a tool-layer rejection ask.
+
+Three parallel tracks for the harness rebuild + the symptoms:
+
+**Track A — wb-impl-2 round 10**: tool-layer rejections for the 3 user-visible defects:
+- `create_background_zone` (or `create_section`/zone primitive) must reject calls where the new zone bbox would partially overlap an existing wb-zone bbox. Auto-snap to non-overlap (shift x/y or shrink) OR reject with precise error stating which zone overlaps and by how much.
+- `create_node_with_fitted_text` must reject calls where the node bbox + its required wrapped-text height would extend past the parent section's bbox. Auto-shrink width to fit OR reject with: "node at (x,y) size (w,h) wraps body text to N lines × line-h = required H'; total bbox extends Δpx past section right/bottom edge. Reduce width to ≤W' or shorten body to ≤K chars."
+- `connect_nodes` arrow-path computation must check the arrow's POLYLINE (not just the label bbox) against every text element on the canvas; if the polyline crosses a text bbox, reject with: "arrow path from (x1,y1)→(x2,y2) crosses text element <id> ('<text>') at (Tx,Ty). Pass `routePoints: [...]` to route around it, OR move endpoints."
+
+**Track B — pass25-impl (new teammate)**: build the in-product Pass 2.5 visual self-loop. This is todo #58 path A — IPC + visual critique call. Spec:
+- Main-side `ipcMain.handle('whiteboard:writeRenderPng', ...)`: persist base64 PNG to per-paper sidecar at `<sidecar>/wb-iter-<n>.png`.
+- Main-side `ipcMain.handle('whiteboard:critique', ...)`: vision Claude call that takes (PNG path, scene JSON, paper digest) and returns typed verdict {pass: bool, defects: [{kind, stage_attribution, location, fix_suggestion}]}. The critique MUST include stage attribution per defect (Pass 1 narrative / Pass A planning / Pass B placement / wrapper / renderer) so the agent knows which stage to re-run.
+- Preload bridge methods on `src/preload/index.ts`: `whiteboardWriteRenderPng`, `whiteboardCritique` matching the IPC.
+- Renderer wiring in WhiteboardTab.tsx already exists at lines 1050,1061 — call sites are pre-built; this work fills in the back end.
+
+**Track C — isolation-impl (new teammate)**: build per-stage isolation tooling so the in-product agent (and the team) can re-run only the broken stage when Pass 2.5 attributes a defect. Specifically:
+- Each pipeline stage (Pass 1 narrative, Pass A planning, Pass B placement, wrapper geometry, renderer) must have a CLI entry that takes the prior stage's saved output as input and produces just its own output, with no upstream re-execution. Some of this exists (`scripts/wb-render-current.mts` for the render stage); finish for the missing stages.
+- Document the per-stage CLI in `docs/methodology/whiteboard.md` so the in-product agent's Pass 2.5 hook can call them.
+- The in-product Pass 2.5 hook, when it detects a defect at stage K, re-runs only stage K with a focused fix prompt and re-renders.
+
+Tracks A, B, C run in parallel. All three must land before the next render is shown to the user — partial fixes don't satisfy the harness-rebuild ask.
+
+## 63. Round-8 structural defects — fix at tool layer, NOT prompt layer (added 2026-04-27, user critique)
+User critique (verbatim): *"The text on the arrow on the generate column in the first one overlaps with the text that has been written below ssflow. This is written in section three in the key idea box; the fourth line is going out of the box. We should have structural ways to prevent this, or tools can just simply do the computation and let the tool know when it's going to get out of the box or when something's going to overlap, so that these kinds of problems don't happen. We need to fundamentally think, rather than just improving the prompt, on how we can make better tools and patient, bid better agent harnesses for the agent to make the whiteboard and address the concerns that we see. This should be part of one of our core philosophies and the way we work."*
+
+Two specific defects on `/tmp/wb-render-r8-1777262957.canvas.png`:
+1. **Arrow label on GENERATE column overlaps text below SS Flow node.**
+2. **Section 3 KEY IDEA box: 4th line of body text extends past the box bottom.**
+
+CLAUDE.md §8 has been updated with the new core principle "Tools enforce constraints; prompts only guide intent." `.claude/critics/whiteboard.md` updated with matching grading rule. The principle: for any structural defect (overflow, overlap, collision), the fix MUST land in the MCP tool wrapper as compute-then-reject — NOT in the prompt as another rule the agent has to follow.
+
+Round 9 work — tool-level changes ONLY. Do NOT touch PASS2_SYSTEM:
+
+A. **Arrow-label collision check** in `src/main/mcp/whiteboard-mcp.ts` `connect_nodes` (or wherever arrows are emitted). Compute the label's predicted bbox at its placement point. Iterate every existing element bbox in `state.elements`; if the label collides with any, reject the call with: "label '<label-text>' at (x,y) collides with element <id> ('<element-text>') at (ox,oy)–(ox+w,oy+h). Choose `labelOffset: {dx, dy}` to shift, OR shorten the label to ≤N chars to fit a free spot." Optionally auto-search for a free position in a small grid around the midpoint and suggest it in the error.
+
+B. **Callout body grow-or-reject** in `src/main/mcp/whiteboard-mcp.ts` `create_callout_box`. Round 7 already does width-aware wrap. Strengthen: after wrapping, if the wrapped body height + headerH + paddings exceeds the supplied callout height, the wrapper must EITHER (preferred) auto-grow the callout to the required height with a debug log showing old vs new dimensions, OR if the author explicitly fixed the height, reject with: "body wraps to N lines × 24px lineH = Hpx, but callout height is Mpx (excludes M-Hpx); supply height ≥ M+Hpx or shorten body to ≤K chars." This is the round-7 fix taken to its conclusion.
+
+C. **Generalise the pattern** — sketch a doc note at `.claude/skills/fathom-tool-design.md` (new) that captures the pattern: "every wrapper that takes geometric inputs (width, height, x, y) must compute the resulting bbox + collision check + content-fit check before emitting; on impossibility, return a precise error stating which constraint failed and what would satisfy it. ACs are the fallback layer that catches what the wrapper missed; the goal over time is to reduce AC FAILs to zero by pushing checks into wrappers."
+
+D. **Re-render and re-grade.** After A and B, run smoke + render + critic. Critic will grade against the updated rubric (which now grades critic recommendations on the strong-vs-weak ask axis).
+
+Round 9 budget: 90 min. Three files (whiteboard-mcp.ts, the new skill doc, plus whatever supporting changes). NO prompt edits. NO AC edits unless a NEW class of defect is uncovered that doesn't fit the wrapper-rejection pattern.
+
+## 62. Whiteboard PASS A spine — embody question-as-answer, not decorate (added 2026-04-27, surfaced by wb-impl-2 framing-check)
+Round 8 added PASS A step 0 (ground-problem sentence) and step 6 (per-node question). The structural code shipped clean and the render APPROVED. **But** PASS A's planning spine (steps 1-5 — section breakdown, element listing, x/y layout, container rules, text budgets) still reasons in pure layout-mechanics language — questions are bolted on at step 0 and step 6, not woven through the planning. The agent reads PASS A as "plan the layout, then add questions" rather than "decompose the question chain, then place answers."
+
+User's "the way I wanna learn" framing requires PASS A's spine to BECOME question-as-answer reasoning:
+- Currently step 1: "Section breakdown — how many sections, in what order, each section's modality."
+- User-aligned: "Question breakdown — the paper answers ONE ground-problem question through 2-4 sub-questions. List the sub-questions in the order a curious reader would ask them. Each becomes a section."
+- Currently step 2: "Per section — list every element you will emit (zones, nodes, equations, callouts)."
+- User-aligned: "For the section's sub-question — what 2-4 sub-sub-questions does answering it require? Each becomes a node, equation, or callout. Element TYPE follows from what kind of answer the question wants — workflow if 'how does data flow?', math if 'what's the formula?', callout if 'why does this work?'."
+- Currently step 3: "Per section — rough x/y layout strategy."
+- User-aligned: "Layout strategy — arrange the answers in the order the question chain runs (sub-question 1 → sub-question 2 → ... → ground-problem answer). Spatial position encodes question-chain ordering."
+
+Round 9 work: rewrite PASS A steps 1-3 in `src/main/ai/whiteboard-pass2-system.ts`. Steps 4-5 (containers, text budgets) become subordinate "while placing answers, respect these container rules." CODE behavior unchanged — the wrapper + AC don't need to change. The agent's *planning trace* should read questions-first, not layout-first.
+
+Also: rubric should grade whether section headers READ as sub-questions (not "Architecture overview" but "How do we get from photos to 3D?"). Add to `.claude/critics/whiteboard.md` if pursuing this round.
+
+## 65. Dev-loop discipline — prefer `npm run dev` over `dist:mac` for iteration (added 2026-04-27, user instruction)
+User's exact instruction: *"let's switch to `npm run dev` for the next iteration. Let's make a note that when developing, we should use `npm run dev` or a faster method."*
+
+**Default to `npm run dev`** for any change that doesn't depend on the bundled, signed, installed app. `electron-vite dev` runs with HMR — code edits hot-reload in <1s, the renderer process picks up changes without a restart, no zip/install cycle.
+
+**Only build `dist:mac` when** you actually need to exercise:
+- The install path (`install.sh --from-zip`) — first-install, update flow, code-signing.
+- `app.isPackaged` branches (different file paths, ASAR resources, auto-updater hooks).
+- File associations (`.pdf` Open With → Fathom).
+- The dock icon, the bundled `Info.plist`, native macOS LaunchServices behavior.
+- A change that only manifests after `electron-builder` packs the app (rare, but happens with native modules and the `extraResources` glob).
+
+**Cost we paid before this rule was written**: tonight's whiteboard side-chat + regen-button + guidance work could have been validated in 4-5 dev-mode hot-reloads. Instead it ran through three full `dist:mac` cycles (~80-135s wall-clock each) plus an aborted-and-restarted build that lost ~3 min to the bash supervisor terminating a piped `tee` pipeline. The user explicitly flagged this: builds were eating ~10 min cumulative for renderer-only changes that don't touch any of the bullets above.
+
+**Operational rule for the implementer agent**: when a task is renderer-only (`src/renderer/**`, prompt copy, store wiring, UI components), open `npm run dev` once at session start and iterate against it. Reserve `dist:mac` for the *end* of the session when handing the artifact to the user, or for explicit "build a new installer" dispatches.
+
+Future ergonomic wins (not blocking, log-only):
+- Drop the DMG target from `electron-builder.config.cjs`. We install via `--from-zip`; the DMG is unused and adds ~25-30s of compression to every build.
+- Investigate why `@electron/rebuild` of `better-sqlite3` re-runs every build (~5s); native module hash cache should make this a no-op when headers/version unchanged.
+
+## 66. Whiteboard: dynamic-structure-per-paper + hard overlap constraints + side-chat chart visibility (added 2026-04-27, user directive)
+
+User's exact message (verbatim, with image of whiteboard showing 3-section template + chat saying "applied to canvas" but no new chart frame visible):
+
+> *"I asked on the site chat a question. It said that it had generated the chart to answer that question, but I don't see anything on the whiteboard. Additionally, we are following a specific template every time for every paper. We should not do that. We should let the explanations be dynamic enough so that they work. Have you hard coded a template somewhere that we have to first do this, this, and this? We should adapt the structure of the whiteboard explanations to match the paper. But at the very same time, we should put constraints on the generated whiteboards such that their boxes don't overlap, their text doesn't overlap, and their things don't overlap. We have to think of a strategy for this. Consult with a new team mate who is a Visual and whiteboarding expert. An expert in Excalibur internal code."*
+
+Three threads to weave:
+
+**(A) Side-chat "applied to canvas" → no visible chart bug.** The side-chat panel said it generated a chart for "how do their o-voxels work" with a "Jump to chart →" affordance, but the whiteboard canvas only shows the original 3-section template; no new chart frame appears. Suspect causes (untested, need diagnosis):
+- The chat's `create_chat_frame` MCP primitive is failing silently and not adding elements to scene.
+- Elements ARE being added but to coordinates outside the current viewport, and "Jump to chart" navigation is broken.
+- Scene-merge from the chat path back into the main `whiteboard.store.ts` is not propagating, so `excalidrawAPI.updateScene` never sees the new elements.
+- The chat path runs against a separate `WhiteboardSideChat`-internal scene that never integrates with the main whiteboard surface.
+
+**(B) Hardcoded template across every paper.** Looking at every render this session — round 6, 7, 8, 9, 10, 11, 12 — the whiteboard always emits exactly 3 sections: §1 Architecture, §2 Math, §3 Thesis/Key Idea. This is too rigid for a paper-agnostic explanation surface. Need to audit `src/main/ai/whiteboard-pass2-system.ts` and the Pass 1 narrative prompt for hardcoded section archetypes vs paper-driven structure. Pass A's planning spine should choose section count/topics from the paper's actual question chain (per todo #62 framing), not from a "every paper has Architecture+Math+Thesis" template.
+
+**(C) Hard overlap constraints alongside dynamic structure.** Dynamic structure cannot cost the geometric quality bar. The same wrapper-layer constraint principle from rounds 9-12 (AC-NODE-VS-NODE-OVERLAP, AC-MATH-ZONE-TEXT-FIT, AC-CONTAINER-TEXT-FIT) must extend to hold across whatever section layout the agent chooses — flexible geometry, rigid no-overlap. Strategy must specify: (i) how the agent declares section topology dynamically, (ii) how the wrapper enforces non-overlap regardless of what topology was chosen, (iii) how the overlap checks compose with text-fit checks now that section sizes are paper-driven not template-driven.
+
+**Dispatch**: spawn `excalidraw-expert` (research-only, no edits) on whiteboard-build team. Brief includes:
+1. Audit PASS2_SYSTEM + Pass 1 narrative for hardcoded template.
+2. Diagnose side-chat → canvas integration bug (read `WhiteboardSideChat.tsx`, `whiteboard-chat.ts`, scene-merge path).
+3. Propose strategy for dynamic-structure + hard-overlap-constraints, citing Excalidraw element schema, `convertToExcalidrawElements` sugar, ELK layout integration where relevant.
+4. Output: ONE structured proposal ≤2500 words via SendMessage to team-lead. No code edits.
+
+After teammate proposal lands, decompose into round-13 implementation asks for wb-impl-2 (or successor). Persistence work (todo #65 was renumbered above; new entry below) is queued behind this.
+
+## 67. Whiteboard persists across sessions (added 2026-04-27 — re-numbered from prior #65 to avoid collision with dev-loop entry)
+
+User's exact instruction: *"Once I have generated the whiteboard, the whiteboard should be there even the next time when I open it. I shouldn't have to remake it. We should save the whiteboard, and unless the user clears the whiteboard, we should not delete that whiteboard. We should see that the next time I open it or close it."*
+
+Wire whiteboard persistence into the existing sidecar architecture. Save scene + Pass 1 narrative + Pass A plan + Pass B placement under `~/Library/Application Support/Fathom/sidecars/<contentHash>/whiteboard/`. On PDF reopen, load the saved scene before running any Pass; render directly from cache. Only an explicit "clear whiteboard" user action deletes it. Composes with #66 — once #66 lands, persistence keys on the dynamic structure and stores it verbatim. Queued for round 14.
+
+## 68. Whiteboard: mid-tier template library — explanation patterns (added 2026-04-27, user directive)
+
+User's exact instruction (verbatim):
+
+> *"Yes, we can do whatever we want. We can have whatever organization and structure we want to best explain the paper. One other thing that might help is having a set of templates from the library for workflows. Perhaps we can use templates for different individual components and then see which of them best suits so that we are not essentially drawing everything from scratch; we are just boring. Perhaps there is a time chain workflow, but you have to see whether such components exist. These are not like box-level components; these are not the entire whiteboard-level components. These are individual explanation pieces. For example: a time chain, a flow chart, just anything. An explanation medium. We can group these all together to explain the entire paper. We can select which of them is the best."*
+
+**Architectural insight**: between box-level primitives (rectangles, text, arrows) and whole-whiteboard sections, there's a missing mid-tier — **parameterized explanation patterns** the agent picks from rather than authoring from scratch. Each pattern owns its own geometry, so wrapper-layer overlap rejection (todo #66 thread C) shrinks to "primitives-only mode" used for the rare custom annotation outside any template.
+
+**Seed pattern vocabulary** (excalidraw-expert refining via follow-up dispatch):
+- time-chain / timeline
+- flow-chart / pipeline
+- taxonomy / hierarchy
+- comparison-matrix / table
+- definition-plus-proof-sketch
+- axis / number-line
+- before-after / two-panel
+- input-output-with-internals
+- causal-graph / DAG
+- callout-with-key-insight
+
+**Key research questions** (in flight with excalidraw-expert):
+- Does Excalidraw have a native `.excalidrawlib` primitive we can use vs synthesizing at the tool layer?
+- Does the community library at libraries.excalidraw.com offer reusable items?
+- Tool-level API: `instantiate_template({ templateId, args, anchorX?, anchorY? })`?
+- How does the agent SELECT a template — prompt-shaped, content-shape classifier, or two-stage generator+verifier?
+- Composition with section-grid, frame-based sections, Pass 2.5 critique?
+
+**Round 13 implication**: this **supersedes** todo #66 thread B (template-diversification of the worked example) and **narrows** thread C (overlap-constraint surgery). Round 13 implementation now: chat bug fix + template-library MVP (3-4 templates) + worked examples that demonstrate template-selection across paper shapes + wrapper-overlap-rejection only for primitives-mode adds.
+
+User explicitly confirmed: structure is fully paper-driven (no MANDATORY MINIMUM architecture section); modality-as-tool-arg is approved; "do whatever we want" for organization.

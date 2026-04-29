@@ -1,9 +1,9 @@
 ---
-spec: Whiteboard Pass 2 — MCP-driven authoring (parked design)
-status: AWAITING USER DECISION (do NOT implement until the user picks Path B/C; if they pick Path A, archive)
+spec: Whiteboard Pass 2 — MCP-driven authoring (IMPLEMENTED 2026-04-26)
+status: IMPLEMENTED. User chose Path B/C. Final architecture is **Option C** (SDK MCP via `createSdkMcpServer`, no upstream Express + stdio pair). End-to-end smoke verified the L1 + L2 paths against the bundled sample paper at ~$0.40/L1 + ~$0.30/L2 with cache HIT. Live design now lives in `docs/methodology/whiteboard.md`; agent quick-reference in `.claude/skills/fathom-excalidraw.md`. This file preserved as historical context for the architectural decision.
 created: 2026-04-26
-parked: 2026-04-26
-parked_by: whiteboard-impl, on team-lead instruction
+implemented: 2026-04-26
+parked_by: whiteboard-impl, on team-lead instruction (parked, then implemented same day)
 context: Render-only close-the-loop verification (run 2026-04-26 17:40-18:02 UTC) showed the user's three reported bugs (text overflow, vertical L1, arrow overlaps) ALL not reproduced after the `regenerateIds: false` + bend-points + text-aware sizing + 24-char label cap fixes. Scene size dropped from 165 KB (213 elements, 3 stacked diagram copies) to 22 KB (28 elements, single clean diagram). Path A — ship the render fix and defer MCP — was recommended to the user. This spec captures the MCP design in case the user picks Path B/C instead.
 research-by: ai-scientist@fathom-build agent (handoff received 2026-04-26)
 supersedes: nothing yet — additive on `whiteboard-diagrams.md`
