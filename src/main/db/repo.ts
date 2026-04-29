@@ -527,14 +527,14 @@ export const GroundingRepos = {
 };
 
 /**
- * Whiteboard diagrams (spec: .claude/specs/whiteboard-diagrams.md).
- * One row per paper that has had a whiteboard generated. Filesystem
- * still holds the source of truth — Excalidraw scene at
- * `<sidecar>/whiteboard.excalidraw`, Pass 1 understanding doc at
- * `<sidecar>/whiteboard-understanding.md`, soft-verifier results at
- * `<sidecar>/whiteboard-issues.json`. This table is the index the
- * main process consults so the renderer doesn't have to stat disk on
- * every paper-state lookup. */
+ * Whiteboard rows. One per paper that has had a whiteboard generated.
+ * Filesystem holds the source of truth — Excalidraw scene at
+ * `<sidecar>/whiteboard.excalidraw`. This table is the index the main
+ * process consults so the renderer doesn't have to stat disk on
+ * every paper-state lookup. Pre-pivot rows may also reference
+ * `whiteboard-understanding.md` / `whiteboard-issues.json` in their
+ * sidecar; the post-pivot pipeline doesn't write those, but
+ * `whiteboard:clear` removes them on demand for hygiene. */
 export interface WhiteboardRow {
   paper_hash: string;
   status: 'idle' | 'pass1' | 'pass2' | 'ready' | 'failed';
@@ -583,8 +583,8 @@ export const Whiteboards = {
     // (no caller has ever written one) implicitly default to 'idle'
     // via the column DEFAULT, but cost-only upserts always run AFTER
     // a status was set, so the no-row-yet case is impossible by
-    // construction (Pass 1 always writes status='pass1' before any
-    // expand/critique fires).
+    // construction (`whiteboard:generate` always writes
+    // status='pass2' before any cost-only follow-up fires).
     const db = getDb();
     if (args.status === undefined) {
       db
@@ -646,6 +646,26 @@ export const Whiteboards = {
         error: args.error === undefined ? null : args.error,
         created_at: Date.now(),
       });
+  },
+  /** Reset the row to a fresh idle state — clears every generated
+   * field (status, costs, latencies, verification rate, error) but
+   * keeps the row + paper_hash so downstream cost rollups and
+   * created_at stay valid. Used by whiteboard:clear. */
+  reset(paperHash: string): void {
+    getDb()
+      .prepare(
+        `UPDATE whiteboards SET
+           status            = 'idle',
+           generated_at      = NULL,
+           pass1_cost        = NULL,
+           pass2_cost        = NULL,
+           total_cost        = NULL,
+           pass1_latency_ms  = NULL,
+           verification_rate = NULL,
+           error             = NULL
+         WHERE paper_hash = ?`,
+      )
+      .run(paperHash);
   },
 };
 

@@ -62,10 +62,10 @@ export default function App() {
   const [focusLightActive, setFocusLightActive] = useState(false);
   const [focusLightWpm, setFocusLightWpm] = useState(300);
   // Active tab inside the document workspace. The Whiteboard tab is
-  // gated on indexing being complete (otherwise its Pass 1 input
-  // doesn't exist). Tabs reset to 'pdf' whenever a new paper opens so
-  // the user always lands on the source. Switch via ⌘1 / ⌘2 or by
-  // clicking the tab strip in the header.
+  // gated on the paper's content.md being indexed (the agent reads
+  // it as the user message). Tabs reset to 'pdf' whenever a new
+  // paper opens so the user always lands on the source. Switch via
+  // ⌘1 / ⌘2 or by clicking the tab strip in the header.
   const [activeTab, setActiveTab] = useState<'pdf' | 'whiteboard'>('pdf');
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -344,6 +344,26 @@ export default function App() {
         }
       } catch (err) {
         console.warn('failed to restore paper state', err);
+      }
+
+      // Cache check (#68): if the on-disk sidecar is already complete —
+      // content.md non-empty + at least one figure PNG + Papers.digest_json
+      // present in SQLite — skip the entire indexing surface silently.
+      // Per CLAUDE.md the goal is silence on reopen, not a different label
+      // (no "Already indexed" pill, no toast, no rebuild work).
+      //
+      // Any of the three flags missing → fall through to the existing
+      // rebuild path below; partial caches re-build cleanly.
+      try {
+        const cached = await window.lens.checkPaperIndexed(pdf.contentHash);
+        if (cached.hasContentMd && cached.hasFigures && cached.hasDigest) {
+          return;
+        }
+      } catch (err) {
+        // Probe failure shouldn't block the open — fall through to the
+        // existing rebuild path so the worst case is "indexing toast
+        // appears even though sidecar exists" (the pre-#68 status quo).
+        console.warn('[Fathom] checkPaperIndexed probe failed, falling through to rebuild', err);
       }
 
       // Build the full on-disk index: one content.md with the paper's text
@@ -662,47 +682,17 @@ export default function App() {
       useLensStore.getState().forward();
       window.dispatchEvent(new CustomEvent('fathom:swipe', { detail: { dir: 'forward' } }));
     });
-    // Switch to the Whiteboard tab and trigger generation for the
-    // currently-open paper. Wired for `scripts/fathom-test.sh
-    // whiteboard-generate`. We dispatch a CustomEvent rather than
-    // calling whiteboardGenerate directly so the WhiteboardTab's
-    // existing consent-bypass path handles it (same effect as the
-    // user pressing the "Generate whiteboard" button).
+    // ⌘⇧F4 — switch to the Whiteboard tab. The post-pivot Whiteboard
+    // component auto-generates when there's no saved scene, so this
+    // is sufficient for `scripts/fathom-test.sh whiteboard-generate`.
     const unsubWb = window.lens.onQaTriggerWhiteboardGenerate(() => {
       setActiveTab('whiteboard');
-      // Defer the auto-accept by one tick so the tab has time to
-      // mount + hydrate before we ask it to start the pipeline.
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardGenerate'));
-      }, 50);
-    });
-    // Render-only QA: skip Pass 1 + Pass 2 entirely, mount a fixture
-    // WBDiagram so we can iterate on the render layer without Claude
-    // spend. Triggered by ⌘⇧F3 → `scripts/fathom-test.sh
-    // whiteboard-render-only` (added below). Per CLAUDE.md §0 the
-    // isolation principle.
-    const unsubWbRenderOnly = window.lens.onQaTriggerWhiteboardRenderOnly(() => {
-      setActiveTab('whiteboard');
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardRenderOnly'));
-      }, 50);
-    });
-    // QA: drill into the first drillable L1 node. Fires after the
-    // whiteboard is mounted (`whiteboard-generate` or
-    // `whiteboard-render-only` first); WhiteboardTab listens.
-    const unsubWbDrillFirst = window.lens.onQaTriggerWhiteboardDrillFirst(() => {
-      setActiveTab('whiteboard');
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('fathom:qaWhiteboardDrillFirst'));
-      }, 50);
     });
     return () => {
       unsubDive();
       unsubBack();
       unsubForward();
       unsubWb();
-      unsubWbRenderOnly();
-      unsubWbDrillFirst();
     };
   }, []);
 
@@ -1746,12 +1736,11 @@ function TabButton({
  * `pdf/PageView.tsx` — the user explicitly asked for the color
  * language to be unified):
  *
- *   - Generating (Pass 1 or Pass 2 in flight, or Level 2 expanding):
+ *   - Generating (the agent is mid-run, scene is being authored):
  *     red (#d4413a) + 1.2s opacity pulse via `.fathom-marker-streaming`.
- *   - Ready (Level 1 painted, no in-flight expansions): amber
- *     (var(--color-lens)), no animation.
+ *   - Ready (final scene persisted): amber (var(--color-lens)), no animation.
  *   - Failed: red, no animation.
- *   - Idle / no consent yet: nothing rendered.
+ *   - Idle / no whiteboard for this paper yet: nothing rendered.
  *
  * Aria-label spells out the state so a screen reader user gets the
  * same status without depending on color or motion (cog reviewer §6

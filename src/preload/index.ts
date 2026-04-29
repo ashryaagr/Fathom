@@ -267,34 +267,16 @@ const api = {
     return () => ipcRenderer.removeListener('qa:triggerForward', listener);
   },
   /** QA-harness: switch to the Whiteboard tab and accept the consent
-   * affordance for the currently-open paper. Wired so an automated
-   * smoke test can spawn Fathom, drive the global shortcut, and
-   * assert the `[Whiteboard Pass1]` log line appears within ~90 s. */
+   * affordance for the currently-open paper. The Whiteboard tab
+   * auto-generates on first mount when no scene exists, so this
+   * trigger reduces to a tab-switch in the renderer. Wired so an
+   * automated smoke test can spawn Fathom, drive the global shortcut,
+   * and assert the agent's tool-call log lines appear within ~90 s. */
   onQaTriggerWhiteboardGenerate: (handler: () => void): (() => void) => {
     const listener = () => handler();
     ipcRenderer.on('qa:triggerWhiteboardGenerate', listener);
     return () =>
       ipcRenderer.removeListener('qa:triggerWhiteboardGenerate', listener);
-  },
-  /** QA-harness: RENDER-ONLY whiteboard test (no Claude spend). The
-   * renderer loads a fixture WBDiagram and runs the render layer
-   * against it, mounting the result in the live scene + saving a PNG.
-   * Per CLAUDE.md §0 isolation principle. */
-  onQaTriggerWhiteboardRenderOnly: (handler: () => void): (() => void) => {
-    const listener = () => handler();
-    ipcRenderer.on('qa:triggerWhiteboardRenderOnly', listener);
-    return () =>
-      ipcRenderer.removeListener('qa:triggerWhiteboardRenderOnly', listener);
-  },
-  /** QA-harness: drill into the first drillable L1 node of the
-   * currently mounted whiteboard. Wired for `scripts/fathom-test.sh
-   * whiteboard-drill` so automated runs can capture L2 frames without
-   * a coordinate-based AppleScript click. */
-  onQaTriggerWhiteboardDrillFirst: (handler: () => void): (() => void) => {
-    const listener = () => handler();
-    ipcRenderer.on('qa:triggerWhiteboardDrillFirst', listener);
-    return () =>
-      ipcRenderer.removeListener('qa:triggerWhiteboardDrillFirst', listener);
   },
 
   // ---- settings (tiny JSON under userData) ----

@@ -95,11 +95,11 @@ interface FathomSettings {
    * CLI auth (financial-consent rule from the cog reviewer §8).
    * Editable from Preferences. */
   whiteboardAutoGenerateOnIndex?: boolean;
-  /** Reserved for the v1 follow-up "Lite (~$0.50, Sonnet only)"
-   * cost-tier toggle that the cog reviewer non-blocking note proposed.
-   * Wired into settings now so the schema lands with v1; the actual
-   * Sonnet-only Pass 1 path is deferred until we observe acceptance
-   * rates on the default Opus-priced version. (todo.md item 56) */
+  /** Vestigial cost-tier toggle from the pre-pivot pipeline.
+   * Post-pivot the whiteboard runs through fathom-whiteboard at a
+   * single (~$1) price point and there's no Sonnet-only path. Kept
+   * in the schema for backward-read compatibility; never written by
+   * the new code. (todo.md item 56 — remove on next breaking change.) */
   whiteboardSonnetLite?: boolean;
   /** Whiteboard side-chat collapsed state — when true, the right rail
    * shows only the 32px chevron strip on first mount of any
@@ -2084,36 +2084,12 @@ app.whenReady().then(async () => {
     globalShortcut.register('CommandOrControl+Shift+F5', () => {
       safeSendActive('settings:show');
     });
-    // ⌘⇧F4 — switch to the Whiteboard tab + accept consent. Wired
-    // for `scripts/fathom-test.sh whiteboard-generate`, the smoke
-    // test the team-lead spec asks for. Renderer handler lives in
-    // App.tsx and triggers the same code path the user's "Generate
-    // whiteboard" button does.
+    // ⌘⇧F4 — switch to the Whiteboard tab. Wired for
+    // `scripts/fathom-test.sh whiteboard-generate`. The Whiteboard
+    // tab auto-generates on first mount when no scene exists, so the
+    // single tab-switch is the whole smoke-test trigger.
     globalShortcut.register('CommandOrControl+Shift+F4', () => {
       safeSendActive('qa:triggerWhiteboardGenerate');
-    });
-    // ⌘⇧F3 — RENDER-ONLY whiteboard test. Skips Pass 1 + Pass 2
-    // entirely; the renderer loads a fixture WBDiagram from
-    // `<sidecar>/whiteboard-test-diagram.json` (or a hardcoded
-    // fallback if the file doesn't exist) and runs it through the
-    // ELK + diagramToSkeleton + convertToExcalidrawElements +
-    // exportToCanvas pipeline, mounts the result in the live scene,
-    // and writes the rendered PNG to disk via the existing
-    // whiteboard:writeRenderPng IPC. Iterates render-layer fixes in
-    // ~2s per round, NO Claude spend. Per CLAUDE.md §0 isolation
-    // principle — the bug is in the render layer, debug it in
-    // isolation, plug back in.
-    globalShortcut.register('CommandOrControl+Shift+F3', () => {
-      safeSendActive('qa:triggerWhiteboardRenderOnly');
-    });
-    // ⌘⇧F2 — drill into the first drillable L1 node of the currently
-    // mounted whiteboard. Wired for `scripts/fathom-test.sh
-    // whiteboard-drill` so automated close-the-loop runs can capture
-    // the L2 frame without needing a coordinate-based AppleScript
-    // click. Fires the same code path a user click would; if no
-    // whiteboard is mounted or no drillable nodes exist, no-op.
-    globalShortcut.register('CommandOrControl+Shift+F2', () => {
-      safeSendActive('qa:triggerWhiteboardDrillFirst');
     });
   }
   app.on('activate', async () => {
