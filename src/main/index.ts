@@ -1521,10 +1521,10 @@ ipcMain.handle(
         const result = await generateWhiteboard(
           paper,
           {
-            onLog: (line) => {
+            onLog: (line: string) => {
               ctx.safeChannelSend({ type: 'log', text: line });
             },
-            onAssistantText: (delta) => {
+            onAssistantText: (delta: string) => {
               ctx.safeChannelSend({ type: 'delta', text: delta });
             },
             onSceneUpdate: (scene: WhiteboardScene) => {
@@ -1609,8 +1609,9 @@ ipcMain.handle(
           paper,
           req.instruction,
           {
-            onLog: (line) => ctx.safeChannelSend({ type: 'log', text: line }),
-            onAssistantText: (delta) => ctx.safeChannelSend({ type: 'delta', text: delta }),
+            onLog: (line: string) => ctx.safeChannelSend({ type: 'log', text: line }),
+            onAssistantText: (delta: string) =>
+              ctx.safeChannelSend({ type: 'delta', text: delta }),
             onSceneUpdate: (scene: WhiteboardScene) => {
               if (ctx.sender.isDestroyed()) return;
               ctx.sender.send('whiteboard:scene-stream', {

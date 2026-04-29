@@ -633,7 +633,7 @@ async function commitSemanticFocus(
           width: markerBbox.width * zoom,
           height: markerBbox.height * zoom,
         };
-        if (selectionBbox) {
+        if (selectionBbox && selectionSnapshot) {
           console.log('[Lens] selection dive marker bbox', {
             regionId: region.id,
             paragraphBbox: region.bbox,

@@ -22,6 +22,20 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      # fathom-whiteboard is consumed via `file:../fathom-whiteboard` in
+      # package.json — works locally because the sibling clone exists on
+      # disk; on CI we clone it ourselves and build its `dist/` so the
+      # type declarations and JS shipped from `dist/index.js` resolve.
+      # Postinstall is skipped (it builds the vendored excalidraw-mcp
+      # which we don't need for typecheck/build).
+      - name: Clone + build fathom-whiteboard sibling
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          git clone --depth 1 https://github.com/ashryaagr/fathom-whiteboard.git fathom-whiteboard
+          cd fathom-whiteboard
+          npm ci --ignore-scripts
+          npm run build
+
       # Skip postinstall: better-sqlite3's native build is only required at
       # runtime, not for typechecking or bundling the TypeScript.
       - name: Install dependencies
