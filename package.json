@@ -45,7 +45,7 @@
     "dompurify": "^3.4.1",
     "electron-updater": "^6.8.3",
     "elkjs": "^0.10.2",
-    "fathom-whiteboard": "file:../fathom-whiteboard",
+    "fathom-whiteboard": "https://github.com/ashryaagr/fathom-whiteboard/releases/download/v0.1.8/fathom-whiteboard-0.1.8.tgz",
     "framer-motion": "^12.38.0",
     "katex": "^0.16.45",
     "pdfjs-dist": "^5.6.205",
