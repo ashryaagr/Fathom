@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { readFile, writeFile, mkdir, unlink, readdir } from 'node:fs/promises';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import {
@@ -1537,6 +1537,8 @@ ipcMain.handle(
           },
           undefined,
           req.focus,
+          resolveClaudeExecutablePath() ?? undefined,
+          ctx.abortController,
         );
 
         const sceneJson = buildSceneJson(result.scene.elements);
@@ -1602,17 +1604,25 @@ ipcMain.handle(
           /* keep empty; refine will treat as fresh start */
         }
         const paper = await loadPaperRefForWhiteboard(req.paperHash, req.pdfPath);
-        const result = await refineWhiteboard(prevScene, paper, req.instruction, {
-          onLog: (line) => ctx.safeChannelSend({ type: 'log', text: line }),
-          onAssistantText: (delta) => ctx.safeChannelSend({ type: 'delta', text: delta }),
-          onSceneUpdate: (scene: WhiteboardScene) => {
-            if (ctx.sender.isDestroyed()) return;
-            ctx.sender.send('whiteboard:scene-stream', {
-              paperHash: req.paperHash,
-              elements: scene.elements,
-            });
+        const result = await refineWhiteboard(
+          prevScene,
+          paper,
+          req.instruction,
+          {
+            onLog: (line) => ctx.safeChannelSend({ type: 'log', text: line }),
+            onAssistantText: (delta) => ctx.safeChannelSend({ type: 'delta', text: delta }),
+            onSceneUpdate: (scene: WhiteboardScene) => {
+              if (ctx.sender.isDestroyed()) return;
+              ctx.sender.send('whiteboard:scene-stream', {
+                paperHash: req.paperHash,
+                elements: scene.elements,
+              });
+            },
           },
-        });
+          undefined,
+          resolveClaudeExecutablePath() ?? undefined,
+          ctx.abortController,
+        );
         const sceneJson = buildSceneJson(result.scene.elements);
         try {
           await mkdir(indexPath, { recursive: true });
@@ -1643,6 +1653,27 @@ ipcMain.handle(
         ctx.safeChannelSend({ type: 'error', message });
       },
     });
+  },
+);
+
+// Persist a user-pasted attachment (image, PDF, file) into the paper's
+// sidecar so the agent can read it back via an absolute path. Stored
+// under userData (not next to the user's PDF) so the write never
+// triggers a TCC prompt on Desktop/Documents/Downloads. Random hex
+// prefix avoids collisions when the user pastes the same filename twice.
+ipcMain.handle(
+  'whiteboard:saveAsset',
+  async (
+    _event,
+    req: { paperHash: string; filename: string; bytes: ArrayBuffer },
+  ): Promise<{ absPath: string }> => {
+    const dir = join(indexDirFor(req.paperHash), 'whiteboard-assets');
+    await mkdir(dir, { recursive: true });
+    const safeName = req.filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'asset';
+    const id = randomBytes(4).toString('hex');
+    const absPath = join(dir, `${id}-${safeName}`);
+    await writeFile(absPath, Buffer.from(req.bytes));
+    return { absPath };
   },
 );
 

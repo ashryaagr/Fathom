@@ -1092,3 +1092,16 @@ User's exact instruction (verbatim):
 **Round 13 implication**: this **supersedes** todo #66 thread B (template-diversification of the worked example) and **narrows** thread C (overlap-constraint surgery). Round 13 implementation now: chat bug fix + template-library MVP (3-4 templates) + worked examples that demonstrate template-selection across paper shapes + wrapper-overlap-rejection only for primitives-mode adds.
 
 User explicitly confirmed: structure is fully paper-driven (no MANDATORY MINIMUM architecture section); modality-as-tool-arg is approved; "do whatever we want" for organization.
+
+---
+
+## 2026-04-29 — pre-existing PdfViewer.tsx typecheck error
+
+`npm run typecheck:web` fails with one pre-existing, non-blocking error:
+
+```
+src/renderer/pdf/PdfViewer.tsx(641,27): error TS18047: 'selectionSnapshot' is possibly 'null'.
+```
+
+Surfaced by fathom-wb-impl during Build 4 wiring; not introduced by their session. PdfViewer.tsx is committed clean (last touched in b7c28d2 by Whiteboard scaffolding). Cleanup pass: add a null-guard at line 641. Not blocking distribution since the renderer bundle still builds; flagged so it doesn't slip past the next typecheck-clean commit.
+

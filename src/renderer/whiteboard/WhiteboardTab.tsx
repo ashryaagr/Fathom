@@ -65,56 +65,74 @@ export default function WhiteboardTab({ document }: Props) {
       saveViewport: async (viewport) => {
         await lens.whiteboardSaveViewport(paperHash, viewport);
       },
-      generate: (cb, focus) => {
+      saveAsset: (filename, bytes) =>
+        lens.whiteboardSaveAsset(paperHash, filename, bytes),
+      generate: (cb, focus, abortController) => {
         setStatus(paperHash, 'pass2');
         return new Promise((resolve, reject) => {
-          void lens.whiteboardGenerate(
-            { paperHash, pdfPath, focus },
-            {
-              onLog: (line) => cb.onLog?.(line),
-              onSceneStream: (elements) => {
-                const next: WhiteboardScene = {
-                  elements: elements as WhiteboardScene['elements'],
-                };
-                cb.onScene?.(next);
+          void lens
+            .whiteboardGenerate(
+              { paperHash, pdfPath, focus },
+              {
+                onLog: (line) => cb.onLog?.(line),
+                onSceneStream: (elements) => {
+                  const next: WhiteboardScene = {
+                    elements: elements as WhiteboardScene['elements'],
+                  };
+                  cb.onScene?.(next);
+                },
+                onDone: ({ scene, totalCost }) => {
+                  setStatus(paperHash, 'ready');
+                  const parsed = parseScene(scene) ?? { elements: [] };
+                  resolve({ scene: parsed, usd: totalCost });
+                },
+                onError: (msg) => {
+                  setStatus(paperHash, 'failed');
+                  reject(new Error(msg));
+                },
               },
-              onDone: ({ scene, totalCost }) => {
-                setStatus(paperHash, 'ready');
-                const parsed = parseScene(scene) ?? { elements: [] };
-                resolve({ scene: parsed, usd: totalCost });
-              },
-              onError: (msg) => {
-                setStatus(paperHash, 'failed');
-                reject(new Error(msg));
-              },
-            },
-          );
+            )
+            .then((handle) => {
+              // Forward the caller's abort signal to the IPC abort.
+              // Pipeline catches AbortError and resolves with [aborted]
+              // — either way we let the existing onError/onDone path
+              // settle the promise.
+              abortController?.signal.addEventListener('abort', () => {
+                handle.abort();
+              });
+            });
         });
       },
-      refine: (currentScene, instruction, cb) => {
+      refine: (currentScene, instruction, cb, abortController) => {
         return new Promise((resolve, reject) => {
-          void lens.whiteboardRefine(
-            {
-              paperHash,
-              pdfPath,
-              sceneJson: serializeScene(currentScene),
-              instruction,
-            },
-            {
-              onLog: (line) => cb.onLog?.(line),
-              onSceneStream: (elements) => {
-                const next: WhiteboardScene = {
-                  elements: elements as WhiteboardScene['elements'],
-                };
-                cb.onScene?.(next);
+          void lens
+            .whiteboardRefine(
+              {
+                paperHash,
+                pdfPath,
+                sceneJson: serializeScene(currentScene),
+                instruction,
               },
-              onDone: ({ scene, totalCost }) => {
-                const parsed = parseScene(scene) ?? currentScene;
-                resolve({ scene: parsed, usd: totalCost });
+              {
+                onLog: (line) => cb.onLog?.(line),
+                onSceneStream: (elements) => {
+                  const next: WhiteboardScene = {
+                    elements: elements as WhiteboardScene['elements'],
+                  };
+                  cb.onScene?.(next);
+                },
+                onDone: ({ scene, totalCost }) => {
+                  const parsed = parseScene(scene) ?? currentScene;
+                  resolve({ scene: parsed, usd: totalCost });
+                },
+                onError: (msg) => reject(new Error(msg)),
               },
-              onError: (msg) => reject(new Error(msg)),
-            },
-          );
+            )
+            .then((handle) => {
+              abortController?.signal.addEventListener('abort', () => {
+                handle.abort();
+              });
+            });
         });
       },
       clear: async () => {

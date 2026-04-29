@@ -601,6 +601,13 @@ const api = {
   ): Promise<{ ok: boolean; deletedFiles: string[]; error?: string }> =>
     ipcRenderer.invoke('whiteboard:clear', { paperHash }),
 
+  whiteboardSaveAsset: (
+    paperHash: string,
+    filename: string,
+    bytes: ArrayBuffer,
+  ): Promise<{ absPath: string }> =>
+    ipcRenderer.invoke('whiteboard:saveAsset', { paperHash, filename, bytes }),
+
   whiteboardGenerate: (
     req: { paperHash: string; pdfPath: string; focus?: string },
     cb: {
