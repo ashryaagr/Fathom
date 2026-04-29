@@ -602,7 +602,7 @@ const api = {
     ipcRenderer.invoke('whiteboard:clear', { paperHash }),
 
   whiteboardGenerate: (
-    req: { paperHash: string; pdfPath: string },
+    req: { paperHash: string; pdfPath: string; focus?: string },
     cb: {
       onLog?: (text: string) => void;
       onDelta?: (text: string) => void;

@@ -1502,7 +1502,7 @@ ipcMain.handle(
   'whiteboard:generate',
   async (
     event,
-    req: { paperHash: string; pdfPath: string },
+    req: { paperHash: string; pdfPath: string; focus?: string },
   ) => {
     const indexPath = indexDirFor(req.paperHash);
     Whiteboards.upsert({
@@ -1518,21 +1518,26 @@ ipcMain.handle(
       sender: event.sender,
       body: async (ctx) => {
         const paper = await loadPaperRefForWhiteboard(req.paperHash, req.pdfPath);
-        const result = await generateWhiteboard(paper, {
-          onLog: (line) => {
-            ctx.safeChannelSend({ type: 'log', text: line });
+        const result = await generateWhiteboard(
+          paper,
+          {
+            onLog: (line) => {
+              ctx.safeChannelSend({ type: 'log', text: line });
+            },
+            onAssistantText: (delta) => {
+              ctx.safeChannelSend({ type: 'delta', text: delta });
+            },
+            onSceneUpdate: (scene: WhiteboardScene) => {
+              if (ctx.sender.isDestroyed()) return;
+              ctx.sender.send('whiteboard:scene-stream', {
+                paperHash: req.paperHash,
+                elements: scene.elements,
+              });
+            },
           },
-          onAssistantText: (delta) => {
-            ctx.safeChannelSend({ type: 'delta', text: delta });
-          },
-          onSceneUpdate: (scene: WhiteboardScene) => {
-            if (ctx.sender.isDestroyed()) return;
-            ctx.sender.send('whiteboard:scene-stream', {
-              paperHash: req.paperHash,
-              elements: scene.elements,
-            });
-          },
-        });
+          undefined,
+          req.focus,
+        );
 
         const sceneJson = buildSceneJson(result.scene.elements);
         try {

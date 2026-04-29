@@ -60,6 +60,12 @@ module.exports = {
     'node_modules/better-sqlite3/**',
     // Claude Agent SDK spawns the `claude` binary and needs access to its mjs files.
     'node_modules/@anthropic-ai/claude-agent-sdk/**',
+    // fathom-whiteboard's vendored excalidraw-mcp is launched via
+    // child_process.spawn(process.execPath, [<path>]); paths inside
+    // app.asar can be read via Electron's fs hook but cannot be
+    // executed by spawned children. Unpack so spawn has a real-disk
+    // file to invoke.
+    'node_modules/fathom-whiteboard/vendor/**',
   ],
   // Versionless asset names so the stable /releases/latest/download/<asset>
   // URL always resolves to the current DMG/zip across releases.

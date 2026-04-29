@@ -65,11 +65,11 @@ export default function WhiteboardTab({ document }: Props) {
       saveViewport: async (viewport) => {
         await lens.whiteboardSaveViewport(paperHash, viewport);
       },
-      generate: (cb) => {
+      generate: (cb, focus) => {
         setStatus(paperHash, 'pass2');
         return new Promise((resolve, reject) => {
           void lens.whiteboardGenerate(
-            { paperHash, pdfPath },
+            { paperHash, pdfPath, focus },
             {
               onLog: (line) => cb.onLog?.(line),
               onSceneStream: (elements) => {
@@ -126,7 +126,7 @@ export default function WhiteboardTab({ document }: Props) {
 
   return (
     <div style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Whiteboard host={host} autoGenerate={true} />
+      <Whiteboard host={host} />
     </div>
   );
 }
