@@ -1,0 +1,59 @@
+name: Release — Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach Windows artifacts to (e.g. v1.0.20)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Locate artifacts
+        id: artifacts
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem dist -File | Where-Object {
+            $_.Name -match '^(Fathom-Setup-.*\.exe|Fathom-.*-x64\.zip)$'
+          } | Select-Object -ExpandProperty FullName
+          $files | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8 -Append
+          $files | ForEach-Object { Write-Host "found: $_" }
+          $joined = ($files -join "`n")
+          "files<<EOF`n$joined`nEOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload to existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = if ('${{ inputs.tag }}') { '${{ inputs.tag }}' } else { '${{ github.ref_name }}' }
+          Get-ChildItem dist -File | Where-Object {
+            $_.Name -match '^(Fathom-Setup-.*\.exe|Fathom-.*-x64\.zip)$'
+          } | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }

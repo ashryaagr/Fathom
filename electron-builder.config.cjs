@@ -81,6 +81,19 @@ module.exports = {
     gatekeeperAssess: false,
     icon: 'resources/icon.icns',
   },
+  win: {
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+      { target: 'zip', arch: ['x64'] },
+    ],
+    icon: 'resources/icon.png',
+  },
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowToChangeInstallationDirectory: true,
+    artifactName: 'Fathom-Setup-${version}-${arch}.${ext}',
+  },
   dmg: {
     title: 'Fathom ${version}',
     sign: false,

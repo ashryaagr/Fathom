@@ -35,7 +35,8 @@
     "build-sample": "npm run build-sample-figures && node scripts/build-sample-pdf.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64 --config electron-builder.config.cjs",
     "dist:mac-intel": "npm run build && electron-builder --mac --x64 --config electron-builder.config.cjs",
-    "dist:mac-both": "npm run build && electron-builder --mac --arm64 --x64 --config electron-builder.config.cjs"
+    "dist:mac-both": "npm run build && electron-builder --mac --arm64 --x64 --config electron-builder.config.cjs",
+    "dist:win": "npm run build && electron-builder --win --x64 --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.118",
