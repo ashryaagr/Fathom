@@ -311,6 +311,7 @@ const api = {
     groundingRepoPrivacyNoticeAt?: string;
     whiteboardAutoGenerateOnIndex?: boolean;
     whiteboardSonnetLite?: boolean;
+    whiteboardSideChatCollapsed?: boolean;
   }> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: {
     extraDirectories?: string[];
@@ -322,6 +323,7 @@ const api = {
     groundingRepoPrivacyNoticeAt?: string;
     whiteboardAutoGenerateOnIndex?: boolean;
     whiteboardSonnetLite?: boolean;
+    whiteboardSideChatCollapsed?: boolean;
   }): Promise<void> => ipcRenderer.invoke('settings:update', patch),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('settings:pickDirectory'),
 
@@ -542,6 +544,15 @@ const api = {
   }): Promise<{ indexPath: string; numPages: number }> =>
     ipcRenderer.invoke('paper:saveMarkdown', req),
 
+  // Cheap probe before openPdf decides to show the indexing toast. Returns
+  // three independent flags; renderer only skips the rebuild path when all
+  // three are true (full cache hit). Any false → existing rebuild path runs.
+  checkPaperIndexed: (paperHash: string): Promise<{
+    hasContentMd: boolean;
+    hasFigures: boolean;
+    hasDigest: boolean;
+  }> => ipcRenderer.invoke('paper:checkIndexed', paperHash),
+
   decomposePaper: (req: { paperHash: string; pdfPath: string; numPages: number }): Promise<{
     state: 'done' | 'cached' | 'error';
     message?: string;
@@ -566,22 +577,15 @@ const api = {
     return () => ipcRenderer.removeListener('paper:decompose:status', listener);
   },
 
-  // ---- whiteboard diagrams (spec: .claude/specs/whiteboard-diagrams.md) ----
-  // The renderer's WhiteboardTab calls these. Generate + expand stream
-  // events on a per-call channel (same shape as `explain:start`); get +
-  // status are simple request/response. Per the AI-built-product
-  // principle, the methodology doc at docs/methodology/whiteboard.md
-  // documents what these do — keep both in sync.
+  // ---- whiteboard pipeline ----
+  // Backed by the fathom-whiteboard package. Generate streams progress
+  // events on a per-call channel; get/status/saveScene are RPC.
   whiteboardStatus: (
     paperHash: string,
   ): Promise<{
     status: 'idle' | 'pass1' | 'pass2' | 'ready' | 'failed';
     generatedAt?: number | null;
-    pass1Cost?: number | null;
-    pass2Cost?: number | null;
     totalCost?: number | null;
-    pass1LatencyMs?: number | null;
-    verificationRate?: number | null;
     error?: string | null;
   }> => ipcRenderer.invoke('whiteboard:status', paperHash),
 
@@ -589,10 +593,7 @@ const api = {
     paperHash: string,
   ): Promise<{
     scene: string | null;
-    understanding: string | null;
-    issues: string | null;
     status: string;
-    verificationRate: number | null;
     indexPath: string;
   }> => ipcRenderer.invoke('whiteboard:get', paperHash),
 
@@ -602,69 +603,18 @@ const api = {
   ): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('whiteboard:saveScene', { paperHash, scene }),
 
-  /** Renderer → main: write the Pass 2.5 render PNG to disk inside the
-   * paper's sidecar so the critique prompt can `Read` it. Iteration
-   * tag keeps successive iteration renders separate; the path is
-   * returned so the renderer can pass it to whiteboardCritique. */
-  whiteboardWriteRenderPng: (
+  whiteboardClear: (
     paperHash: string,
-    iteration: number,
-    pngBase64: string,
-  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
-    ipcRenderer.invoke('whiteboard:writeRenderPng', { paperHash, iteration, pngBase64 }),
-
-  /** Renderer → main: run Pass 2.5 visual critique against a PNG that's
-   * already on disk. Synchronous from the renderer's POV — returns the
-   * verdict ({ok: true} | {fix: 'patch'|'replace', ...}) once Opus
-   * lands. Renderer applies the fix locally and re-renders + re-calls
-   * for up to 3 iterations. */
-  whiteboardCritique: (
-    paperHash: string,
-    diagramJson: string,
-    pngPath: string,
-    iteration: number,
-  ): Promise<{
-    ok: boolean;
-    verdict: unknown | null;
-    raw: string;
-    costUsd: number;
-    latencyMs: number;
-    error?: string;
-  }> =>
-    ipcRenderer.invoke('whiteboard:critique', {
-      paperHash,
-      diagramJson,
-      pngPath,
-      iteration,
-    }),
+  ): Promise<{ ok: boolean; deletedFiles: string[]; error?: string }> =>
+    ipcRenderer.invoke('whiteboard:clear', { paperHash }),
 
   whiteboardGenerate: (
-    req: { paperHash: string; pdfPath: string; purposeAnchor?: string },
+    req: { paperHash: string; pdfPath: string },
     cb: {
-      onPass1Delta?: (text: string) => void;
-      onPass1Done?: (info: { understanding: string; costUsd: number; latencyMs: number }) => void;
-      onPass2Delta?: (text: string) => void;
-      onPass2Done?: (info: {
-        raw: string;
-        costUsd: number;
-        latencyMs: number;
-        cachedPrefixHit: boolean;
-      }) => void;
-      onVerifier?: (info: {
-        verificationRate: number;
-        issues: Array<{
-          page: number;
-          quote: string;
-          score: number;
-          status: 'verified' | 'soft' | 'unverified';
-          closest: string;
-        }>;
-        quoteStatus: Record<
-          string,
-          { page: number; quote: string; score: number; status: 'verified' | 'soft' | 'unverified'; closest: string }
-        >;
-      }) => void;
-      onDone?: (info: { totalCost: number; verificationRate: number }) => void;
+      onLog?: (text: string) => void;
+      onDelta?: (text: string) => void;
+      onSceneStream?: (elements: readonly unknown[]) => void;
+      onDone?: (info: { scene: string; totalCost: number; turns: number }) => void;
       onError?: (message: string) => void;
     },
   ): Promise<{ abort: () => void }> =>
@@ -673,38 +623,30 @@ const api = {
         requestId: string;
         channel: string;
       };
-      const listener = (_event: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
-        if (msg.type === 'pass1Delta') cb.onPass1Delta?.(String(msg.text ?? ''));
-        else if (msg.type === 'pass1Done')
-          cb.onPass1Done?.({
-            understanding: String(msg.understanding ?? ''),
-            costUsd: Number(msg.costUsd ?? 0),
-            latencyMs: Number(msg.latencyMs ?? 0),
-          });
-        else if (msg.type === 'pass2Delta') cb.onPass2Delta?.(String(msg.text ?? ''));
-        else if (msg.type === 'pass2Done')
-          cb.onPass2Done?.({
-            raw: String(msg.raw ?? ''),
-            costUsd: Number(msg.costUsd ?? 0),
-            latencyMs: Number(msg.latencyMs ?? 0),
-            cachedPrefixHit: !!msg.cachedPrefixHit,
-          });
-        else if (msg.type === 'verifier')
-          cb.onVerifier?.({
-            verificationRate: Number(msg.verificationRate ?? 0),
-            issues: (msg.issues as Parameters<NonNullable<typeof cb.onVerifier>>[0]['issues']) ?? [],
-            quoteStatus:
-              (msg.quoteStatus as Parameters<NonNullable<typeof cb.onVerifier>>[0]['quoteStatus']) ?? {},
-          });
+      const sceneStreamChannel = 'whiteboard:scene-stream';
+      const sceneStreamListener = (
+        _e: Electron.IpcRendererEvent,
+        payload: { paperHash: string; elements: readonly unknown[] },
+      ): void => {
+        if (payload.paperHash !== req.paperHash) return;
+        cb.onSceneStream?.(payload.elements);
+      };
+      ipcRenderer.on(sceneStreamChannel, sceneStreamListener);
+      const listener = (_e: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
+        if (msg.type === 'log') cb.onLog?.(String(msg.text ?? ''));
+        else if (msg.type === 'delta') cb.onDelta?.(String(msg.text ?? ''));
         else if (msg.type === 'done') {
           cb.onDone?.({
+            scene: String(msg.scene ?? ''),
             totalCost: Number(msg.totalCost ?? 0),
-            verificationRate: Number(msg.verificationRate ?? 0),
+            turns: Number(msg.turns ?? 0),
           });
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         } else if (msg.type === 'error') {
           cb.onError?.(String(msg.message ?? 'Unknown whiteboard error'));
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         }
       };
       ipcRenderer.on(channel, listener);
@@ -712,49 +654,50 @@ const api = {
         abort: () => {
           ipcRenderer.invoke('whiteboard:abort', requestId);
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         },
       };
     })(),
 
-  whiteboardExpand: (
-    req: { paperHash: string; nodeId: string; nodeLabel?: string },
+  whiteboardRefine: (
+    req: { paperHash: string; pdfPath: string; sceneJson: string; instruction: string },
     cb: {
-      onPass2Delta?: (text: string) => void;
-      onPass2Done?: (info: {
-        raw: string;
-        costUsd: number;
-        latencyMs: number;
-        cachedPrefixHit: boolean;
-        parentNodeId: string;
-      }) => void;
-      onDone?: (info: { parentNodeId: string; totalCost: number }) => void;
+      onLog?: (text: string) => void;
+      onDelta?: (text: string) => void;
+      onSceneStream?: (elements: readonly unknown[]) => void;
+      onDone?: (info: { scene: string; totalCost: number; turns: number }) => void;
       onError?: (message: string) => void;
     },
   ): Promise<{ abort: () => void }> =>
     (async () => {
-      const { requestId, channel } = (await ipcRenderer.invoke('whiteboard:expand', req)) as {
+      const { requestId, channel } = (await ipcRenderer.invoke('whiteboard:refine', req)) as {
         requestId: string;
         channel: string;
       };
-      const listener = (_event: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
-        if (msg.type === 'pass2Delta') cb.onPass2Delta?.(String(msg.text ?? ''));
-        else if (msg.type === 'pass2Done')
-          cb.onPass2Done?.({
-            raw: String(msg.raw ?? ''),
-            costUsd: Number(msg.costUsd ?? 0),
-            latencyMs: Number(msg.latencyMs ?? 0),
-            cachedPrefixHit: !!msg.cachedPrefixHit,
-            parentNodeId: String(msg.parentNodeId ?? req.nodeId),
-          });
+      const sceneStreamChannel = 'whiteboard:scene-stream';
+      const sceneStreamListener = (
+        _e: Electron.IpcRendererEvent,
+        payload: { paperHash: string; elements: readonly unknown[] },
+      ): void => {
+        if (payload.paperHash !== req.paperHash) return;
+        cb.onSceneStream?.(payload.elements);
+      };
+      ipcRenderer.on(sceneStreamChannel, sceneStreamListener);
+      const listener = (_e: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
+        if (msg.type === 'log') cb.onLog?.(String(msg.text ?? ''));
+        else if (msg.type === 'delta') cb.onDelta?.(String(msg.text ?? ''));
         else if (msg.type === 'done') {
           cb.onDone?.({
-            parentNodeId: String(msg.parentNodeId ?? req.nodeId),
+            scene: String(msg.scene ?? ''),
             totalCost: Number(msg.totalCost ?? 0),
+            turns: Number(msg.turns ?? 0),
           });
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         } else if (msg.type === 'error') {
           cb.onError?.(String(msg.message ?? 'Unknown whiteboard error'));
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         }
       };
       ipcRenderer.on(channel, listener);
@@ -762,6 +705,7 @@ const api = {
         abort: () => {
           ipcRenderer.invoke('whiteboard:abort', requestId);
           ipcRenderer.removeListener(channel, listener);
+          ipcRenderer.removeListener(sceneStreamChannel, sceneStreamListener);
         },
       };
     })(),

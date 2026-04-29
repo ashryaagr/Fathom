@@ -24,3 +24,6 @@ hooks/
 
 # Generated app icons (built from resources/icon.svg by scripts/build-icon.mjs).
 resources/icon.iconset/
+
+# Pre-pivot whiteboard pipeline — kept locally for reference, not committed.
+old/

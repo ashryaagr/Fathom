@@ -1,25 +1,21 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, globalShortcut } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFile, writeFile, mkdir, unlink, readdir } from 'node:fs/promises';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { explain, type ExplainArgs } from './ai/client';
 import { decomposePaper, digestToContext } from './ai/decompose';
 import {
-  runPass1 as runWhiteboardPass1,
-  runPass2 as runWhiteboardPass2,
-  runPass25Critique as runWhiteboardPass25Critique,
-  runVerifier as runWhiteboardVerifier,
-  WB_SCENE_FILE,
-  WB_UNDERSTANDING_FILE,
-  WB_ISSUES_FILE,
-  type Pass1Result,
-  type Pass2Result,
-  type Pass25Result,
-  type VerifierResult,
-} from './ai/whiteboard';
+  generateWhiteboard,
+  refineWhiteboard,
+  type WhiteboardScene,
+} from 'fathom-whiteboard';
+
+// Filenames for the per-paper sidecar. Kept identical to the pre-pivot
+// pipeline so existing user whiteboards survive the upgrade.
+const WB_SCENE_FILE = 'whiteboard.excalidraw';
 import { getDb } from './db/schema';
 import {
   Papers,
@@ -50,7 +46,9 @@ import {
   checkClaude,
   ensureClaudeOnPath,
   translateClaudeError,
+  resolveClaudeExecutablePath,
 } from './claudeCheck';
+import { runStreamingIpcHandler } from './_streaming-ipc-handler';
 
 const PDF_CACHE_DIR = join(tmpdir(), 'lens-pdfs'); // kept as tmp fallback only
 
@@ -103,6 +101,10 @@ interface FathomSettings {
    * Sonnet-only Pass 1 path is deferred until we observe acceptance
    * rates on the default Opus-priced version. (todo.md item 56) */
   whiteboardSonnetLite?: boolean;
+  /** Whiteboard side-chat collapsed state — when true, the right rail
+   * shows only the 32px chevron strip on first mount of any
+   * whiteboard. Persisted across sessions so user preference sticks. */
+  whiteboardSideChatCollapsed?: boolean;
 }
 
 function settingsPath(): string {
@@ -163,10 +165,11 @@ function indexDirFor(paperHash: string): string {
 
 async function ensureIndexDir(pdfPath: string, contentHash: string): Promise<string> {
   const preferred = resolveIndexDir(pdfPath, contentHash);
+  let indexDir: string;
   try {
     await mkdir(preferred, { recursive: true });
     indexDirByHash.set(contentHash, preferred);
-    return preferred;
+    indexDir = preferred;
   } catch (err) {
     // userData should always be writable, but if something weird (full disk,
     // filesystem mount issue) blocks us, fall back to the OS tmp dir so the
@@ -175,8 +178,63 @@ async function ensureIndexDir(pdfPath: string, contentHash: string): Promise<str
     const fallback = join(PDF_CACHE_DIR, contentHash);
     await mkdir(fallback, { recursive: true });
     indexDirByHash.set(contentHash, fallback);
-    return fallback;
+    indexDir = fallback;
   }
+
+  // Copy the source PDF into the sidecar — gives Claude direct Read
+  // access to the PDF without ever touching `~/Desktop` / `~/Documents`
+  // / `~/Downloads` (which would trigger macOS TCC prompts on every
+  // session). The sidecar copy lives at `<indexDir>/source.pdf` and is
+  // discoverable by the AI client (which adds `indexDir` to
+  // additionalDirectories — no separate plumbing needed).
+  //
+  // Per user 2026-04-26: "copy the PDF to the sidecar so that we have
+  // access to the PDF... so that we don't prompt again and again for
+  // access." Replaces the prior TCC-suppression-from-additionalDirectories
+  // approach (which kept the prompt away by REMOVING PDF access — wrong
+  // trade. The user wants both: PDF access AND no prompts).
+  //
+  // Implementation notes:
+  //   - Atomic via .tmp + rename so a half-copied PDF doesn't get
+  //     served to Claude on a power loss / kill mid-copy.
+  //   - Idempotent: if `source.pdf` already exists at the sidecar AND
+  //     its size matches the source, skip — content-hash keying means
+  //     "same hash, same bytes" (the hash is over the bytes), so size
+  //     match is sufficient.
+  //   - Fire-and-forget after the directory is ensured: the index
+  //     pipeline continues regardless of copy success/failure. If the
+  //     copy fails, Claude falls back to indexPath grounding (figure
+  //     crops + content.md), same behaviour as before this change.
+  //   - Logged for diagnosis.
+  void copySourcePdfIntoSidecar(pdfPath, indexDir).catch((err) => {
+    console.warn(`[ensureIndexDir] PDF copy failed (Claude will fall back to index-only grounding):`, err);
+  });
+
+  return indexDir;
+}
+
+/** Copy the source PDF into the sidecar at `<indexDir>/source.pdf`.
+ * See `ensureIndexDir` docstring for the rationale. Idempotent. */
+async function copySourcePdfIntoSidecar(pdfPath: string, indexDir: string): Promise<void> {
+  const dest = join(indexDir, 'source.pdf');
+  try {
+    if (existsSync(dest)) {
+      const srcStat = statSync(pdfPath);
+      const dstStat = statSync(dest);
+      if (srcStat.size === dstStat.size) {
+        return; // already current; no-op
+      }
+    }
+  } catch {
+    /* missing source / dest stat → fall through to copy */
+  }
+  const tmp = `${dest}.tmp-${Date.now()}-${randomUUID().slice(0, 6)}`;
+  const buf = await readFile(pdfPath);
+  await writeFile(tmp, buf);
+  // Atomic rename so partial files never appear at the canonical path.
+  // fs.promises.rename overwrites on macOS/Linux.
+  await (await import('node:fs/promises')).rename(tmp, dest);
+  console.log(`[ensureIndexDir] copied source PDF into sidecar (${buf.byteLength} bytes) at ${dest}`);
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -260,6 +318,16 @@ let autoUpdaterInitialized = false;
  * `pdf:openExternal` channel a fresh user-driven open uses, so the
  * preload buffer + onOpenExternal hydration race is already handled. */
 async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
+  const wantFullscreen = typeof initialPdfPath === 'string' && initialPdfPath.length > 0;
+  // Headless mode for the QA harness (#65). When `FATHOM_HEADLESS=1` is
+  // set, the window is created off-screen (already `show: false`
+  // below), `'ready-to-show'` skips the visibility flip so the user
+  // never sees a flash, fullscreen Space transitions are suppressed,
+  // and DevTools auto-open is skipped. Renderer + IPC + zustand all
+  // still run normally so qa-watcher can drive page.evaluate() against
+  // `window.__whiteboard` (#64). Production binaries are unaffected
+  // unless the env is set explicitly.
+  const isHeadless = process.env.FATHOM_HEADLESS === '1';
   const win = new BrowserWindow({
     width: 1280,
     height: 880,
@@ -275,7 +343,13 @@ async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
     // window transitions to a PDF (drag-drop / file-picker / open-
     // recent), the renderer fires `window:enterFullScreen` to flip
     // the window into native fullscreen at that moment.
-    fullscreen: typeof initialPdfPath === 'string' && initialPdfPath.length > 0,
+    //
+    // NOTE: `fullscreen: true` in the constructor + `show: false` was
+    // discovered (2026-04-26) to leave the window in a state where
+    // macOS native fullscreen never engaged AND subsequent
+    // green-button clicks degraded to maximize (no Space transition).
+    // Pattern below moves the fullscreen flip to post-`show()` in
+    // ready-to-show — Electron + macOS handle this reliably.
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#fafaf7',
     vibrancy: 'under-window',
@@ -304,15 +378,29 @@ async function createWindow(initialPdfPath?: string): Promise<BrowserWindow> {
   });
 
   win.on('ready-to-show', () => {
-    win.show();
-    if (process.env.ELECTRON_RENDERER_URL) win.webContents.openDevTools({ mode: 'right' });
+    // #65: under FATHOM_HEADLESS=1 the window stays hidden — never
+    // show(), never fullscreen (would trigger a Space transition on
+    // macOS and steal focus), never auto-open DevTools.
+    if (!isHeadless) {
+      win.show();
+      // Apply fullscreen AFTER show() so macOS engages the native
+      // fullscreen Space transition correctly. Setting `fullscreen:true`
+      // in the constructor + `show:false` interfered with the OS
+      // fullscreen state (green button degraded to maximize).
+      if (wantFullscreen) {
+        win.setFullScreen(true);
+      }
+      if (process.env.ELECTRON_RENDERER_URL) win.webContents.openDevTools({ mode: 'right' });
+    }
     // Init the auto-updater exactly once across the whole app lifetime.
     // Multi-window means many windows can be alive simultaneously; we
     // want one updater poll loop, not N. Updater events still need to
     // reach EVERY window, so we wrap the original window-targeted
     // initAutoUpdater in a thin BroadcastBrowserWindow that fans every
-    // webContents.send to the registry.
-    if (!autoUpdaterInitialized) {
+    // webContents.send to the registry. Skipped under FATHOM_HEADLESS
+    // (#65) — the QA harness doesn't need update checks and the
+    // surfaced "update available" toast would steal focus.
+    if (!autoUpdaterInitialized && !isHeadless) {
       autoUpdaterInitialized = true;
       initAutoUpdater(broadcastBrowserWindow);
     }
@@ -761,6 +849,12 @@ ipcMain.handle('settings:update', async (
         ? patch.whiteboardSonnetLite
         : undefined;
   }
+  if ('whiteboardSideChatCollapsed' in patch) {
+    allowed.whiteboardSideChatCollapsed =
+      typeof patch.whiteboardSideChatCollapsed === 'boolean'
+        ? patch.whiteboardSideChatCollapsed
+        : undefined;
+  }
   writeSettings(allowed);
 });
 
@@ -1143,6 +1237,29 @@ ipcMain.handle('regions:save', async (_event, regions: SerializedRegion[]) => {
   return regions.length;
 });
 
+// Cheap "is the on-disk sidecar fully built?" probe used by the renderer to
+// decide whether to fire the indexing toast + rebuild on paper open. Three
+// independent flags so the caller can distinguish a partial cache (any one
+// missing → fall through to the normal rebuild path) from a fully-cached
+// reopen (all three present → silently skip the entire indexing surface).
+//
+// Per CLAUDE.md "we should not even show indexing" on reopen — the goal is
+// silence on cache hit, not a different label. An empty images/ directory
+// is NOT a valid cache (the figure-extraction pass must have produced at
+// least one PNG); see envelope's hasFigures spec.
+ipcMain.handle('paper:checkIndexed', async (_event, paperHash: string) => {
+  const dir = indexDirFor(paperHash);
+  const contentMd = join(dir, 'content.md');
+  const imagesDir = join(dir, 'images');
+  const paper = Papers.get(paperHash);
+  return {
+    hasContentMd: existsSync(contentMd) && statSync(contentMd).size > 0,
+    hasFigures:
+      existsSync(imagesDir) && readdirSync(imagesDir).some((f) => f.endsWith('.png')),
+    hasDigest: !!paper?.digest_json,
+  };
+});
+
 // Background "index" task — decomposes the PDF into a structured digest via Claude Read,
 // emits status events so the renderer can show a toast.
 const activeDecomposes = new Map<string, AbortController>();
@@ -1203,27 +1320,23 @@ ipcMain.handle(
   },
 );
 
-// ── Whiteboard Diagrams pipeline IPC ────────────────────────────
+
+// ── Whiteboard pipeline IPC ────────────────────────────
 //
-// Spec: .claude/specs/whiteboard-diagrams.md
-// Methodology doc (kept in sync with this code): docs/methodology/whiteboard.md
+// Architecture: paper -> Claude Agent SDK -> excalidraw-mcp (read_me +
+// create_view) -> scene.elements[]. The pipeline lives in the sibling
+// fathom-whiteboard package. See its docs/methodology.md for details.
 //
-// Three-handler shape:
+// Handlers:
 //   whiteboard:status   — cheap "is there a whiteboard for this paper?"
-//   whiteboard:generate — Pass 1 (Opus) → Pass 2 (Sonnet, Level 1) → verifier.
-//                         Streams progress events on a per-call channel.
-//   whiteboard:expand   — Pass 2 (Sonnet, Level 2) for one drillable node.
-//   whiteboard:get      — load whiteboard.excalidraw + understanding + issues
-//                         from disk; renderer hydrates from the result.
-//   whiteboard:saveScene — write whiteboard.excalidraw back to disk after
-//                          a user edit. Atomic-ish (write-then-rename via
-//                          fs.writeFile which on macOS is atomic for files
-//                          under typical sizes).
-//
-// Streaming model mirrors `explain:start`: handler returns a {requestId,
-// channel} pair; the renderer subscribes to the channel and gets
-// `{type: 'pass1Delta'|'pass1Done'|'pass2Delta'|'pass2Done'|'verifier'|'done'|'error', …}`
-// messages until completion.
+//   whiteboard:get      — load whiteboard.excalidraw from disk + status row.
+//   whiteboard:saveScene — write whiteboard.excalidraw atomically.
+//   whiteboard:generate — run generateWhiteboard, stream progress events,
+//                         persist final scene, mark Whiteboards row 'ready'.
+//   whiteboard:refine   — run refineWhiteboard against the current scene
+//                         + a user instruction, stream progress, persist.
+//   whiteboard:abort    — cancel an in-flight generate or refine.
+//   whiteboard:clear    — delete the per-paper whiteboard sidecar files.
 const activeWhiteboards = new Map<string, AbortController>();
 
 ipcMain.handle('whiteboard:status', async (_event, paperHash: string) => {
@@ -1232,11 +1345,7 @@ ipcMain.handle('whiteboard:status', async (_event, paperHash: string) => {
   return {
     status: row.status,
     generatedAt: row.generated_at,
-    pass1Cost: row.pass1_cost,
-    pass2Cost: row.pass2_cost,
     totalCost: row.total_cost,
-    pass1LatencyMs: row.pass1_latency_ms,
-    verificationRate: row.verification_rate,
     error: row.error,
   };
 });
@@ -1248,41 +1357,27 @@ ipcMain.handle(
     paperHash: string,
   ): Promise<{
     scene: string | null;
-    understanding: string | null;
-    issues: string | null;
     status: string;
-    verificationRate: number | null;
-    /** Absolute path to the per-paper sidecar so the renderer can
-     * compose figure paths (`<indexPath>/images/page-NNN-fig-K.png`)
-     * for embedding inside whiteboard nodes. */
     indexPath: string;
   }> => {
     const indexPath = indexDirFor(paperHash);
     const scenePath = join(indexPath, WB_SCENE_FILE);
-    const understandingPath = join(indexPath, WB_UNDERSTANDING_FILE);
-    const issuesPath = join(indexPath, WB_ISSUES_FILE);
-    const safeRead = async (p: string): Promise<string | null> => {
-      try {
-        if (!existsSync(p)) return null;
-        return await readFile(p, 'utf-8');
-      } catch {
-        return null;
-      }
-    };
-    const [scene, understanding, issues] = await Promise.all([
-      safeRead(scenePath),
-      safeRead(understandingPath),
-      safeRead(issuesPath),
-    ]);
+    let scene: string | null = null;
+    try {
+      if (existsSync(scenePath)) scene = await readFile(scenePath, 'utf-8');
+    } catch {
+      scene = null;
+    }
     const row = Whiteboards.get(paperHash);
-    return {
-      scene,
-      understanding,
-      issues,
-      status: row?.status ?? (scene ? 'ready' : 'idle'),
-      verificationRate: row?.verification_rate ?? null,
-      indexPath,
-    };
+    let status = row?.status ?? (scene ? 'ready' : 'idle');
+    if (scene && (status === 'pass1' || status === 'pass2')) {
+      // Self-heal stuck rows: if the scene file is on disk, the row is wrong.
+      console.log(
+        `[Whiteboard get] paper=${paperHash.slice(0, 10)} self-heal: row.status=${status} but scene exists -> 'ready'`,
+      );
+      status = 'ready';
+    }
+    return { scene, status, indexPath };
   },
 );
 
@@ -1309,118 +1404,107 @@ ipcMain.handle(
   },
 );
 
+// Helper: read the paper's content.md from the sidecar so we can hand
+// it to the pipeline as a markdown body (kind:'text'). The sidecar is
+// produced by buildPaperIndex during paper:state; if it's missing we
+// fall back to a path-based reference so the agent's Read tool can
+// open the PDF directly.
+async function loadPaperRefForWhiteboard(
+  paperHash: string,
+  pdfPath: string,
+): Promise<
+  | { kind: 'text'; markdown: string; title: string }
+  | { kind: 'path'; absPath: string; title: string }
+> {
+  const indexPath = indexDirFor(paperHash);
+  const contentMd = join(indexPath, 'content.md');
+  try {
+    if (existsSync(contentMd)) {
+      const md = await readFile(contentMd, 'utf-8');
+      return { kind: 'text', markdown: md, title: '' };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { kind: 'path', absPath: pdfPath, title: '' };
+}
+
+function buildSceneJson(elements: WhiteboardScene['elements']): string {
+  return JSON.stringify(
+    {
+      type: 'excalidraw',
+      version: 2,
+      source: 'fathom-whiteboard',
+      elements,
+      appState: { viewBackgroundColor: '#ffffff' },
+    },
+    null,
+    2,
+  );
+}
+
 ipcMain.handle(
   'whiteboard:generate',
   async (
     event,
-    req: { paperHash: string; pdfPath: string; purposeAnchor?: string },
+    req: { paperHash: string; pdfPath: string },
   ) => {
-    const requestId = randomUUID();
-    const channel = `whiteboard:event:${requestId}`;
-    const abortController = new AbortController();
-    activeWhiteboards.set(requestId, abortController);
-    const sender = event.sender;
     const indexPath = indexDirFor(req.paperHash);
-
-    const safeChannelSend = (msg: unknown): void => {
-      if (sender.isDestroyed()) return;
-      sender.send(channel, msg);
-    };
-
-    // Mark status row up-front so concurrent paper:state lookups see
-    // "pass1" instead of "idle". The renderer keys its consent vs.
-    // Doherty-skeleton vs. hydrated render off this status.
     Whiteboards.upsert({
       paperHash: req.paperHash,
-      status: 'pass1',
+      status: 'pass2',
       error: null,
     });
 
-    (async () => {
-      let pass1: Pass1Result | null = null;
-      let pass2: Pass2Result | null = null;
-      let verifier: VerifierResult | null = null;
-      try {
-        // -- Pass 1 -------------------------------------------------
-        pass1 = await runWhiteboardPass1({
-          paperHash: req.paperHash,
-          indexPath,
-          purposeAnchor: req.purposeAnchor,
-          abortController,
-          onProgress: (delta) => safeChannelSend({ type: 'pass1Delta', text: delta }),
-        });
-        Whiteboards.upsert({
-          paperHash: req.paperHash,
-          status: 'pass2',
-          pass1Cost: pass1.costUsd,
-          pass1LatencyMs: pass1.latencyMs,
-        });
-        safeChannelSend({
-          type: 'pass1Done',
-          understanding: pass1.understanding,
-          costUsd: pass1.costUsd,
-          latencyMs: pass1.latencyMs,
+    return runStreamingIpcHandler({
+      channelPrefix: 'whiteboard:event',
+      activeMap: activeWhiteboards,
+      indexPath,
+      sender: event.sender,
+      body: async (ctx) => {
+        const paper = await loadPaperRefForWhiteboard(req.paperHash, req.pdfPath);
+        const result = await generateWhiteboard(paper, {
+          onLog: (line) => {
+            ctx.safeChannelSend({ type: 'log', text: line });
+          },
+          onAssistantText: (delta) => {
+            ctx.safeChannelSend({ type: 'delta', text: delta });
+          },
+          onSceneUpdate: (scene: WhiteboardScene) => {
+            if (ctx.sender.isDestroyed()) return;
+            ctx.sender.send('whiteboard:scene-stream', {
+              paperHash: req.paperHash,
+              elements: scene.elements,
+            });
+          },
         });
 
-        // -- Verifier (background; doesn't block Pass 2) ------------
-        // Kick it off in parallel with Pass 2 — the verifier reads
-        // disk and runs CPU-only so it doesn't compete with the
-        // network-bound Sonnet call. Its result lands BEFORE the
-        // renderer needs it because Pass 2 takes ~5-10 s.
-        const verifierPromise = runWhiteboardVerifier({
-          paperHash: req.paperHash,
-          indexPath,
-          understanding: pass1.understanding,
-        }).catch((err) => {
-          console.warn(`[Whiteboard Verifier] failed: ${err instanceof Error ? err.message : err}`);
-          return { issues: [], verificationRate: 1, quoteStatus: {} } as VerifierResult;
-        });
+        const sceneJson = buildSceneJson(result.scene.elements);
+        try {
+          await mkdir(indexPath, { recursive: true });
+          await writeFile(join(indexPath, WB_SCENE_FILE), sceneJson, 'utf-8');
+        } catch (err) {
+          console.warn(
+            `[Whiteboard Persist] save failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
 
-        // -- Pass 2 (Level 1) ---------------------------------------
-        pass2 = await runWhiteboardPass2({
-          paperHash: req.paperHash,
-          indexPath,
-          understanding: pass1.understanding,
-          renderRequest: 'Render the Level 1 diagram.',
-          level: 1,
-          abortController,
-          onProgress: (delta) => safeChannelSend({ type: 'pass2Delta', text: delta }),
-        });
-        safeChannelSend({
-          type: 'pass2Done',
-          raw: pass2.raw,
-          costUsd: pass2.costUsd,
-          latencyMs: pass2.latencyMs,
-          cachedPrefixHit: pass2.cachedPrefixHit,
-        });
-
-        // -- Wait for verifier; emit verifier event with quote status.
-        verifier = await verifierPromise;
-        safeChannelSend({
-          type: 'verifier',
-          verificationRate: verifier.verificationRate,
-          issues: verifier.issues,
-          quoteStatus: verifier.quoteStatus,
-        });
-
-        // -- Persist final status row.
-        const totalCost = (pass1.costUsd ?? 0) + (pass2.costUsd ?? 0);
         Whiteboards.upsert({
           paperHash: req.paperHash,
           status: 'ready',
           generatedAt: Date.now(),
-          pass2Cost: pass2.costUsd,
-          totalCost,
-          verificationRate: verifier.verificationRate,
+          totalCost: result.usd,
           error: null,
         });
 
-        safeChannelSend({
+        ctx.safeChannelSend({
           type: 'done',
-          totalCost,
-          verificationRate: verifier.verificationRate,
+          scene: sceneJson,
+          totalCost: result.usd,
+          turns: result.turns,
         });
-      } catch (err) {
+      },
+      onError: (err, ctx) => {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[Whiteboard] generate failed: ${message}`);
         Whiteboards.upsert({
@@ -1428,92 +1512,77 @@ ipcMain.handle(
           status: 'failed',
           error: message,
         });
-        safeChannelSend({ type: 'error', message });
-      } finally {
-        activeWhiteboards.delete(requestId);
-      }
-    })();
-
-    return { requestId, channel };
+        ctx.safeChannelSend({ type: 'error', message });
+      },
+    });
   },
 );
 
 ipcMain.handle(
-  'whiteboard:expand',
+  'whiteboard:refine',
   async (
     event,
-    req: { paperHash: string; nodeId: string; nodeLabel?: string },
+    req: { paperHash: string; pdfPath: string; sceneJson: string; instruction: string },
   ) => {
-    const requestId = randomUUID();
-    const channel = `whiteboard:event:${requestId}`;
-    const abortController = new AbortController();
-    activeWhiteboards.set(requestId, abortController);
-    const sender = event.sender;
     const indexPath = indexDirFor(req.paperHash);
 
-    const safeChannelSend = (msg: unknown): void => {
-      if (sender.isDestroyed()) return;
-      sender.send(channel, msg);
-    };
-
-    (async () => {
-      try {
-        // We need the cached Pass 1 understanding doc — both for the
-        // Sonnet input and for cache-hit attribution.
-        const understandingPath = join(indexPath, WB_UNDERSTANDING_FILE);
-        if (!existsSync(understandingPath)) {
-          throw new Error('No Pass 1 understanding doc on disk — generate the whiteboard first.');
+    return runStreamingIpcHandler({
+      channelPrefix: 'whiteboard:refineEvent',
+      activeMap: activeWhiteboards,
+      indexPath,
+      sender: event.sender,
+      body: async (ctx) => {
+        let prevScene: WhiteboardScene = { elements: [] };
+        try {
+          const parsed = JSON.parse(req.sceneJson) as { elements?: unknown[] };
+          if (Array.isArray(parsed.elements)) {
+            prevScene = { elements: parsed.elements as WhiteboardScene['elements'] };
+          }
+        } catch {
+          /* keep empty; refine will treat as fresh start */
         }
-        const understanding = await readFile(understandingPath, 'utf-8');
-
-        const labelPart = req.nodeLabel ? ` (labelled "${req.nodeLabel}")` : '';
-        const renderRequest = `Render the Level 2 diagram for the Level 1 node with id "${req.nodeId}"${labelPart}. Show its interior — the components inside it.`;
-
-        const pass2 = await runWhiteboardPass2({
-          paperHash: req.paperHash,
-          indexPath,
-          understanding,
-          renderRequest,
-          level: 2,
-          parentNodeId: req.nodeId,
-          abortController,
-          onProgress: (delta) => safeChannelSend({ type: 'pass2Delta', text: delta }),
+        const paper = await loadPaperRefForWhiteboard(req.paperHash, req.pdfPath);
+        const result = await refineWhiteboard(prevScene, paper, req.instruction, {
+          onLog: (line) => ctx.safeChannelSend({ type: 'log', text: line }),
+          onAssistantText: (delta) => ctx.safeChannelSend({ type: 'delta', text: delta }),
+          onSceneUpdate: (scene: WhiteboardScene) => {
+            if (ctx.sender.isDestroyed()) return;
+            ctx.sender.send('whiteboard:scene-stream', {
+              paperHash: req.paperHash,
+              elements: scene.elements,
+            });
+          },
         });
-
-        safeChannelSend({
-          type: 'pass2Done',
-          raw: pass2.raw,
-          costUsd: pass2.costUsd,
-          latencyMs: pass2.latencyMs,
-          cachedPrefixHit: pass2.cachedPrefixHit,
-          parentNodeId: req.nodeId,
-        });
-
-        // Bump per-paper Pass 2 cost rollup.
+        const sceneJson = buildSceneJson(result.scene.elements);
+        try {
+          await mkdir(indexPath, { recursive: true });
+          await writeFile(join(indexPath, WB_SCENE_FILE), sceneJson, 'utf-8');
+        } catch (err) {
+          console.warn(
+            `[Whiteboard Persist refine] save failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
         const row = Whiteboards.get(req.paperHash);
-        const newPass2Cost = (row?.pass2_cost ?? 0) + (pass2.costUsd ?? 0);
-        const newTotal = (row?.pass1_cost ?? 0) + newPass2Cost;
+        const newTotal = (row?.total_cost ?? 0) + (result.usd ?? 0);
         Whiteboards.upsert({
           paperHash: req.paperHash,
-          pass2Cost: newPass2Cost,
+          status: 'ready',
           totalCost: newTotal,
+          error: null,
         });
-
-        safeChannelSend({
+        ctx.safeChannelSend({
           type: 'done',
-          parentNodeId: req.nodeId,
+          scene: sceneJson,
           totalCost: newTotal,
+          turns: result.turns,
         });
-      } catch (err) {
+      },
+      onError: (err, ctx) => {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[Whiteboard] expand failed: ${message}`);
-        safeChannelSend({ type: 'error', message });
-      } finally {
-        activeWhiteboards.delete(requestId);
-      }
-    })();
-
-    return { requestId, channel };
+        console.error(`[Whiteboard] refine failed: ${message}`);
+        ctx.safeChannelSend({ type: 'error', message });
+      },
+    });
   },
 );
 
@@ -1527,90 +1596,47 @@ ipcMain.handle('whiteboard:abort', async (_event, requestId: string) => {
   return false;
 });
 
-// ---- Whiteboard Pass 2.5 visual critique IPC ----
-//
-// The renderer rasterises the just-rendered WBDiagram to a PNG via
-// Excalidraw's `exportToCanvas`, then writes the PNG bytes via this
-// handler so the per-paper sidecar holds the file at a stable path
-// the Pass 2.5 prompt names. Returns the absolute path so the
-// renderer can pass it through to runWhiteboardPass25Critique.
 ipcMain.handle(
-  'whiteboard:writeRenderPng',
+  'whiteboard:clear',
   async (
     _event,
-    req: { paperHash: string; iteration: number; pngBase64: string },
-  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
+    req: { paperHash: string },
+  ): Promise<{ ok: boolean; deletedFiles: string[]; error?: string }> => {
+    const indexPath = indexDirFor(req.paperHash);
+    const deleted: string[] = [];
     try {
-      const indexPath = indexDirFor(req.paperHash);
-      await mkdir(indexPath, { recursive: true });
-      // Single iteration-tagged path — overwritten on each Pass 2.5
-      // round so the sidecar doesn't accumulate stale renders.
-      const pngPath = join(indexPath, `whiteboard-render-iter-${req.iteration}.png`);
-      // Strip the `data:image/png;base64,` prefix if present.
-      const cleaned = req.pngBase64.replace(/^data:image\/[a-z]+;base64,/i, '');
-      await writeFile(pngPath, Buffer.from(cleaned, 'base64'));
+      const scenePath = join(indexPath, WB_SCENE_FILE);
+      if (existsSync(scenePath)) {
+        await unlink(scenePath);
+        deleted.push(WB_SCENE_FILE);
+      }
+      // Best-effort: nuke any legacy artefacts from the pre-pivot pipeline
+      // so a paper that was generated under the old code starts clean.
+      const legacyArtefacts = [
+        'whiteboard-understanding.md',
+        'whiteboard-issues.json',
+        'whiteboard-chat.json',
+      ];
+      for (const name of legacyArtefacts) {
+        const p = join(indexPath, name);
+        if (existsSync(p)) {
+          await unlink(p);
+          deleted.push(name);
+        }
+      }
+      Whiteboards.reset(req.paperHash);
       console.log(
-        `[Whiteboard Pass2.5 IPC] wrote render iter=${req.iteration} bytes=${cleaned.length} → ${pngPath}`,
+        `[Whiteboard Clear] paper=${req.paperHash.slice(0, 10)} deleted=${deleted.length} files`,
       );
-      return { ok: true, path: pngPath };
+      return { ok: true, deletedFiles: deleted };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[Whiteboard Pass2.5 IPC] write render failed: ${msg}`);
-      return { ok: false, error: msg };
+      console.warn(`[Whiteboard Clear] failed: ${msg}`);
+      return { ok: false, deletedFiles: deleted, error: msg };
     }
   },
 );
 
-// Run the Pass 2.5 critique itself. Renderer → main → vision-Claude.
-// Synchronous in the IPC sense — the renderer waits for the verdict
-// before deciding whether to apply ops / replace / ship.
-ipcMain.handle(
-  'whiteboard:critique',
-  async (
-    _event,
-    req: { paperHash: string; diagramJson: string; pngPath: string; iteration: number },
-  ): Promise<{
-    ok: boolean;
-    verdict: unknown | null;
-    raw: string;
-    costUsd: number;
-    latencyMs: number;
-    error?: string;
-  }> => {
-    try {
-      const indexPath = indexDirFor(req.paperHash);
-      const result: Pass25Result = await runWhiteboardPass25Critique({
-        paperHash: req.paperHash,
-        indexPath,
-        diagramJson: req.diagramJson,
-        renderedPngPath: req.pngPath,
-        iteration: req.iteration,
-      });
-      // Roll the critique cost up onto the per-paper Pass 2 cost
-      // counter — same bucket as render-side spend so the cost pill
-      // shows the user a true total.
-      const row = Whiteboards.get(req.paperHash);
-      const newPass2Cost = (row?.pass2_cost ?? 0) + (result.costUsd ?? 0);
-      const newTotal = (row?.pass1_cost ?? 0) + newPass2Cost;
-      Whiteboards.upsert({
-        paperHash: req.paperHash,
-        pass2Cost: newPass2Cost,
-        totalCost: newTotal,
-      });
-      return {
-        ok: true,
-        verdict: result.verdict,
-        raw: result.raw,
-        costUsd: result.costUsd,
-        latencyMs: result.latencyMs,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[Whiteboard Pass2.5] critique IPC failed: ${msg}`);
-      return { ok: false, verdict: null, raw: '', costUsd: 0, latencyMs: 0, error: msg };
-    }
-  },
-);
 
 /**
  * Copy the bundled sample PDF into a user-writable location (not ~/Documents,
@@ -1946,6 +1972,13 @@ app.whenReady().then(async () => {
   // File-logging first so any downstream init failures are captured for the user
   // to share via the Help menu instead of being eaten by the GUI's silent stdout.
   initLogging();
+  // #65: under FATHOM_HEADLESS=1 hide the dock icon (macOS only) so
+  // the QA harness doesn't bounce the dock or grab focus when the
+  // app launches. `app.dock` only exists on darwin; the optional-
+  // chain guard handles other platforms gracefully.
+  if (process.env.FATHOM_HEADLESS === '1') {
+    app.dock?.hide();
+  }
   // Find the Claude CLI and make sure its directory is in PATH before any
   // child_process.spawn('claude', …) happens — GUI-launched apps otherwise
   // miss `~/.local/bin` where the official installer puts it.
