@@ -4,10 +4,18 @@
 
 <img src="resources/hero.png" alt="Dive into any paper." width="560" />
 
+<!-- TODO: hero GIF/screenshot — gesture in motion preferred per Logseq pattern -->
+
+Fathom is a Mac PDF reader built around a gesture: ⌘+pinch on a confusing passage, the AI explains it in place. The explanation persists per-paper, across sessions. No tab-switching, no copy-paste.
+
+For now: macOS + Claude Code subscription. Windows, Linux, Codex, and Gemini support coming soon.
+
 [![CI](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashryaagr/Fathom/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ashryaagr/Fathom?label=release&color=f59e0b)](https://github.com/ashryaagr/Fathom/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
+[![Stars — Fathom](https://img.shields.io/github/stars/ashryaagr/Fathom?style=social)](https://github.com/ashryaagr/Fathom)
+[![Stars — Slate](https://img.shields.io/github/stars/ashryaagr/fathom-whiteboard?style=social&label=Slate)](https://github.com/ashryaagr/fathom-whiteboard)
 
 ### Install
 
@@ -46,6 +54,8 @@ Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens,
 - **Inline two-finger ask.** Two-finger tap on a paragraph opens a tiny "Dive into" composer. Type a short question, press Enter — a marker drops, turns red while Claude streams in the background, and cross-fades amber when the answer is ready. Click the marker to read the answer in the lens. Lets you queue several questions in flight while you keep reading.
 - **Focus Light, optional.** A 3-word reading pacer that slides at your set WPM. Press **F** to toggle when the beta is enabled in Preferences, **Space** to pause. Speed dial is a slider 10–300 wpm + a numeric input for anything higher.
 
+The same whiteboard component is available standalone as [Slate](https://github.com/ashryaagr/fathom-whiteboard) — paste a paper, an abstract, an image; get the same explanatory diagram surface without needing Fathom open.
+
 ## Install
 
 Fathom's primary install path is the terminal:
@@ -74,6 +84,8 @@ Download the Mac DMG: [`Fathom-arm64.dmg`](./docs/INSTALL.md#option-b--dmg). The
 Intel Macs aren't supported in v1 (native module `better-sqlite3` is ABI-locked per architecture). Build from source if you need x64 today — see below.
 
 ## Prerequisites
+
+For now: macOS + Claude Code subscription. Windows, Linux, Codex, and Gemini support coming soon.
 
 Fathom needs three things on your machine. The app checks for the first two on launch and tells you exactly what's missing if anything is off.
 
@@ -139,6 +151,15 @@ lives under `~/Library/Application Support/Fathom/`, and you can
 delete that folder at any time to wipe all Fathom state without
 touching the PDFs themselves.
 
+## Using inside your company
+
+- Zero telemetry. Fathom collects nothing. Ever.
+- Open source under the MIT license — audit every line, fork if needed.
+- Build from source in five minutes. Build it, ship it on your own laptops, never touch our servers.
+- Use the same Claude CLI subscription your team already pays for. Fathom rides on `claude` auth.
+
+Most enterprise reading tools want a vendor relationship; Fathom is just a Mac app you compiled yourself.
+
 ## Methodology
 
 [docs/METHODOLOGY.md](./docs/METHODOLOGY.md) is the long-form engineering
@@ -157,20 +178,64 @@ Highlights:
 4. **Three-channel alignment.** What the user sees = what we capture = what Claude reads. Always the same pixels.
 5. **Everything is transparent.** The exact prompt sent to Claude is one click away on every lens turn. Tool calls stream live. You can see what the machine is doing.
 
+## Why this works (research backing)
+
+The design choices above aren't decorative. Each leans on a specific result from the cognitive-science and reading-comprehension literature.
+
+**Cost lives in element interactivity, not word count.** A passage's load is set by the number of symbols a reader must hold in mind simultaneously, not by how many words sit on the page — so Fathom should flag for elaboration based on inter-symbol coupling and unstated bridging dependencies, not paragraph length.
+- Sweller, J. 2010. *Element Interactivity and Intrinsic, Extraneous, and Germane Cognitive Load.* Educational Psychology Review 22(2). [doi.org/10.1007/s10648-010-9128-5](https://doi.org/10.1007/s10648-010-9128-5)
+- Graesser, A. C., Singer, M., & Trabasso, T. 1994. *Constructing Inferences During Narrative Text Comprehension.* Psychological Review 101(3). [doi.org/10.1037/0033-295X.101.3.371](https://doi.org/10.1037/0033-295X.101.3.371)
+
+**Scaffolds that help novices burden experts.** A worked example, glossary, or auto-imposed outline that lifts a beginner becomes measurable friction once the reader has chunked the domain. So every Fathom scaffold — the focus pacer, the whiteboard, the inline ask — is off-by-default or quietly dismissable.
+- Kalyuga, S. 2007. *Expertise Reversal Effect and Its Implications for Learner-Tailored Instruction.* Educational Psychology Review 19(4). [doi.org/10.1007/s10648-007-9054-3](https://doi.org/10.1007/s10648-007-9054-3)
+
+**Graphic advance organisers help, modestly.** The whiteboard view sits before deep reading because structural overviews aid learning and retention — small but reliable across 135 studies. Useful as a structural aid, not a giant learning multiplier.
+- Luiten, J. W., Ames, W., & Ackerson, G. 1980. *A Meta-analysis of the Effects of Advance Organizers on Learning and Retention.* American Educational Research Journal 17(2). [doi.org/10.2307/1162483](https://doi.org/10.2307/1162483)
+
+**Expert reading is non-linear.** Experts oscillate between resolutions — workflow → stage → component → back — with shorter fixations on task-relevant regions and longer saccades. So Fathom must let you move between resolutions at uniform gesture cost; a strict top-to-bottom UI penalises the way experts actually read.
+- Gegenfurtner, A., Lehtinen, E., & Säljö, R. 2011. *Expertise Differences in the Comprehension of Visualizations.* Educational Psychology Review 23(4). [doi.org/10.1007/s10648-011-9174-7](https://doi.org/10.1007/s10648-011-9174-7)
+- Keshav, S. 2007. *How to Read a Paper.* ACM SIGCOMM CCR 37(3). [doi.org/10.1145/1273445.1273458](https://doi.org/10.1145/1273445.1273458)
+
+**Tab-switching is cognitively expensive.** Fragmented work forces context reconstruction every time the reader leaves the document — exactly the cost the in-document lens collapses.
+- Mark, G., González, V. M., & Harris, J. 2005. *No Task Left Behind? Examining the Nature of Fragmented Work.* CHI '05. [doi.org/10.1145/1054972.1055017](https://doi.org/10.1145/1054972.1055017)
+
+**Articulating the question is the work that produces understanding.** Self-explanation — having the reader phrase the confusion themselves — is what produces learning, not absorbing a pre-formed answer. So Fathom's zoom *frames* the passage and the user *types* the question; we deliberately do not auto-prompt Claude.
+- Chi, M. T. H., Bassok, M., Lewis, M. W., Reimann, P., & Glaser, R. 1989. *Self-Explanations: How Students Study and Use Examples in Learning to Solve Problems.* Cognitive Science 13(2). [doi.org/10.1207/s15516709cog1302_1](https://doi.org/10.1207/s15516709cog1302_1)
+
+**Spatial location anchors document memory.** Readers remember where on the page a fact sat. So Fathom's amber markers stay column-aware and page-stable — markers must not move when you reopen the paper.
+- Piolat, A., Roussey, J.-Y., & Thunin, O. 1997. *Effects of Screen Presentation on Text Reading and Revising.* International Journal of Human-Computer Studies 47(4). [doi.org/10.1006/ijhc.1997.0145](https://doi.org/10.1006/ijhc.1997.0145)
+- Rothkopf, E. Z. 1971. *Incidental Memory for Location of Information in Text.* JVLVB 10(6). [doi.org/10.1016/S0022-5371(71)80066-X](https://doi.org/10.1016/S0022-5371(71)80066-X)
+
+**Diagrams aid reasoning by indexing relations spatially.** Architectures and pipelines render as inline diagrams in the lens because spatial layout reduces inference cost — a result well-established for forty years.
+- Larkin, J. H., & Simon, H. A. 1987. *Why a Diagram is (Sometimes) Worth Ten Thousand Words.* Cognitive Science 11(1). [doi.org/10.1111/j.1551-6708.1987.tb00863.x](https://doi.org/10.1111/j.1551-6708.1987.tb00863.x)
+
 ## Build from source
+
+One clone, one install. Fathom resolves [`fathom-whiteboard`](https://github.com/ashryaagr/fathom-whiteboard) as a regular dependency (pinned to a release tarball on GitHub), so you don't have to do anything separate for the whiteboard side:
 
 ```bash
 git clone https://github.com/ashryaagr/Fathom.git
 cd Fathom
-npm install
+npm install            # pulls fathom-whiteboard automatically
+npm run dist:mac
+open dist/Fathom-arm64.dmg
+```
+
+Requires Node 22+, macOS 14+, Xcode Command Line Tools.
+
+Want to hack on `fathom-whiteboard` alongside Fathom? Clone the [whiteboard repo](https://github.com/ashryaagr/fathom-whiteboard) as a sibling and switch the dep to `"fathom-whiteboard": "file:../fathom-whiteboard"` in `package.json` — `npm install` then resolves the local copy.
+
+For HMR development:
+```bash
+cd Fathom
 npm run rebuild         # rebuild better-sqlite3 against Electron's Node ABI
 npm run dev             # Electron with HMR
 ```
 
-Produce a distributable:
+Produce a distributable for other architectures:
 ```bash
-npm run dist:mac        # → dist/Fathom-1.0.0-arm64.dmg
-npm run dist:mac-intel  # → dist/Fathom-1.0.0.dmg (Intel)
+npm run dist:mac        # → dist/Fathom-arm64.dmg (Apple Silicon)
+npm run dist:mac-intel  # → dist/Fathom-x64.dmg (Intel)
 npm run dist:mac-both   # both architectures
 ```
 
@@ -205,6 +270,20 @@ Core dependencies: Electron, React 18, pdfjs-dist, `@anthropic-ai/claude-agent-s
 Issues and PRs are welcome. Before opening a PR, check [docs/PRINCIPLES.md](./docs/PRINCIPLES.md) — if your change contradicts a principle there, the principle wins unless you can articulate why it should change.
 
 For bug reports, the DevTools console log (Cmd+Option+I in the running app) is more useful than a screenshot — every subsystem emits `[Fathom …]` lines with IDs so we can trace a failure end-to-end.
+
+## More tools for researchers
+
+- [papers-we-love/papers-we-love](https://github.com/papers-we-love/papers-we-love) — community-curated CS papers organised by topic, the canonical "papers worth reading" map.
+- [writing-resources/awesome-scientific-writing](https://github.com/writing-resources/awesome-scientific-writing) — tools for the *output* end of research (Markdown editors, citation managers, Pandoc, Quarto). Fathom sits at the input end; this list complements it.
+- [josephmisiti/awesome-machine-learning](https://github.com/josephmisiti/awesome-machine-learning) — long-running ML frameworks/libraries index. Note: the maintainer noted in early 2026 that LLM-generated PRs slowed contributions.
+
+## Contact
+
+If you like the project — drop a note to ashryaagr@gmail.com. I read every message.
+
+## See also
+
+- [Slate](https://github.com/ashryaagr/fathom-whiteboard) — same whiteboard, standalone Mac app for paste-driven brainstorming.
 
 ## License
 

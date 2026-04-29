@@ -1,5 +1,7 @@
 # Installing Fathom
 
+For now: macOS + Claude Code subscription. Windows, Linux, Codex, and Gemini support coming soon.
+
 macOS, Apple Silicon. Two install paths — pick whichever feels natural:
 
 - **Option A — DMG**: the familiar drag-to-Applications flow. Requires
