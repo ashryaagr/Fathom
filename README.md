@@ -15,7 +15,7 @@ For now: macOS + Claude Code subscription. Windows, Linux, Codex, and Gemini sup
 [![Platform](https://img.shields.io/badge/macOS-arm64-lightgrey)](#download)
 [![License](https://img.shields.io/github/license/ashryaagr/Fathom)](./LICENSE)
 [![Stars — Fathom](https://img.shields.io/github/stars/ashryaagr/Fathom?style=social)](https://github.com/ashryaagr/Fathom)
-[![Stars — Slate](https://img.shields.io/github/stars/ashryaagr/slate?style=social&label=Slate)](https://github.com/ashryaagr/slate)
+[![Stars — clawdSlate](https://img.shields.io/github/stars/ashryaagr/clawdslate?style=social&label=clawdSlate)](https://github.com/ashryaagr/clawdslate)
 
 ### Install
 
@@ -54,7 +54,7 @@ Hold **⌘** and pinch on any passage. The page gives way to a full-screen lens,
 - **Inline two-finger ask.** Two-finger tap on a paragraph opens a tiny "Dive into" composer. Type a short question, press Enter — a marker drops, turns red while Claude streams in the background, and cross-fades amber when the answer is ready. Click the marker to read the answer in the lens. Lets you queue several questions in flight while you keep reading.
 - **Focus Light, optional.** A 3-word reading pacer that slides at your set WPM. Press **F** to toggle when the beta is enabled in Preferences, **Space** to pause. Speed dial is a slider 10–300 wpm + a numeric input for anything higher.
 
-The same whiteboard component is available standalone as [Slate](https://github.com/ashryaagr/slate) — paste a paper, an abstract, an image; get the same explanatory diagram surface without needing Fathom open.
+The same whiteboard component is available standalone as [clawdSlate](https://github.com/ashryaagr/clawdslate) — paste a paper, an abstract, an image; get the same explanatory diagram surface without needing Fathom open.
 
 ## Install
 
@@ -211,7 +211,7 @@ The design choices above aren't decorative. Each leans on a specific result from
 
 ## Build from source
 
-One clone, one install. Fathom resolves [`fathom-whiteboard`](https://github.com/ashryaagr/slate) as a regular dependency (pinned to a release tarball on GitHub), so you don't have to do anything separate for the whiteboard side:
+One clone, one install. Fathom resolves [`fathom-whiteboard`](https://github.com/ashryaagr/clawdslate) as a regular dependency (pinned to a release tarball on GitHub), so you don't have to do anything separate for the whiteboard side:
 
 ```bash
 git clone https://github.com/ashryaagr/Fathom.git
@@ -223,7 +223,7 @@ open dist/Fathom-arm64.dmg
 
 Requires Node 22+, macOS 14+, Xcode Command Line Tools.
 
-Want to hack on `fathom-whiteboard` alongside Fathom? Clone the [Slate repo](https://github.com/ashryaagr/slate) as a sibling (`git clone https://github.com/ashryaagr/slate.git ../slate`) and switch the dep to `"fathom-whiteboard": "file:../slate"` in `package.json` — `npm install` then resolves the local copy.
+Want to hack on `fathom-whiteboard` alongside Fathom? Clone the [clawdSlate repo](https://github.com/ashryaagr/clawdslate) as a sibling (`git clone https://github.com/ashryaagr/clawdslate.git ../clawdslate`) and switch the dep to `"fathom-whiteboard": "file:../clawdslate"` in `package.json` — `npm install` then resolves the local copy.
 
 For HMR development:
 ```bash
@@ -283,7 +283,7 @@ If you like the project — drop a note to ashryaagr@gmail.com. I read every mes
 
 ## See also
 
-- [Slate](https://github.com/ashryaagr/slate) — same whiteboard, standalone Mac app for paste-driven brainstorming.
+- [clawdSlate](https://github.com/ashryaagr/clawdslate) — same whiteboard, standalone Mac app for paste-driven brainstorming.
 
 ## License
 

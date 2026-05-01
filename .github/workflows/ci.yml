@@ -23,7 +23,7 @@ jobs:
           cache: 'npm'
 
       # fathom-whiteboard is now consumed as a release-tarball dep in
-      # package.json (https://github.com/ashryaagr/slate/releases/...).
+      # package.json (https://github.com/ashryaagr/clawdslate/releases/...).
       # No sibling clone needed — npm ci pulls the tarball directly. We
       # keep --ignore-scripts so postinstall (which builds the vendored
       # excalidraw-mcp) is skipped on CI; runtime needs it, typecheck/
