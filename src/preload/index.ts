@@ -169,6 +169,17 @@ const api = {
   openSample: (): Promise<{ path: string } | null> =>
     ipcRenderer.invoke('pdf:openSample'),
 
+  /** Fetch a PDF from a URL into userData/downloaded-papers and return
+   * its local path. Resolves arxiv abstract URLs (/abs/…) to the
+   * matching PDF URL automatically. Returns `{error}` on any failure
+   * (invalid URL, non-PDF response, network problem, write failure).
+   * The renderer then routes the returned path through the normal
+   * openPdfAtPath flow, same as drag-drop. */
+  openUrl: (
+    url: string,
+  ): Promise<{ path: string; title?: string } | { error: string }> =>
+    ipcRenderer.invoke('pdf:openUrl', { url }),
+
   /** Resolve the filesystem path of a dropped File. Electron 32+ removed
    * the non-standard `File.path` property; this is the sanctioned
    * replacement. Returns "" on renderer-synthesised files. */
@@ -613,12 +624,13 @@ const api = {
       paperHash: string;
       pdfPath: string;
       focus?: string;
-      tools?: { webSearch?: boolean; arxiv?: boolean };
+      tools?: { webSearch?: boolean; arxiv?: boolean; disallowed?: string[] };
     },
     cb: {
       onLog?: (text: string) => void;
       onDelta?: (text: string) => void;
       onSceneStream?: (elements: readonly unknown[]) => void;
+      onAvailableTools?: (tools: string[]) => void;
       onDone?: (info: { scene: string; totalCost: number; turns: number }) => void;
       onError?: (message: string) => void;
     },
@@ -640,6 +652,8 @@ const api = {
       const listener = (_e: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
         if (msg.type === 'log') cb.onLog?.(String(msg.text ?? ''));
         else if (msg.type === 'delta') cb.onDelta?.(String(msg.text ?? ''));
+        else if (msg.type === 'available-tools')
+          cb.onAvailableTools?.((msg.tools as string[]) ?? []);
         else if (msg.type === 'done') {
           cb.onDone?.({
             scene: String(msg.scene ?? ''),
@@ -670,12 +684,13 @@ const api = {
       pdfPath: string;
       sceneJson: string;
       instruction: string;
-      tools?: { webSearch?: boolean; arxiv?: boolean };
+      tools?: { webSearch?: boolean; arxiv?: boolean; disallowed?: string[] };
     },
     cb: {
       onLog?: (text: string) => void;
       onDelta?: (text: string) => void;
       onSceneStream?: (elements: readonly unknown[]) => void;
+      onAvailableTools?: (tools: string[]) => void;
       onDone?: (info: { scene: string; totalCost: number; turns: number }) => void;
       onError?: (message: string) => void;
     },
@@ -697,6 +712,8 @@ const api = {
       const listener = (_e: Electron.IpcRendererEvent, msg: Record<string, unknown>) => {
         if (msg.type === 'log') cb.onLog?.(String(msg.text ?? ''));
         else if (msg.type === 'delta') cb.onDelta?.(String(msg.text ?? ''));
+        else if (msg.type === 'available-tools')
+          cb.onAvailableTools?.((msg.tools as string[]) ?? []);
         else if (msg.type === 'done') {
           cb.onDone?.({
             scene: String(msg.scene ?? ''),

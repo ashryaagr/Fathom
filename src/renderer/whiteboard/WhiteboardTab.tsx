@@ -14,27 +14,45 @@ interface Props {
   document: OpenDocument;
 }
 
-// Tool toggles persisted across sessions. Keep the shape identical to
-// clawdSlate's so users with both apps see consistent behaviour: web
-// search default on, arxiv default off (opt-in).
-type ToolSettings = { webSearch: boolean; arxiv: boolean };
+// Tool toggles persisted across sessions. Mirrors clawdSlate's
+// settings shape so users with both apps see the same behaviour:
+// arxiv on, web search on, and a per-MCP-server map populated from
+// the agent's session-init advertisement. Hugging Face on by
+// default; everything else off.
+type ToolSettings = {
+  webSearch: boolean;
+  arxiv: boolean;
+  servers: Record<string, boolean>;
+  availableTools: string[];
+};
 
-// Storage key bumped to v2 when the default for `arxiv` flipped from
-// false to true. Existing users with a v1 entry implicitly upgrade.
-const SETTINGS_KEY = 'fathom.whiteboardTools.v2';
-const DEFAULT_TOOL_SETTINGS: ToolSettings = { webSearch: true, arxiv: true };
+// v3: per-server map + availableTools snapshot.
+const SETTINGS_KEY = 'fathom.whiteboardTools.v3';
+const DEFAULT_TOOL_SETTINGS: ToolSettings = {
+  webSearch: true,
+  arxiv: true,
+  servers: {},
+  availableTools: [],
+};
 
 function loadToolSettings(): ToolSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...DEFAULT_TOOL_SETTINGS };
+    if (!raw) return { ...DEFAULT_TOOL_SETTINGS, servers: {}, availableTools: [] };
     const parsed = JSON.parse(raw) as Partial<ToolSettings>;
     return {
       webSearch: typeof parsed.webSearch === 'boolean' ? parsed.webSearch : true,
       arxiv: typeof parsed.arxiv === 'boolean' ? parsed.arxiv : true,
+      servers:
+        parsed.servers && typeof parsed.servers === 'object'
+          ? { ...parsed.servers }
+          : {},
+      availableTools: Array.isArray(parsed.availableTools)
+        ? parsed.availableTools
+        : [],
     };
   } catch {
-    return { ...DEFAULT_TOOL_SETTINGS };
+    return { ...DEFAULT_TOOL_SETTINGS, servers: {}, availableTools: [] };
   }
 }
 
@@ -44,6 +62,59 @@ function saveToolSettings(s: ToolSettings) {
   } catch {
     /* localStorage full / disabled — ignore */
   }
+}
+
+function parseServerName(toolName: string): string | null {
+  if (!toolName.startsWith('mcp__')) return null;
+  const rest = toolName.slice(5);
+  const lastSep = rest.lastIndexOf('__');
+  if (lastSep === -1) return null;
+  return rest.slice(0, lastSep);
+}
+
+function displayServerName(server: string): string {
+  let s = server;
+  if (s.startsWith('claude_ai_')) s = s.slice('claude_ai_'.length);
+  return s.replace(/_/g, ' ');
+}
+
+function defaultServerEnabled(server: string): boolean {
+  if (server === 'claude_ai_Hugging_Face') return true;
+  return false;
+}
+
+function computeDisallowedTools(settings: ToolSettings): string[] {
+  const disallowed: string[] = [];
+  for (const tool of settings.availableTools) {
+    const server = parseServerName(tool);
+    if (!server) continue;
+    if (server === 'excalidraw' || server === 'arxiv') continue;
+    const enabled =
+      settings.servers[server] !== undefined
+        ? settings.servers[server]
+        : defaultServerEnabled(server);
+    if (!enabled) disallowed.push(tool);
+  }
+  return disallowed;
+}
+
+function groupToolsByServer(
+  tools: string[],
+): Array<{ server: string; tools: string[] }> {
+  const groups = new Map<string, string[]>();
+  for (const t of tools) {
+    const s = parseServerName(t);
+    if (!s) continue;
+    if (s === 'excalidraw' || s === 'arxiv') continue;
+    const arr = groups.get(s) ?? [];
+    arr.push(t);
+    groups.set(s, arr);
+  }
+  return Array.from(groups.entries())
+    .map(([server, tools]) => ({ server, tools }))
+    .sort((a, b) =>
+      displayServerName(a.server).localeCompare(displayServerName(b.server)),
+    );
 }
 
 function parseScene(json: string | null): WhiteboardScene | null {
@@ -89,6 +160,14 @@ export default function WhiteboardTab({ document }: Props) {
     saveToolSettings(toolSettings);
   }, [toolSettings]);
 
+  // Captures the tool list advertised at session init so the settings
+  // popover can render per-server toggles. Held in a ref because the
+  // host (built once in useMemo) closes over it.
+  const handleAvailableToolsRef = useRef<(tools: string[]) => void>(() => {});
+  handleAvailableToolsRef.current = (tools: string[]) => {
+    setToolSettings((prev) => ({ ...prev, availableTools: tools }));
+  };
+
   const host = useMemo<WhiteboardHost>(() => {
     const lens = window.lens;
     return {
@@ -113,11 +192,18 @@ export default function WhiteboardTab({ document }: Props) {
       generate: (cb, focus, abortController) => {
         setStatus(paperHash, 'pass2');
         return new Promise((resolve, reject) => {
+          const tp = {
+            webSearch: toolSettingsRef.current.webSearch,
+            arxiv: toolSettingsRef.current.arxiv,
+            disallowed: computeDisallowedTools(toolSettingsRef.current),
+          };
           void lens
             .whiteboardGenerate(
-              { paperHash, pdfPath, focus, tools: toolSettingsRef.current },
+              { paperHash, pdfPath, focus, tools: tp },
               {
                 onLog: (line) => cb.onLog?.(line),
+                onAvailableTools: (tools) =>
+                  handleAvailableToolsRef.current(tools),
                 onSceneStream: (elements) => {
                   const next: WhiteboardScene = {
                     elements: elements as WhiteboardScene['elements'],
@@ -148,6 +234,11 @@ export default function WhiteboardTab({ document }: Props) {
       },
       refine: (currentScene, instruction, cb, abortController) => {
         return new Promise((resolve, reject) => {
+          const tp = {
+            webSearch: toolSettingsRef.current.webSearch,
+            arxiv: toolSettingsRef.current.arxiv,
+            disallowed: computeDisallowedTools(toolSettingsRef.current),
+          };
           void lens
             .whiteboardRefine(
               {
@@ -155,10 +246,12 @@ export default function WhiteboardTab({ document }: Props) {
                 pdfPath,
                 sceneJson: serializeScene(currentScene),
                 instruction,
-                tools: toolSettingsRef.current,
+                tools: tp,
               },
               {
                 onLog: (line) => cb.onLog?.(line),
+                onAvailableTools: (tools) =>
+                  handleAvailableToolsRef.current(tools),
                 onSceneStream: (elements) => {
                   const next: WhiteboardScene = {
                     elements: elements as WhiteboardScene['elements'],
@@ -263,6 +356,18 @@ function ToolSettingsPopover({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const groups = useMemo(
+    () => groupToolsByServer(settings.availableTools),
+    [settings.availableTools],
+  );
+
+  const toggleServer = (server: string, enabled: boolean) => {
+    onChange({
+      ...settings,
+      servers: { ...settings.servers, [server]: enabled },
+    });
+  };
+
   return (
     <>
       <div
@@ -277,7 +382,9 @@ function ToolSettingsPopover({
           position: 'absolute',
           top: 48,
           right: 12,
-          width: 280,
+          width: 320,
+          maxHeight: 'calc(100vh - 70px)',
+          overflowY: 'auto',
           padding: 14,
           background: '#fff',
           borderRadius: 12,
@@ -288,32 +395,77 @@ function ToolSettingsPopover({
             "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
         }}
       >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: '#86868b',
-            textTransform: 'uppercase',
-            letterSpacing: 0.4,
-            marginBottom: 8,
-          }}
-        >
-          Tools the whiteboard agent can use
-        </div>
+        <SectionLabel>Built-in tools</SectionLabel>
         <ToggleRow
-          label="Web search"
-          hint="Look up cited prior work or unfamiliar terms online."
+          label="Web search & fetch"
+          hint="Look up cited prior work; fetch URL contents."
           checked={settings.webSearch}
           onChange={(v) => onChange({ ...settings, webSearch: v })}
         />
         <ToggleRow
           label="arXiv"
-          hint="Fetch papers from arxiv.org by id or query."
+          hint="Fetch research papers from arxiv.org by id or query."
           checked={settings.arxiv}
           onChange={(v) => onChange({ ...settings, arxiv: v })}
         />
+        <SectionLabel style={{ marginTop: 14 }}>
+          MCP servers from your Claude account
+        </SectionLabel>
+        {groups.length === 0 ? (
+          <div
+            style={{
+              fontSize: 11,
+              color: '#86868b',
+              padding: '8px 0 4px',
+              lineHeight: 1.5,
+            }}
+          >
+            None discovered yet. Generate the whiteboard once and the
+            servers your Claude account has connected will appear here.
+          </div>
+        ) : (
+          groups.map(({ server, tools }) => {
+            const checked =
+              settings.servers[server] !== undefined
+                ? settings.servers[server]
+                : defaultServerEnabled(server);
+            return (
+              <ToggleRow
+                key={server}
+                label={displayServerName(server)}
+                hint={`${tools.length} tool${tools.length === 1 ? '' : 's'}`}
+                checked={checked}
+                onChange={(v) => toggleServer(server, v)}
+              />
+            );
+          })
+        )}
       </div>
     </>
+  );
+}
+
+function SectionLabel({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color: '#86868b',
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+        marginBottom: 4,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

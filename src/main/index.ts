@@ -504,6 +504,108 @@ ipcMain.handle('pdf:openPath', async (_event, filePath: string) => {
   return prepareOpenedPdf(filePath);
 });
 
+// Renderer-triggered "fetch this PDF from a URL and give me the local
+// path." Resolves arxiv abstract URLs (/abs/2310.06825) to their PDF
+// counterpart (/pdf/2310.06825.pdf) automatically — that's the
+// dominant case for this feature and saves the user from copy-pasting
+// the right link.
+//
+// Returns null if the URL doesn't look like a PDF after fetching, or
+// if the fetch fails for any reason. The renderer surfaces a small
+// inline error in either case.
+ipcMain.handle(
+  'pdf:openUrl',
+  async (
+    _e,
+    args: { url: string },
+  ): Promise<{ path: string; title?: string } | { error: string }> => {
+    const raw = (args?.url ?? '').trim();
+    if (!raw) return { error: 'Empty URL' };
+    let resolved: URL;
+    try {
+      resolved = new URL(raw);
+    } catch {
+      return { error: 'Not a valid URL' };
+    }
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
+      return { error: 'Only http/https URLs are supported' };
+    }
+    // arxiv abstract → PDF redirect helper. /abs/<id> and /pdf/<id>
+    // are both stable; the abs page is HTML, the pdf page is the
+    // file we actually want. Idempotent on already-pdf URLs.
+    if (
+      /(^|\.)arxiv\.org$/i.test(resolved.hostname) &&
+      /^\/abs\//.test(resolved.pathname)
+    ) {
+      resolved = new URL(
+        `${resolved.protocol}//${resolved.hostname}${resolved.pathname.replace(
+          /^\/abs\//,
+          '/pdf/',
+        )}${resolved.pathname.endsWith('.pdf') ? '' : '.pdf'}`,
+      );
+    }
+    let response: Response;
+    try {
+      response = await fetch(resolved.toString(), {
+        redirect: 'follow',
+        headers: {
+          // Some hosts gate downloads on a non-default UA.
+          'User-Agent': 'Fathom/1.0 (+https://github.com/ashryaagr/Fathom)',
+          Accept: 'application/pdf, */*;q=0.5',
+        },
+      });
+    } catch (err) {
+      return { error: `Network error: ${err instanceof Error ? err.message : 'unknown'}` };
+    }
+    if (!response.ok) {
+      return { error: `HTTP ${response.status} ${response.statusText}` };
+    }
+    const ctype = response.headers.get('content-type') ?? '';
+    const looksLikePdf =
+      ctype.toLowerCase().includes('pdf') ||
+      resolved.pathname.toLowerCase().endsWith('.pdf');
+    if (!looksLikePdf) {
+      return { error: `That URL did not return a PDF (content-type: ${ctype || 'unknown'})` };
+    }
+    const buf = Buffer.from(await response.arrayBuffer());
+    // Sniff the magic bytes — not all servers set content-type
+    // correctly, but PDFs always start with "%PDF-".
+    if (buf.length < 5 || buf.slice(0, 5).toString('utf-8') !== '%PDF-') {
+      return { error: 'Downloaded file is not a valid PDF' };
+    }
+    // Filename: prefer the URL's basename; fall back to a
+    // content-hash-based name for sites that don't include one in the
+    // path (some publishers serve from /download?id=…).
+    const urlBasename = (() => {
+      const p = resolved.pathname.split('/').filter(Boolean).pop() ?? '';
+      const trimmed = p.replace(/\?.*$/, '');
+      if (trimmed.toLowerCase().endsWith('.pdf')) return trimmed;
+      if (trimmed.length > 0) return `${trimmed}.pdf`;
+      return null;
+    })();
+    const fallbackName = `paper-${createHash('sha1')
+      .update(buf)
+      .digest('hex')
+      .slice(0, 8)}.pdf`;
+    const filename = (urlBasename ?? fallbackName).replace(/[^A-Za-z0-9._-]+/g, '_');
+    const destDir = join(app.getPath('userData'), 'downloaded-papers');
+    try {
+      await mkdir(destDir, { recursive: true });
+    } catch {
+      /* mkdir failure → writeFile will surface the real error below */
+    }
+    const destPath = join(destDir, filename);
+    try {
+      await writeFile(destPath, buf);
+    } catch (err) {
+      return {
+        error: `Could not save downloaded PDF: ${err instanceof Error ? err.message : 'unknown'}`,
+      };
+    }
+    return { path: destPath, title: filename.replace(/\.pdf$/i, '') };
+  },
+);
+
 // Renderer-triggered "give me the local path to the sample paper".
 // Copies the bundled sample into userData (same location the menu
 // flow uses) and hands the path back. The renderer then runs it

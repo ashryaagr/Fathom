@@ -1278,6 +1278,13 @@ function EmptyState({
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
+  // URL-paste affordance state. When the user pastes (⌘V) a URL on
+  // the welcome card, `urlCandidate` becomes that URL and a small
+  // confirmation slides in. `urlBusy` flips during the download +
+  // open round-trip; `urlError` carries any inline failure text.
+  const [urlCandidate, setUrlCandidate] = useState<string | null>(null);
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
   // Recent papers — VS Code-style "open something you were reading"
   // affordance (todo #43). Loaded once when the welcome card mounts;
   // server-side filtered to entries whose paths still resolve, so the
@@ -1303,6 +1310,46 @@ function EmptyState({
     };
   }, []);
 
+  // Paste handler (Cmd+V anywhere on the welcome card). If clipboard
+  // text parses as an http/https URL, lift it into urlCandidate so
+  // the confirmation slip appears. Anything else is ignored — paste
+  // shouldn't compete with normal text-paste in fields the user might
+  // add later.
+  const handleWelcomePaste = useCallback((e: React.ClipboardEvent) => {
+    const text = (e.clipboardData?.getData('text/plain') ?? '').trim();
+    if (!text) return;
+    try {
+      const u = new URL(text);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+    } catch {
+      return;
+    }
+    e.preventDefault();
+    setUrlError(null);
+    setUrlCandidate(text);
+  }, []);
+
+  // Fetch + open the candidate URL via main. Success path bottoms out
+  // in onOpenPath, which is the same hook drag-drop uses.
+  const openCandidateUrl = useCallback(async () => {
+    if (!urlCandidate) return;
+    setUrlBusy(true);
+    setUrlError(null);
+    try {
+      const result = await window.lens.openUrl(urlCandidate);
+      if ('error' in result) {
+        setUrlError(result.error);
+        return;
+      }
+      onOpenPath(result.path);
+      setUrlCandidate(null);
+    } catch (err) {
+      setUrlError(err instanceof Error ? err.message : 'Could not open URL');
+    } finally {
+      setUrlBusy(false);
+    }
+  }, [urlCandidate, onOpenPath]);
+
   const openSample = useCallback(async () => {
     setSampleLoading(true);
     try {
@@ -1325,6 +1372,8 @@ function EmptyState({
   return (
     <div
       className="flex h-full items-center justify-center px-8"
+      tabIndex={-1}
+      onPaste={handleWelcomePaste}
       onDragOver={(e) => {
         if (!e.dataTransfer?.types?.includes('Files')) return;
         e.preventDefault();
@@ -1422,11 +1471,88 @@ function EmptyState({
                 {loading ? 'Opening…' : 'Drop a PDF here'}
               </div>
               <div className="mt-1 text-[12.5px] leading-snug" style={{ color: '#7a6a52' }}>
-                or click to browse · `⌘O`
+                or click to browse · `⌘O` · paste a URL · `⌘V`
               </div>
             </div>
           </button>
         </div>
+
+        {/* URL-paste confirmation slip. Slides in when the user
+            pastes (⌘V) a http/https URL anywhere on the welcome card.
+            One-line preview + Open button. arxiv abstract URLs are
+            auto-resolved to their PDF on the server side, so the
+            user can paste either form. */}
+        <AnimatePresence initial={false}>
+          {urlCandidate && (
+            <motion.div
+              key="url-slip"
+              initial={{ opacity: 0, y: -4, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -4, height: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="overflow-hidden px-10"
+            >
+              <div
+                className="mt-3 flex items-center gap-2 rounded-[12px] px-3 py-2.5"
+                style={{
+                  background: 'rgba(201, 131, 42, 0.08)',
+                  border: '1px solid rgba(201, 131, 42, 0.28)',
+                }}
+              >
+                <div
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: 'rgba(201, 131, 42, 0.18)' }}
+                  aria-hidden="true"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                       stroke="#9f661b" strokeWidth="1.8" strokeLinecap="round"
+                       strokeLinejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div
+                    className="truncate text-[12px] tabular-nums"
+                    style={{ color: '#5a4a30', fontFamily: 'ui-monospace, SF Mono, Menlo, monospace' }}
+                  >
+                    {urlCandidate}
+                  </div>
+                  {urlError && (
+                    <div
+                      className="mt-1 text-[11px] leading-snug"
+                      style={{ color: '#b02a2a' }}
+                    >
+                      {urlError}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setUrlCandidate(null);
+                    setUrlError(null);
+                  }}
+                  disabled={urlBusy}
+                  className="rounded-md px-2 py-1 text-[11px] transition hover:bg-black/[0.05] disabled:opacity-50"
+                  style={{ color: '#7a6a52' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void openCandidateUrl()}
+                  disabled={urlBusy}
+                  className="rounded-md px-3 py-1 text-[12px] font-medium transition disabled:cursor-progress disabled:opacity-60"
+                  style={{
+                    background: '#9f661b',
+                    color: '#faf4e8',
+                  }}
+                >
+                  {urlBusy ? 'Opening…' : 'Open'}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Recent papers (todo #43) — always shown now, with the
             sample paper as the LAST entry (todo #7). The sample row
