@@ -19,8 +19,10 @@ interface Props {
 // search default on, arxiv default off (opt-in).
 type ToolSettings = { webSearch: boolean; arxiv: boolean };
 
-const SETTINGS_KEY = 'fathom.whiteboardTools.v1';
-const DEFAULT_TOOL_SETTINGS: ToolSettings = { webSearch: true, arxiv: false };
+// Storage key bumped to v2 when the default for `arxiv` flipped from
+// false to true. Existing users with a v1 entry implicitly upgrade.
+const SETTINGS_KEY = 'fathom.whiteboardTools.v2';
+const DEFAULT_TOOL_SETTINGS: ToolSettings = { webSearch: true, arxiv: true };
 
 function loadToolSettings(): ToolSettings {
   try {
@@ -29,7 +31,7 @@ function loadToolSettings(): ToolSettings {
     const parsed = JSON.parse(raw) as Partial<ToolSettings>;
     return {
       webSearch: typeof parsed.webSearch === 'boolean' ? parsed.webSearch : true,
-      arxiv: typeof parsed.arxiv === 'boolean' ? parsed.arxiv : false,
+      arxiv: typeof parsed.arxiv === 'boolean' ? parsed.arxiv : true,
     };
   } catch {
     return { ...DEFAULT_TOOL_SETTINGS };

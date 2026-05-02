@@ -1,6 +1,6 @@
 {
   "name": "fathom",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "description": "A semantic-zoom PDF reader for research papers. Pinch with ⌘ on a passage — a full-screen lens opens with a streaming, grounded explanation from Claude.",
   "homepage": "https://github.com/ashryaagr/Fathom",
   "repository": {
@@ -46,7 +46,7 @@
     "dompurify": "^3.4.1",
     "electron-updater": "^6.8.3",
     "elkjs": "^0.10.2",
-    "fathom-whiteboard": "https://github.com/ashryaagr/clawdslate/releases/download/v0.1.14/fathom-whiteboard-0.1.14.tgz",
+    "fathom-whiteboard": "https://github.com/ashryaagr/clawdslate/releases/download/v0.1.15/fathom-whiteboard-0.1.15.tgz",
     "framer-motion": "^12.38.0",
     "katex": "^0.16.45",
     "pdfjs-dist": "^5.6.205",
