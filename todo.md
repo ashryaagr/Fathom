@@ -1104,7 +1104,7 @@ Surfaced by fathom-wb-impl during Build 4 wiring; not introduced by their sessio
 
 ---
 
-## 2026-05-01 — Whiteboard pipeline: inline read_me + tool restriction — ✅ MOSTLY DONE
+## 2026-05-01 — Whiteboard pipeline: inline read_me + tool restriction — ✅ DONE
 
 Shipped in clawdSlate v0.1.12 (Fathom v1.0.24): read_me content
 inlined into system prompt; allowedTools restricted to
@@ -1112,8 +1112,17 @@ inlined into system prompt; allowedTools restricted to
 paper is on disk); v0.1.13 surfaced cache_read/cache_create token
 counts in the [result] log line.
 
-Still pending: per-app settings panel for runtime tool toggling
-(would let users opt into Read/Bash/Grep without a redeploy).
+**Settings panel for runtime tool toggling: ✅ DONE in
+clawdSlate v0.1.14 + Fathom v1.0.25.** Gear icon in clawdSlate's
+title bar; gear icon in Fathom's WhiteboardTab top-right. Two
+toggles each — web search (default on) and arxiv (default off).
+localStorage-persisted, threaded through preload → main →
+fathom-whiteboard pipeline opts (`webSearch` + `arxivMcp`).
+Library code at fathom-whiteboard/src/pipeline.ts:299-304 makes
+both `WebSearch` and the arxiv tool list conditional on the opts;
+arxiv guidance is appended AFTER the cached system prefix so
+prompt caching still hits the head when toggles change.
+
 Not investigated: tool-search / lazy-tool-loading via Anthropic SDK.
 
 ### Original observation
@@ -1184,14 +1193,23 @@ build tools individually.
 
 ---
 
-## 2026-05-01 — arxiv-mcp-server integration
+## 2026-05-01 — arxiv-mcp-server integration — ✅ DONE
 
-User wants both Fathom and clawdSlate to be able to fetch arxiv
-papers on demand via the arxiv-mcp-server
-(https://github.com/blazickjp/arxiv-mcp-server). The downloaded PDF
-or content should land in a temp file inside the same working
-directory we already use for sidecars / scene assets, so the agent
-that issued the fetch has easy local access.
+Shipped in clawdSlate v0.1.14 + Fathom v1.0.25 as a vendored Node
+stdio MCP under `fathom-whiteboard/vendor/arxiv-mcp/server.mjs`
+(no Python dep, no third-party transitive deps beyond
+@modelcontextprotocol/sdk). Three tools advertised when the toggle
+is on: `search_papers`, `download_paper`,
+`list_downloaded_papers`. Storage path is per-call:
+- clawdSlate: `<workDir>/arxiv/` under the active session's dir
+- Fathom: `<paperHash>/arxiv/` under the paper's index dir
+
+Off by default. The settings popover (see "Whiteboard pipeline"
+entry above) is the user's switch.
+
+Did NOT vendor blazickjp's Python server — wrote our own tiny
+.mjs against the arxiv API directly so the Electron asar stays
+free of Python and uvx/pipx detection logic.
 
 User's instruction (verbatim, 2026-05-01):
 
