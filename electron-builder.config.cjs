@@ -65,6 +65,7 @@ module.exports = {
     // app.asar can be read via Electron's fs hook but cannot be
     // executed by spawned children. Unpack so spawn has a real-disk
     // file to invoke.
+    // Includes both vendor/excalidraw-mcp/ and vendor/arxiv-mcp/.
     'node_modules/fathom-whiteboard/vendor/**',
   ],
   // Versionless asset names so the stable /releases/latest/download/<asset>
