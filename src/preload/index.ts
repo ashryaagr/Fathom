@@ -609,7 +609,12 @@ const api = {
     ipcRenderer.invoke('whiteboard:saveAsset', { paperHash, filename, bytes }),
 
   whiteboardGenerate: (
-    req: { paperHash: string; pdfPath: string; focus?: string },
+    req: {
+      paperHash: string;
+      pdfPath: string;
+      focus?: string;
+      tools?: { webSearch?: boolean; arxiv?: boolean };
+    },
     cb: {
       onLog?: (text: string) => void;
       onDelta?: (text: string) => void;
@@ -660,7 +665,13 @@ const api = {
     })(),
 
   whiteboardRefine: (
-    req: { paperHash: string; pdfPath: string; sceneJson: string; instruction: string },
+    req: {
+      paperHash: string;
+      pdfPath: string;
+      sceneJson: string;
+      instruction: string;
+      tools?: { webSearch?: boolean; arxiv?: boolean };
+    },
     cb: {
       onLog?: (text: string) => void;
       onDelta?: (text: string) => void;

@@ -1498,11 +1498,65 @@ function buildSceneJson(elements: WhiteboardScene['elements']): string {
   );
 }
 
+// arXiv MCP server config — vendored under
+// node_modules/fathom-whiteboard/vendor/arxiv-mcp/. Returns a stdio
+// spawn config the library accepts; storage path is per-paper so
+// downloaded papers travel with the paper's sidecar dir.
+//
+// Mirror of clawdSlate's resolveArxivMcp() — kept inline to avoid
+// exposing it through the library's public surface (it's host-side
+// concern: where does Electron place the binary, where does the user
+// data dir live).
+function resolveArxivMcp(
+  paperHash: string,
+): { command: string; args: string[]; env: Record<string, string> } | undefined {
+  const candidates = app.isPackaged
+    ? [
+        join(
+          process.resourcesPath,
+          'app.asar.unpacked',
+          'node_modules',
+          'fathom-whiteboard',
+          'vendor',
+          'arxiv-mcp',
+          'server.mjs',
+        ),
+      ]
+    : [
+        join(
+          app.getAppPath(),
+          'node_modules',
+          'fathom-whiteboard',
+          'vendor',
+          'arxiv-mcp',
+          'server.mjs',
+        ),
+      ];
+  const serverPath = candidates.find((p) => existsSync(p));
+  if (!serverPath) return undefined;
+  // Per-paper storage so downloaded papers sit alongside the index +
+  // whiteboard files. The arxiv server creates the dir on demand.
+  const storagePath = join(indexDirFor(paperHash), 'arxiv');
+  return {
+    command: process.execPath,
+    args: [serverPath],
+    env: {
+      ARXIV_STORAGE_PATH: storagePath,
+      ELECTRON_RUN_AS_NODE: '1',
+    },
+  };
+}
+
 ipcMain.handle(
   'whiteboard:generate',
   async (
     event,
-    req: { paperHash: string; pdfPath: string; focus?: string },
+    req: {
+      paperHash: string;
+      pdfPath: string;
+      focus?: string;
+      tools?: { webSearch?: boolean; arxiv?: boolean };
+    },
   ) => {
     const indexPath = indexDirFor(req.paperHash);
     Whiteboards.upsert({
@@ -1510,6 +1564,10 @@ ipcMain.handle(
       status: 'pass2',
       error: null,
     });
+
+    const tools = req.tools ?? {};
+    const webSearch = tools.webSearch !== false;
+    const arxivMcp = tools.arxiv ? resolveArxivMcp(req.paperHash) : undefined;
 
     return runStreamingIpcHandler({
       channelPrefix: 'whiteboard:event',
@@ -1539,6 +1597,8 @@ ipcMain.handle(
           req.focus,
           resolveClaudeExecutablePath() ?? undefined,
           ctx.abortController,
+          arxivMcp,
+          webSearch,
         );
 
         const sceneJson = buildSceneJson(result.scene.elements);
@@ -1584,9 +1644,18 @@ ipcMain.handle(
   'whiteboard:refine',
   async (
     event,
-    req: { paperHash: string; pdfPath: string; sceneJson: string; instruction: string },
+    req: {
+      paperHash: string;
+      pdfPath: string;
+      sceneJson: string;
+      instruction: string;
+      tools?: { webSearch?: boolean; arxiv?: boolean };
+    },
   ) => {
     const indexPath = indexDirFor(req.paperHash);
+    const tools = req.tools ?? {};
+    const webSearch = tools.webSearch !== false;
+    const arxivMcp = tools.arxiv ? resolveArxivMcp(req.paperHash) : undefined;
 
     return runStreamingIpcHandler({
       channelPrefix: 'whiteboard:refineEvent',
@@ -1623,6 +1692,8 @@ ipcMain.handle(
           undefined,
           resolveClaudeExecutablePath() ?? undefined,
           ctx.abortController,
+          arxivMcp,
+          webSearch,
         );
         const sceneJson = buildSceneJson(result.scene.elements);
         try {
