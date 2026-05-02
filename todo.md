@@ -265,23 +265,23 @@ Possible fixes:
 
 Schedule: v1.0.12.
 
-## 42. Reopen PDF at last reading position — 🔄 PENDING
-User: *"when we re-open a PDF, we should open it right from the
-point where we were last time, not from the very top."*
-Plan: persist scroll-y per paperHash (already keyed in SQLite).
-On paper open, after pages mount, scroll to saved position.
-Tied to #43 below.
+## 42. Reopen PDF at last reading position — ✅ DONE
+v2 page+offset+zoom anchor at src/renderer/pdf/PdfViewer.tsx:65-135.
+Saves the (page, offsetWithinPage, zoom) triple on a 500ms debounce;
+restores it after pageBaseSizes settle on reopen. Verified 2026-05-01.
 
-## 43. Recent PDFs on the welcome screen — 🔄 PENDING
-User: *"on the initial screen we can also give the option to the
-users to load the previous PDFs that they were viewing, very much
-similar to how cursor or VS Code gives the options for the previous
-projects they had loaded."*
-Plan: track most-recent N papers (paperHash → path → title), show
-a list in EmptyState below the existing Try-sample / Open-yours
-cards. Click to reopen at the saved scroll position (#42).
+## 43. Recent PDFs on the welcome screen — ✅ DONE
+"Recently opened" list in EmptyState (src/renderer/App.tsx:1281-1496).
+Loads up to 8 entries via window.lens.recentPapers, renders each as a
+card; clicking reopens through the same path drag-drop uses → restores
+saved scroll position (#42). Verified 2026-05-01.
 
-## 44. Multi-worker pdf.js rendering — 🔄 IN PROGRESS (se-1-rendering)
+## 44. Multi-worker pdf.js rendering — ✅ DONE
+MultiWorkerDoc + PdfDocFacade ship at src/renderer/pdf/multiWorkerDoc.ts.
+Enabled via MULTI_WORKER_RENDER=true in App.tsx; opens N PDFWorker
+instances and routes getPage by `(n-1) % N`. Verified 2026-05-01.
+
+### Original spec (kept for context)
 User: *"start working on the multi-threadable strategy so that
 the rendering becomes faster."*
 Plan: open the PDF N times with N PDFWorker instances; route
@@ -304,16 +304,12 @@ Implementation sketch:
   via `window.lens.logDev` so before/after timing lands in
   fathom.log without DevTools.
 
-## 45. Replace "Rendering…" text with a small spinner — 🔄 PENDING
-User: *"if the rendering does take time, we can show more than
-the word 'rendering', and let's not show the word 'rendering' at
-all. Perhaps just a small cycle that says that it is loading is
-better."*
-PageView's slot placeholder currently shows the literal string
-"Rendering…". Replace with a small CSS-spun ring or progress
-dot, no text.
+## 45. Replace "Rendering…" text with a small spinner — ✅ DONE
+PageView.tsx:307-315 — animate-spin CSS ring, no text. The
+"Rendering…" string only appears in two old comments. Verified
+2026-05-01.
 
-## 46. Minor principle: visual > text for transient UI — 🔄 PENDING
+## 46. Minor principle: visual > text for transient UI — ✅ DONE
 User: *"sometimes just text visual effects are better. And maybe
 that is one of the principles to put one of the minority
 principles, not the major."*
@@ -1105,3 +1101,121 @@ src/renderer/pdf/PdfViewer.tsx(641,27): error TS18047: 'selectionSnapshot' is po
 
 Surfaced by fathom-wb-impl during Build 4 wiring; not introduced by their session. PdfViewer.tsx is committed clean (last touched in b7c28d2 by Whiteboard scaffolding). Cleanup pass: add a null-guard at line 641. Not blocking distribution since the renderer bundle still builds; flagged so it doesn't slip past the next typecheck-clean commit.
 
+
+---
+
+## 2026-05-01 — Whiteboard pipeline: inline read_me + tool restriction — ✅ MOSTLY DONE
+
+Shipped in clawdSlate v0.1.12 (Fathom v1.0.24): read_me content
+inlined into system prompt; allowedTools restricted to
+`mcp__excalidraw__create_view` + `WebSearch` + `Read` (only when
+paper is on disk); v0.1.13 surfaced cache_read/cache_create token
+counts in the [result] log line.
+
+Still pending: per-app settings panel for runtime tool toggling
+(would let users opt into Read/Bash/Grep without a redeploy).
+Not investigated: tool-search / lazy-tool-loading via Anthropic SDK.
+
+### Original observation
+
+User observed in the chat trace that every refine/generate run starts
+with the agent calling `read_me`, getting back the same Excalidraw
+format documentation, and then drawing. That round-trip is wasted
+context every turn.
+
+User's instruction (verbatim, 2026-05-01):
+
+> "We call the step every time to read, then read me. It should be
+> directly coming from a prompt, rather than it explicitly having to
+> do this. Only the Excalidraw tools and web search should be allowed,
+> or basically there should be an option on which tools we want to
+> enable inside the settings of the app. But Excalidraw, we want to
+> just directly get the read, meaning the prompt. For the other
+> Excalidraw tools that are there, we can provide them as what the
+> model wants without increasing the context load. If there is a tool
+> search functionality available, we can use that as well. We should
+> see the traces and should see how we can make our process better
+> for creating the elements."
+
+Action items:
+- Inline the `read_me` content into the system prompt so the agent
+  never needs to call it. The tool can stay registered but its "you
+  already saw this" marker becomes the default starting position.
+- Restrict the `allowedTools` set in pipeline.ts to Excalidraw tools
+  + WebSearch (drop Read/Grep/Glob/Bash unless explicitly enabled).
+- Add a settings panel where the user can toggle which tool families
+  are available per-run.
+- Investigate whether the Anthropic Agent SDK exposes any tool-search
+  / lazy-tool-loading mechanism we can plug in here so seldom-used
+  tools don't sit in the context.
+- Surface clearer per-run traces so the loop "what tools did the
+  agent use, what tokens did each step cost" is visible at a glance
+  in the activity panel.
+
+Lives in: fathom-whiteboard/src/pipeline.ts (system prompt + tool
+allowlist), fathom-whiteboard/src/Whiteboard.tsx (settings UI), and
+fathom-whiteboard/app/main.ts (settings persistence).
+
+---
+
+## 2026-05-01 — package.json corruption mystery: not reproducible
+
+When shipping v1.0.21 → v1.0.22 → v1.0.23, the on-disk Fathom
+`package.json` got overwritten with the fathom-whiteboard package's
+content multiple times. After v1.0.23 landed clean, I tried to
+reproduce the corruption by replaying the exact flow (restore →
+`rm -rf node_modules/.package-lock.json node_modules/fathom-whiteboard`
+→ `npm install --ignore-scripts` → `npm run rebuild` → `npm run
+dist:mac`) with a `shasum` snapshot of `package.json` at every
+step. **No corruption occurred.** The file's SHA stayed identical
+from start to finish.
+
+Working hypothesis: a stale `node_modules` state during the broken
+release attempts (multiple versions of `fathom-whiteboard` cached
+inconsistently) interacted poorly with one of the npm/electron-builder
+steps. Once a clean install ran, the failure mode disappeared.
+
+Next time it shows up: capture `package.json` SHA before AND after
+each command in the release flow, and grep `node_modules/` for any
+script that calls `writeFileSync` against the consumer root. If
+the corruption returns, it's likely tied to a specific `npm install`
+flag combination after a partial install state — not to any of the
+build tools individually.
+
+---
+
+## 2026-05-01 — arxiv-mcp-server integration
+
+User wants both Fathom and clawdSlate to be able to fetch arxiv
+papers on demand via the arxiv-mcp-server
+(https://github.com/blazickjp/arxiv-mcp-server). The downloaded PDF
+or content should land in a temp file inside the same working
+directory we already use for sidecars / scene assets, so the agent
+that issued the fetch has easy local access.
+
+User's instruction (verbatim, 2026-05-01):
+
+> "I wanted to add this archive MCP server in this current repo so
+> that we can use this as well when working with xkali draw or when
+> working inside Fathom. Both should have access to this MCP
+> server so that it can take the PDF from archive or the content,
+> store it in a file locally in a temporary file, and then it can
+> put it into the same directory where we are operating or
+> downloading or storing these temporary marker information, etc.,
+> where we have easy access. There we download this, and then we
+> can parse over it. This helps enable more streamlined searching
+> of archive for the local agent."
+
+Action items:
+- Vendor the arxiv-mcp-server (Python) into a path both apps can
+  spawn — probably as a sibling of `vendor/excalidraw-mcp/` in
+  the fathom-whiteboard package, since both apps consume the
+  whiteboard pipeline.
+- Wire it as a second MCP server in pipeline.ts's `mcpServers`
+  config, using a similar transport (stdio or HTTP).
+- Set the download dir env var so downloads land in the calling
+  side's session/sidecar directory (`sessions/<id>/assets/` for
+  clawdSlate, `<paper>.lens/assets/` for Fathom).
+- Check if blazickjp/arxiv-mcp-server is pip-installable; if yes,
+  consider running it via `uvx` or `pipx` to avoid bundling Python
+  dependencies in the Electron asar.
