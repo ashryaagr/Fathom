@@ -160,6 +160,30 @@ export default function WhiteboardTab({ document }: Props) {
     saveToolSettings(toolSettings);
   }, [toolSettings]);
 
+  // Hydrate availableTools from the main process's persisted snapshot on
+  // mount so the popover can render per-server toggles even before the
+  // user runs their first generation. Main-side discovery probe fires at
+  // app start; this picks up its result.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const tools = await window.lens.whiteboardGetAvailableTools();
+        if (cancelled || !Array.isArray(tools) || tools.length === 0) return;
+        setToolSettings((prev) =>
+          prev.availableTools.length >= tools.length
+            ? prev
+            : { ...prev, availableTools: tools },
+        );
+      } catch {
+        /* best-effort hydration */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Captures the tool list advertised at session init so the settings
   // popover can render per-server toggles. Held in a ref because the
   // host (built once in useMemo) closes over it.

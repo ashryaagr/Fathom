@@ -1237,3 +1237,21 @@ Action items:
 - Check if blazickjp/arxiv-mcp-server is pip-installable; if yes,
   consider running it via `uvx` or `pipx` to avoid bundling Python
   dependencies in the Electron asar.
+
+---
+
+## 2026-05-02 — Lens width: 80% of screen by default (user instruction)
+
+Verbatim: *"In Fathom, when we are inside a lens, then our explanation
+should be zoomed in. Currently, we are only in the size of the paper
+or in a very small width, but we should maximize our usage of the
+screen so that we are using 80% width in zoom by default."*
+
+The lens overlay currently constrains its content area to
+roughly the PDF column width, leaving the right side empty. User
+wants the explanation panel to use 80% of viewport width when a
+lens is open so reading the streamed answer feels like a real
+zoom, not a side note.
+
+Bundled into the v1.0.28 rebuild that ships the MCP-discovery
+fix.

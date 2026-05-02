@@ -177,8 +177,9 @@ const api = {
    * openPdfAtPath flow, same as drag-drop. */
   openUrl: (
     url: string,
-  ): Promise<{ path: string; title?: string } | { error: string }> =>
-    ipcRenderer.invoke('pdf:openUrl', { url }),
+  ): Promise<
+    { path: string; suggestedTitle?: string } | { error: string }
+  > => ipcRenderer.invoke('pdf:openUrl', { url }),
 
   /** Resolve the filesystem path of a dropped File. Electron 32+ removed
    * the non-standard `File.path` property; this is the sanctioned
@@ -186,9 +187,14 @@ const api = {
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   /** Open a PDF at a specific local path — used by drag-and-drop and the
-   * OS's Open-With / open-file flow. Returns null on bad paths. */
-  openPdfAtPath: (path: string): Promise<OpenedPdf | null> =>
-    ipcRenderer.invoke('pdf:openPath', path),
+   * OS's Open-With / open-file flow. Returns null on bad paths.
+   * Optional `title` overrides the default basename — used by the URL-
+   * paste flow after the user confirms a derived/edited paper name. */
+  openPdfAtPath: (path: string, title?: string): Promise<OpenedPdf | null> =>
+    ipcRenderer.invoke(
+      'pdf:openPath',
+      title ? { filePath: path, title } : path,
+    ),
 
   /** Main process asking the renderer to pop the Finder dialog
    * (fires on File → Open PDF… from the app menu and from the first-run
@@ -618,6 +624,13 @@ const api = {
     bytes: ArrayBuffer,
   ): Promise<{ absPath: string }> =>
     ipcRenderer.invoke('whiteboard:saveAsset', { paperHash, filename, bytes }),
+
+  // Returns the most recent tool list the Agent SDK advertised at session
+  // init (persisted across restarts in userData/whiteboard-available-tools.json).
+  // The whiteboard settings popover hydrates from this on mount so the user
+  // sees their claude.ai connectors without first running a generation.
+  whiteboardGetAvailableTools: (): Promise<string[]> =>
+    ipcRenderer.invoke('whiteboard:tools:available:get'),
 
   whiteboardGenerate: (
     req: {

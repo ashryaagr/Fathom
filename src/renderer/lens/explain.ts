@@ -129,10 +129,18 @@ export async function streamExplanationForLens(
   // sessionId yet; we pick one up from the onSessionId callback below.
   const resumeSessionId = focused.sessionId;
 
-  // When we're resuming, the server already has the full prior turn
-  // history — don't resend `priorExplanations` (which would duplicate
-  // content in the prompt) and let the SDK's session store carry it.
-  const priorExplanationsForRequest = resumeSessionId ? undefined : priorExplanations;
+  // Always send `priorExplanations`. When the resume succeeds the main
+  // process drops them before calling the SDK (the session already
+  // carries the history). When the resume fails — e.g. the SDK's local
+  // session store was pruned — main retries with a fresh session and
+  // replays them so the user doesn't see "No conversation found".
+  const priorExplanationsForRequest = priorExplanations;
+
+  // The SDK reports session_id in its 'init' event before persisting
+  // the .jsonl transcript. We hold the id here until onDone fires so
+  // an aborted/errored stream doesn't stamp an unresumable id onto the
+  // lens.
+  let provisionalSessionId: string | null = null;
 
   try {
     const handle = await window.lens.explain(
@@ -176,16 +184,32 @@ export async function streamExplanationForLens(
           useLensStore.getState().setTurnPrompt(targetId, prompt);
         },
         onSessionId: (sessionId) => {
-          console.log('[Lens] session id for', targetId, '=', sessionId, resumeSessionId ? '(resumed)' : '(new)');
-          useLensStore.getState().setSessionId(targetId, sessionId);
+          // The SDK announces session_id in its first 'init' event, before any
+          // text streams. But the per-session .jsonl transcript is only
+          // written on stream COMPLETION — if the user aborts mid-stream
+          // (closes the lens, hits Esc, regenerates) the file never lands,
+          // and a future Ask resuming that id throws "No conversation found".
+          // So we just stash the id locally; the onDone handler below
+          // promotes it into the store once the SDK has actually persisted.
+          console.log('[Lens] session id (provisional) for', targetId, '=', sessionId, resumeSessionId ? '(resumed)' : '(new)');
+          provisionalSessionId = sessionId;
         },
         onDone: () => {
           console.log('[Lens] stream done', targetId);
+          if (provisionalSessionId) {
+            // Stream completed cleanly — the SDK has flushed the session
+            // transcript to disk, so this id is safe for a follow-up Ask
+            // to resume. Promote from provisional to durable.
+            useLensStore.getState().setSessionId(targetId, provisionalSessionId);
+          }
           useLensStore.getState().endStream(targetId);
           handlesByLens.delete(targetId);
         },
         onError: (msg) => {
           console.error('[Lens] stream error', targetId, msg);
+          // Intentionally do NOT promote provisionalSessionId on error —
+          // a failed/aborted run leaves no .jsonl on disk, so a stamped
+          // id would just produce "No conversation found" next time.
           useLensStore.getState().setStreamError(targetId, msg);
           handlesByLens.delete(targetId);
         },

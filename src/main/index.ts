@@ -12,6 +12,7 @@ import {
   refineWhiteboard,
   type WhiteboardScene,
 } from 'fathom-whiteboard';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Filenames for the per-paper sidecar. Kept identical to the pre-pivot
 // pipeline so existing user whiteboards survive the upgrade.
@@ -449,14 +450,19 @@ const broadcastBrowserWindow = {
  *   - app.on('open-file', …) (user ⌘-clicked a PDF in Finder → Open With Fathom)
  *   - Open Sample Paper menu / first-run button
  */
-async function prepareOpenedPdf(filePath: string) {
+async function prepareOpenedPdf(filePath: string, titleOverride?: string) {
   writeSettings({ lastOpenDir: dirname(filePath) });
   const bytes = await readFile(filePath);
   const contentHash = createHash('sha256').update(bytes).digest('hex');
   // Persist the path here too — the welcome screen's recent-PDFs
   // list (todo #43) needs it to reopen later, and the only spots
   // that have the canonical absolute path are the open-flows.
-  Papers.upsert({ contentHash, title: filePath.split('/').pop(), path: filePath });
+  // titleOverride: passed by the URL-paste flow when the user has
+  // confirmed/edited the suggested name. Falls back to the basename
+  // for drag-drop / file-picker / Open With paths where there's no
+  // metadata-derived name.
+  const resolvedTitle = (titleOverride ?? '').trim() || filePath.split('/').pop();
+  Papers.upsert({ contentHash, title: resolvedTitle, path: filePath });
   const indexDir = await ensureIndexDir(filePath, contentHash);
   // Pull the saved position vector so the renderer can restore it
   // after pages mount (todo #42 v2 — page + offset-in-page + zoom,
@@ -498,11 +504,20 @@ ipcMain.handle('pdf:open', async (event) => {
 // Renderer drag-and-drop: the <DropZone> picks up a dragged .pdf, pulls the
 // local path (via the Electron File.path extension), and hands it to the
 // main process through this handler. Same return shape as pdf:open.
-ipcMain.handle('pdf:openPath', async (_event, filePath: string) => {
-  if (typeof filePath !== 'string' || !existsSync(filePath)) return null;
-  if (!filePath.toLowerCase().endsWith('.pdf')) return null;
-  return prepareOpenedPdf(filePath);
-});
+// `arg` accepts either a bare path string (back-compat — the existing
+// drag-drop call site passes a string) OR `{ filePath, title? }`. The
+// title form is used by the URL-paste flow so the user-confirmed name
+// lands in Papers.title instead of the URL basename.
+ipcMain.handle(
+  'pdf:openPath',
+  async (_event, arg: string | { filePath: string; title?: string }) => {
+    const filePath = typeof arg === 'string' ? arg : arg?.filePath;
+    const title = typeof arg === 'string' ? undefined : arg?.title;
+    if (typeof filePath !== 'string' || !existsSync(filePath)) return null;
+    if (!filePath.toLowerCase().endsWith('.pdf')) return null;
+    return prepareOpenedPdf(filePath, title);
+  },
+);
 
 // Renderer-triggered "fetch this PDF from a URL and give me the local
 // path." Resolves arxiv abstract URLs (/abs/2310.06825) to their PDF
@@ -518,7 +533,7 @@ ipcMain.handle(
   async (
     _e,
     args: { url: string },
-  ): Promise<{ path: string; title?: string } | { error: string }> => {
+  ): Promise<{ path: string; suggestedTitle?: string } | { error: string }> => {
     const raw = (args?.url ?? '').trim();
     if (!raw) return { error: 'Empty URL' };
     let resolved: URL;
@@ -602,9 +617,74 @@ ipcMain.handle(
         error: `Could not save downloaded PDF: ${err instanceof Error ? err.message : 'unknown'}`,
       };
     }
-    return { path: destPath, title: filename.replace(/\.pdf$/i, '') };
+
+    // Suggest a real paper title — the URL basename ("2308.12345v1") is
+    // useless to a human. Try the arxiv API first (gives the cleanest
+    // human-readable title), then fall back to the PDF's own /Title
+    // metadata, then last to the basename. The renderer surfaces this
+    // in an editable input so the user can rename before commit.
+    const suggestedTitle = await deriveSuggestedTitle(resolved, buf, filename);
+    return { path: destPath, suggestedTitle };
   },
 );
+
+// arxiv abs/pdf URLs both contain the paper id at /<abs|pdf>/<id>(v\d+)?(\.pdf)?
+function arxivIdFromUrl(u: URL): string | null {
+  if (!/(^|\.)arxiv\.org$/i.test(u.hostname)) return null;
+  const m = u.pathname.match(/^\/(?:abs|pdf)\/([\w.-]+?)(?:v\d+)?(?:\.pdf)?$/);
+  return m?.[1] ?? null;
+}
+
+async function fetchArxivTitle(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}`,
+      { headers: { 'User-Agent': 'Fathom/1.0 (+https://github.com/ashryaagr/Fathom)' } },
+    );
+    if (!res.ok) return null;
+    const xml = await res.text();
+    // Atom feed: the <entry><title> is the paper title. We do this with
+    // a simple regex (no XML parser dep) — the field's well-defined
+    // and any embedded newlines just collapse to spaces.
+    const m = xml.match(/<entry>[\s\S]*?<title>([\s\S]*?)<\/title>/);
+    if (!m) return null;
+    return m[1].replace(/\s+/g, ' ').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readPdfTitleFromBuffer(buf: Buffer): Promise<string | null> {
+  try {
+    const { PDFDocument } = await import('pdf-lib');
+    // updateMetadata: false keeps PDFDocument from rewriting the
+    // /Info dictionary; we just want to read.
+    const pdf = await PDFDocument.load(buf, { updateMetadata: false });
+    const t = (pdf.getTitle() ?? '').trim();
+    if (!t) return null;
+    // Strip generator junk that some PDF producers stuff into /Title
+    // (e.g. "Microsoft Word - Document1"). Keep anything else.
+    if (/^(microsoft|untitled|document\d*)/i.test(t)) return null;
+    return t;
+  } catch {
+    return null;
+  }
+}
+
+async function deriveSuggestedTitle(
+  url: URL,
+  buf: Buffer,
+  filename: string,
+): Promise<string> {
+  const arxivId = arxivIdFromUrl(url);
+  if (arxivId) {
+    const t = await fetchArxivTitle(arxivId);
+    if (t) return t;
+  }
+  const pdfTitle = await readPdfTitleFromBuffer(buf);
+  if (pdfTitle) return pdfTitle;
+  return filename.replace(/\.pdf$/i, '');
+}
 
 // Renderer-triggered "give me the local path to the sample paper".
 // Copies the bundled sample into userData (same location the menu
@@ -709,40 +789,77 @@ ipcMain.handle('explain:start', async (event, req: ExplainRequest) => {
         }
       }
 
-      const fullText = await explain({
-        regionText: req.regionText,
-        focusPhrase: req.focusPhrase,
-        paperDigest,
-        paperText: req.paperText,
-        priorExplanations: req.priorExplanations,
-        depth: req.depth,
-        customInstruction: req.customInstruction,
-        pdfPath,
-        page: req.page,
-        indexPath,
-        zoomImagePath: (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath,
-        regionBbox: (req as ExplainRequest & { regionBbox?: ExplainArgs['regionBbox'] }).regionBbox,
-        extraDirectories: extraDirectories.length > 0 ? extraDirectories : undefined,
-        customInstructions: settings.customInstructions,
-        resumeSessionId: (req as ExplainRequest & { resumeSessionId?: string }).resumeSessionId,
-        abortController,
-        onDelta: (text) => {
-          if (sender.isDestroyed()) return;
-          sender.send(channel, { type: 'delta', text });
-        },
-        onProgress: (text) => {
-          if (sender.isDestroyed()) return;
-          sender.send(channel, { type: 'progress', text });
-        },
-        onPromptSent: (prompt) => {
-          if (sender.isDestroyed()) return;
-          sender.send(channel, { type: 'prompt', text: prompt });
-        },
-        onSessionId: (sessionId) => {
-          if (sender.isDestroyed()) return;
-          sender.send(channel, { type: 'sessionId', sessionId });
-        },
-      });
+      const incomingResumeSessionId =
+        (req as ExplainRequest & { resumeSessionId?: string }).resumeSessionId;
+
+      // The Agent SDK persists session transcripts on disk (under
+      // ~/.claude/projects/...). Sometimes those entries disappear —
+      // pruning, a version bump, a fresh install — and a resume call
+      // throws "Claude Code returned an error result: No conversation
+      // found with session ID: …" before any deltas stream. In that
+      // case we silently retry once with `resume` cleared and the
+      // renderer-supplied `priorExplanations` replayed via the user
+      // prompt so the user sees a normal answer instead of an error.
+      const runExplain = (resumeSessionId: string | undefined) =>
+        explain({
+          regionText: req.regionText,
+          focusPhrase: req.focusPhrase,
+          paperDigest,
+          paperText: req.paperText,
+          // When resuming, the SDK already has prior turns — don't
+          // double-send via the prompt. When NOT resuming (first turn
+          // OR retry after a stale-session failure), replay them.
+          priorExplanations: resumeSessionId ? undefined : req.priorExplanations,
+          depth: req.depth,
+          customInstruction: req.customInstruction,
+          pdfPath,
+          page: req.page,
+          indexPath,
+          zoomImagePath: (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath,
+          regionBbox: (req as ExplainRequest & { regionBbox?: ExplainArgs['regionBbox'] }).regionBbox,
+          extraDirectories: extraDirectories.length > 0 ? extraDirectories : undefined,
+          customInstructions: settings.customInstructions,
+          resumeSessionId,
+          abortController,
+          onDelta: (text) => {
+            if (sender.isDestroyed()) return;
+            sender.send(channel, { type: 'delta', text });
+          },
+          onProgress: (text) => {
+            if (sender.isDestroyed()) return;
+            sender.send(channel, { type: 'progress', text });
+          },
+          onPromptSent: (prompt) => {
+            if (sender.isDestroyed()) return;
+            sender.send(channel, { type: 'prompt', text: prompt });
+          },
+          onSessionId: (sessionId) => {
+            if (sender.isDestroyed()) return;
+            sender.send(channel, { type: 'sessionId', sessionId });
+          },
+        });
+
+      let fullText: string;
+      try {
+        fullText = await runExplain(incomingResumeSessionId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const staleSession =
+          !!incomingResumeSessionId &&
+          /No conversation found with session ID/i.test(msg);
+        if (!staleSession) throw err;
+        console.warn(
+          `[explain:start] resume of ${incomingResumeSessionId} failed (${msg}); retrying with a fresh SDK session and replayed priorExplanations`,
+        );
+        if (!sender.isDestroyed()) {
+          sender.send(channel, {
+            type: 'progress',
+            text:
+              '\n[Prior session expired — starting a fresh one with the conversation history.]\n',
+          });
+        }
+        fullText = await runExplain(undefined);
+      }
       const questionText = req.customInstruction ?? req.focusPhrase ?? null;
       const zoomImagePath =
         (req as ExplainRequest & { zoomImagePath?: string }).zoomImagePath ?? null;
@@ -1649,6 +1766,80 @@ function resolveArxivMcp(
   };
 }
 
+// Persisted snapshot of the tools the Agent SDK advertises at session
+// init — used so the whiteboard settings popover can render per-MCP
+// toggles (Hugging Face, Slack, …) without first having to run a full
+// generation. Refreshed on every generate/refine and on startup via
+// `runWhiteboardDiscoveryProbe()`.
+function availableToolsPath(): string {
+  return join(app.getPath('userData'), 'whiteboard-available-tools.json');
+}
+
+async function persistAvailableTools(tools: string[]): Promise<void> {
+  try {
+    await writeFile(
+      availableToolsPath(),
+      JSON.stringify({ tools, capturedAt: new Date().toISOString() }, null, 2),
+      'utf-8',
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+ipcMain.handle('whiteboard:tools:available:get', async (): Promise<string[]> => {
+  try {
+    const raw = await readFile(availableToolsPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as { tools?: string[] };
+    return Array.isArray(parsed.tools) ? parsed.tools : [];
+  } catch {
+    return [];
+  }
+});
+
+// Discovery probe — lightweight SDK invocation that captures the init
+// event's tool list and aborts before any model call. Populates
+// `whiteboard-available-tools.json` so the user sees their claude.ai
+// connectors in the whiteboard settings popover before they ever
+// generate. No-op if a probe has already run this session.
+let whiteboardDiscoveryRan = false;
+async function runWhiteboardDiscoveryProbe(): Promise<void> {
+  if (whiteboardDiscoveryRan) return;
+  whiteboardDiscoveryRan = true;
+  try {
+    const ctrl = new AbortController();
+    const stream = query({
+      prompt: 'noop',
+      options: {
+        systemPrompt: 'noop',
+        cwd: homedir(),
+        mcpServers: {},
+        allowedTools: [],
+        tools: [],
+        settingSources: [],
+        includePartialMessages: false,
+        model: 'claude-sonnet-4-6',
+        maxTurns: 1,
+        ...(resolveClaudeExecutablePath()
+          ? { pathToClaudeCodeExecutable: resolveClaudeExecutablePath() }
+          : {}),
+        abortController: ctrl,
+      } as never,
+    });
+    for await (const ev of stream) {
+      const e = ev as { type?: string; subtype?: string; tools?: string[] };
+      if (e.type === 'system' && e.subtype === 'init') {
+        const tools = Array.isArray(e.tools) ? e.tools : [];
+        if (tools.length) await persistAvailableTools(tools);
+        ctrl.abort();
+        break;
+      }
+    }
+  } catch {
+    /* best-effort — never block app startup */
+  }
+}
+
 ipcMain.handle(
   'whiteboard:generate',
   async (
@@ -1657,7 +1848,7 @@ ipcMain.handle(
       paperHash: string;
       pdfPath: string;
       focus?: string;
-      tools?: { webSearch?: boolean; arxiv?: boolean };
+      tools?: { webSearch?: boolean; arxiv?: boolean; disallowed?: string[] };
     },
   ) => {
     const indexPath = indexDirFor(req.paperHash);
@@ -1670,6 +1861,7 @@ ipcMain.handle(
     const tools = req.tools ?? {};
     const webSearch = tools.webSearch !== false;
     const arxivMcp = tools.arxiv ? resolveArxivMcp(req.paperHash) : undefined;
+    const disallowed = Array.isArray(tools.disallowed) ? tools.disallowed : [];
 
     return runStreamingIpcHandler({
       channelPrefix: 'whiteboard:event',
@@ -1694,6 +1886,10 @@ ipcMain.handle(
                 elements: scene.elements,
               });
             },
+            onAvailableTools: (toolList: string[]) => {
+              void persistAvailableTools(toolList);
+              ctx.safeChannelSend({ type: 'available-tools', tools: toolList });
+            },
           },
           undefined,
           req.focus,
@@ -1701,6 +1897,7 @@ ipcMain.handle(
           ctx.abortController,
           arxivMcp,
           webSearch,
+          disallowed,
         );
 
         const sceneJson = buildSceneJson(result.scene.elements);
@@ -1751,13 +1948,14 @@ ipcMain.handle(
       pdfPath: string;
       sceneJson: string;
       instruction: string;
-      tools?: { webSearch?: boolean; arxiv?: boolean };
+      tools?: { webSearch?: boolean; arxiv?: boolean; disallowed?: string[] };
     },
   ) => {
     const indexPath = indexDirFor(req.paperHash);
     const tools = req.tools ?? {};
     const webSearch = tools.webSearch !== false;
     const arxivMcp = tools.arxiv ? resolveArxivMcp(req.paperHash) : undefined;
+    const disallowed = Array.isArray(tools.disallowed) ? tools.disallowed : [];
 
     return runStreamingIpcHandler({
       channelPrefix: 'whiteboard:refineEvent',
@@ -1790,12 +1988,17 @@ ipcMain.handle(
                 elements: scene.elements,
               });
             },
+            onAvailableTools: (toolList: string[]) => {
+              void persistAvailableTools(toolList);
+              ctx.safeChannelSend({ type: 'available-tools', tools: toolList });
+            },
           },
           undefined,
           resolveClaudeExecutablePath() ?? undefined,
           ctx.abortController,
           arxivMcp,
           webSearch,
+          disallowed,
         );
         const sceneJson = buildSceneJson(result.scene.elements);
         try {
@@ -2296,6 +2499,11 @@ app.whenReady().then(async () => {
       void createWindow(p);
     }
   }
+
+  // Background MCP discovery — captures the user's claude.ai connectors
+  // (Hugging Face, Slack, Gmail, …) so the Whiteboard tab's settings
+  // popover can render per-server toggles before the first generation.
+  void runWhiteboardDiscoveryProbe();
 
   // Health checks anchor to whichever window came up first. Subsequent
   // windows skip these (they're per-app concerns, not per-window).

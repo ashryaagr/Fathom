@@ -338,7 +338,10 @@ function FocusPane({
         ref={bodyRef}
         data-lens-id={focused.id}
       >
-        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-5 px-8 pt-8 pb-20">
+        <div
+          className="mx-auto flex w-full flex-col gap-5 px-8 pt-8 pb-20"
+          style={{ maxWidth: 'calc(80vw / 1.4)', zoom: 1.4 } as React.CSSProperties}
+        >
           {focused.anchorImage ? (
             <figure className="overflow-hidden rounded-lg border border-black/10 bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
               <img
@@ -436,7 +439,10 @@ function FocusPane({
         className="relative z-20 border-t border-black/5 bg-[color:var(--color-paper)]/95 px-8 py-3 backdrop-blur"
         data-lens-ask-footer="true"
       >
-        <div className="mx-auto w-full max-w-[720px]">
+        <div
+          className="mx-auto w-full"
+          style={{ maxWidth: 'calc(80vw / 1.4)', zoom: 1.4 } as React.CSSProperties}
+        >
           <InstructionInput
             streaming={anyStreaming}
             onSubmit={(text) => {

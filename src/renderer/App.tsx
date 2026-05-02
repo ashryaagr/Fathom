@@ -101,12 +101,12 @@ export default function App() {
   //   • user ⌘-clicked a PDF in Finder and picked Open With → Fathom
   //   • user chose Open Sample Paper from the welcome dialog or menu
   // `source` is either the dialog request (no args) or a local path.
-  const openPdf = useCallback(async (source?: string) => {
+  const openPdf = useCallback(async (source?: string, title?: string) => {
     setError(null);
     setLoading(true);
     try {
       const pdf = source
-        ? await window.lens.openPdfAtPath(source)
+        ? await window.lens.openPdfAtPath(source, title)
         : await window.lens.openPdf();
       if (!pdf) {
         setLoading(false);
@@ -1078,7 +1078,7 @@ export default function App() {
           </>
         ) : (
           <ErrorBoundary where="EmptyState">
-            <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p) => void openPdf(p)} />
+            <EmptyState loading={loading} error={error} onOpen={() => void openPdf()} onOpenPath={(p, title) => void openPdf(p, title)} />
           </ErrorBoundary>
         )}
       </main>
@@ -1274,7 +1274,7 @@ function EmptyState({
   loading: boolean;
   error: string | null;
   onOpen: () => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, title?: string) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
@@ -1285,6 +1285,12 @@ function EmptyState({
   const [urlCandidate, setUrlCandidate] = useState<string | null>(null);
   const [urlBusy, setUrlBusy] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+  // Two-step naming flow: after the URL download succeeds we transition
+  // from "URL preview" mode to "name this paper" mode, where the input
+  // is pre-filled with a metadata-derived title (arxiv API or the PDF's
+  // own /Title) and the user can rename before commit.
+  const [downloadedPath, setDownloadedPath] = useState<string | null>(null);
+  const [pendingTitle, setPendingTitle] = useState<string>('');
   // Recent papers — VS Code-style "open something you were reading"
   // affordance (todo #43). Loaded once when the welcome card mounts;
   // server-side filtered to entries whose paths still resolve, so the
@@ -1329,8 +1335,10 @@ function EmptyState({
     setUrlCandidate(text);
   }, []);
 
-  // Fetch + open the candidate URL via main. Success path bottoms out
-  // in onOpenPath, which is the same hook drag-drop uses.
+  // Step 1 of the URL flow: download. On success we keep the slip
+  // open and transition to name-editing mode (step 2) so the user
+  // can rename before commit. The actual openPath call happens in
+  // confirmCandidateName below.
   const openCandidateUrl = useCallback(async () => {
     if (!urlCandidate) return;
     setUrlBusy(true);
@@ -1341,14 +1349,34 @@ function EmptyState({
         setUrlError(result.error);
         return;
       }
-      onOpenPath(result.path);
-      setUrlCandidate(null);
+      setDownloadedPath(result.path);
+      setPendingTitle(result.suggestedTitle?.trim() ?? '');
     } catch (err) {
       setUrlError(err instanceof Error ? err.message : 'Could not open URL');
     } finally {
       setUrlBusy(false);
     }
-  }, [urlCandidate, onOpenPath]);
+  }, [urlCandidate]);
+
+  // Step 2: user has accepted/edited the suggested title. Open the
+  // PDF with that name passed through to Papers.upsert, then clear
+  // all url-flow state.
+  const confirmCandidateName = useCallback(() => {
+    if (!downloadedPath) return;
+    const title = pendingTitle.trim();
+    onOpenPath(downloadedPath, title || undefined);
+    setUrlCandidate(null);
+    setDownloadedPath(null);
+    setPendingTitle('');
+    setUrlError(null);
+  }, [downloadedPath, pendingTitle, onOpenPath]);
+
+  const cancelUrlFlow = useCallback(() => {
+    setUrlCandidate(null);
+    setUrlError(null);
+    setDownloadedPath(null);
+    setPendingTitle('');
+  }, []);
 
   const openSample = useCallback(async () => {
     setSampleLoading(true);
@@ -1512,12 +1540,34 @@ function EmptyState({
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div
-                    className="truncate text-[12px] tabular-nums"
-                    style={{ color: '#5a4a30', fontFamily: 'ui-monospace, SF Mono, Menlo, monospace' }}
-                  >
-                    {urlCandidate}
-                  </div>
+                  {downloadedPath ? (
+                    <input
+                      type="text"
+                      value={pendingTitle}
+                      onChange={(e) => setPendingTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          confirmCandidateName();
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          cancelUrlFlow();
+                        }
+                      }}
+                      autoFocus
+                      placeholder="Name this paper"
+                      aria-label="Paper name"
+                      className="w-full bg-transparent text-[13px] outline-none placeholder:text-black/30"
+                      style={{ color: '#5a4a30' }}
+                    />
+                  ) : (
+                    <div
+                      className="truncate text-[12px] tabular-nums"
+                      style={{ color: '#5a4a30', fontFamily: 'ui-monospace, SF Mono, Menlo, monospace' }}
+                    >
+                      {urlCandidate}
+                    </div>
+                  )}
                   {urlError && (
                     <div
                       className="mt-1 text-[11px] leading-snug"
@@ -1528,10 +1578,7 @@ function EmptyState({
                   )}
                 </div>
                 <button
-                  onClick={() => {
-                    setUrlCandidate(null);
-                    setUrlError(null);
-                  }}
+                  onClick={cancelUrlFlow}
                   disabled={urlBusy}
                   className="rounded-md px-2 py-1 text-[11px] transition hover:bg-black/[0.05] disabled:opacity-50"
                   style={{ color: '#7a6a52' }}
@@ -1539,7 +1586,10 @@ function EmptyState({
                   Cancel
                 </button>
                 <button
-                  onClick={() => void openCandidateUrl()}
+                  onClick={() => {
+                    if (downloadedPath) confirmCandidateName();
+                    else void openCandidateUrl();
+                  }}
                   disabled={urlBusy}
                   className="rounded-md px-3 py-1 text-[12px] font-medium transition disabled:cursor-progress disabled:opacity-60"
                   style={{
@@ -1547,7 +1597,7 @@ function EmptyState({
                     color: '#faf4e8',
                   }}
                 >
-                  {urlBusy ? 'Opening…' : 'Open'}
+                  {urlBusy ? 'Downloading…' : downloadedPath ? 'Open' : 'Continue'}
                 </button>
               </div>
             </motion.div>
